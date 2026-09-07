@@ -1,0 +1,10 @@
+# One symbol per line. Lines starting with # are ignored.
+# Matching is case-insensitive, so spoken audio like "buy apple" will
+# match AAPL only if you add a line the transcript is likely to contain
+# verbatim -- for company names said aloud, add the ticker itself and
+# expect lower recall than with on-screen overlays or chat text.
+AAPL
+TSLA
+MSFT
+BTC
+ETH
