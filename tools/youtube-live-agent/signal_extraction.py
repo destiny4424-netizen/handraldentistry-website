@@ -34,6 +34,17 @@ CRYPTO_SYMBOLS = {
     "MATIC", "DOT", "LINK", "SHIB", "TRX",
 }
 
+# Words immediately before an action word that flip its meaning, e.g.
+# "wouldn't buy TSLA" or "not going to short this". Checked over a short
+# lookback window so we don't fire a signal on the opposite of what was said.
+NEGATION_WORDS = {
+    "not", "no", "never", "don't", "dont", "doesn't", "doesnt",
+    "didn't", "didnt", "won't", "wont", "wouldn't", "wouldnt",
+    "shouldn't", "shouldnt", "couldn't", "couldnt", "can't", "cant",
+    "isn't", "isnt", "ain't", "aint",
+}
+NEGATION_LOOKBACK = 4
+
 SYMBOL_RE = re.compile(r"^[A-Z]{1,5}$")
 PRICE_RE = re.compile(r"\$?\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)")
 
@@ -64,12 +75,16 @@ def _match_symbol(token: str, known_symbols: Optional[set[str]]) -> Optional[str
     watchlist (useful for lowercase speech-to-text transcripts). Otherwise
     falls back to a bare-uppercase heuristic (works well for OCR'd
     overlays and chat text, which tend to preserve ticker casing).
+
+    Handles OCR'd pair notation like "BTC/USD" by matching on the base
+    asset before the slash.
     """
+    candidate = token.split("/")[0] if "/" in token else token
     if known_symbols:
-        upper = token.upper()
+        upper = candidate.upper()
         return upper if upper in known_symbols else None
-    if SYMBOL_RE.match(token) and token not in TICKER_BLOCKLIST:
-        return token
+    if SYMBOL_RE.match(candidate) and candidate not in TICKER_BLOCKLIST:
+        return candidate
     return None
 
 
@@ -81,6 +96,12 @@ def _extract_price(snippet: str) -> Optional[float]:
         return float(match.group(1).replace(",", ""))
     except ValueError:
         return None
+
+
+def _is_negated(cleaned: list[str], action_index: int) -> bool:
+    """Check a short lookback window before the action word for a negation cue."""
+    start = max(0, action_index - NEGATION_LOOKBACK)
+    return any(tok.lower() in NEGATION_WORDS for tok in cleaned[start:action_index])
 
 
 def extract_signals(
@@ -106,10 +127,18 @@ def extract_signals(
         action = _classify_action(raw)
         if action is None:
             continue
+        if _is_negated(cleaned, i):
+            continue
         lo, hi = max(0, i - window), min(len(cleaned), i + window + 1)
-        for j in range(lo, hi):
-            if j == i:
-                continue
+        # Search by increasing distance from the action word, not raw index
+        # order, so the nearest ticker-like token wins over a farther decoy.
+        # Ties (equal distance on both sides) prefer the word after the
+        # action, matching the common "buy SYMBOL" phrasing.
+        candidate_indices = sorted(
+            (j for j in range(lo, hi) if j != i),
+            key=lambda j: (abs(j - i), 0 if j > i else 1),
+        )
+        for j in candidate_indices:
             symbol = _match_symbol(cleaned[j], known_symbols)
             if symbol is None:
                 continue

@@ -90,10 +90,13 @@ corresponding trade in a paper (fake-money) brokerage account.
 3. Transcribes the audio with `faster-whisper` and OCRs the frame with
    `pytesseract`.
 4. Scans both texts for a buy/sell/long/short action word near a
-   ticker-like symbol (`signal_extraction.py`). Optionally restrict
-   symbol matching to a `--watchlist` file (recommended for spoken audio,
-   since whisper transcripts are lowercase and won't naturally produce
-   uppercase tickers).
+   ticker-like symbol (`signal_extraction.py`), picking the *nearest*
+   candidate symbol to the action word (not just the first one scanned).
+   A short lookback for negation words ("wouldn't buy...", "not going to
+   short...") suppresses the signal instead of firing the opposite trade.
+   Optionally restrict symbol matching to a `--watchlist` file
+   (recommended for spoken audio, since whisper transcripts are lowercase
+   and won't naturally produce uppercase tickers).
 5. De-duplicates repeated mentions of the same symbol/action within a
    `--cooldown` window, then (unless `--dry-run`) places a simulated
    market order for a fixed `--notional` dollar amount via Alpaca's
