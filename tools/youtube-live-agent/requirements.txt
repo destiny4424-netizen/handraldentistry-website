@@ -1,0 +1,9 @@
+google-api-python-client>=2.100.0
+
+# Trade signal agent (paper trading only) -- optional, only needed for
+# trade_agent.py, not for youtube_live_agent.py
+yt-dlp>=2024.1.0
+faster-whisper>=1.0.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
+alpaca-py>=0.20.0

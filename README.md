@@ -3,6 +3,7 @@
 ## Files
 - `index.html` — Public patient website (handraldentistry.com)
 - `clinic/` — Staff clinic management app (handraldentistry.com/clinic)
+- `tools/youtube-live-agent/` — CLI agent for analyzing engagement on the clinic's YouTube live streams (see its README for setup)
 
 ## Deploy to GitHub Pages
 
