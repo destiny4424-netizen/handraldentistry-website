@@ -1,0 +1,24 @@
+[Unit]
+Description=EMA20/50 crossover + pullback Telegram alert bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/WorkingDirectory if you deploy to a different path/user.
+User=ema-bot
+WorkingDirectory=/opt/ema-crossover-telegram-bot
+EnvironmentFile=/opt/ema-crossover-telegram-bot/.env
+ExecStart=/opt/ema-crossover-telegram-bot/venv/bin/python bot.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/ema-bot/ema-bot.log
+StandardError=append:/var/log/ema-bot/ema-bot.log
+
+# Basic hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
