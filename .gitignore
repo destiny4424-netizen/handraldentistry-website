@@ -1,0 +1,5 @@
+functions/node_modules/
+*-debug.log
+.firebaserc
+functions/.secret.local
+.DS_Store

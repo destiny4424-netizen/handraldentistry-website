@@ -268,6 +268,22 @@ textarea{min-height:64px;resize:vertical}
 </head>
 <body>
 
+<!-- Login gate: shown until Firebase Auth confirms a signed-in staff account. Hidden by cloud.js. -->
+<div id="loginScreen" style="position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#0f4c2e,#1a6b4a);display:flex;align-items:center;justify-content:center;padding:24px">
+  <div style="background:#fff;border-radius:16px;padding:28px 24px;max-width:340px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <div style="text-align:center;margin-bottom:18px">
+      <div style="font-size:32px;margin-bottom:6px">🦷</div>
+      <div style="font-weight:800;font-size:18px;color:#0f4c2e">Handral Dentistry</div>
+      <div style="font-size:12px;color:#6b7280">Staff sign-in</div>
+    </div>
+    <div class="form-group"><label>Email</label><input id="loginEmail" type="email" autocomplete="username" placeholder="you@clinic.com"/></div>
+    <div class="form-group"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter'){staffSignIn();}"/></div>
+    <div id="loginError" style="color:#ef4444;font-size:12px;min-height:16px;margin-bottom:8px"></div>
+    <button id="loginBtn" class="btn btn-green" style="width:100%;justify-content:center" onclick="staffSignIn()">Sign In</button>
+    <div style="font-size:11px;color:#9ca3af;margin-top:14px;text-align:center">Accounts are created by the clinic admin. Contact Dr. Handral if you need access.</div>
+  </div>
+</div>
+
 <div class="header">
   <div class="header-logo">🦷</div>
   <div style="margin-left:10px">
@@ -316,10 +332,10 @@ textarea{min-height:64px;resize:vertical}
 
 <!-- SCAN -->
 <div id="page-scan">
-  <!-- API warning -->
+  <!-- Sign-in warning -->
   <div id="apiWarning" style="display:none" class="card">
-    <div class="card-header"><span class="card-title">⚠️ API Key Required</span></div>
-    <div style="padding:14px;font-size:13px;color:var(--m)">Go to <b>⚙️ Settings</b> tab and enter your Claude API key.</div>
+    <div class="card-header"><span class="card-title">⚠️ Sign In Required</span></div>
+    <div style="padding:14px;font-size:13px;color:var(--m)">AI scanning needs you to be signed in. Please sign in first.</div>
   </div>
 
   <!-- PHASE 1: Capture -->
@@ -1024,12 +1040,8 @@ textarea{min-height:64px;resize:vertical}
 <!-- SETTINGS -->
 <div id="page-settings" style="display:none">
   <div class="api-banner">
-    <h3>🔑 Claude AI API Key</h3>
-    <p>Required for scanning handwritten notes. Get your key at console.anthropic.com</p>
-    <div class="api-input-row">
-      <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-..."/>
-      <button class="btn btn-outline" onclick="saveApiKey()" style="white-space:nowrap">Save</button>
-    </div>
+    <h3>🤖 AI Scanning</h3>
+    <p>AI scanning of handwritten notes works automatically for any signed-in staff member. No key needed here anymore &mdash; it's kept securely on the server.</p>
     <p id="apiStatus" style="font-size:12px;color:var(--ga);margin-top:8px"></p>
   </div>
 
@@ -1081,6 +1093,17 @@ textarea{min-height:64px;resize:vertical}
         <input id="newStaffName" placeholder="Staff name" style="flex:1"/>
         <input id="newStaffRole" placeholder="Role" style="flex:1"/>
         <button class="btn btn-green btn-sm" onclick="addStaff()">+ Add</button>
+      </div>
+    </div>
+  </div>
+  <div class="card" style="border:2px solid #1a6b4a">
+    <div class="card-header"><span class="card-title">☁️ Cloud Sync</span></div>
+    <div style="padding:14px">
+      <p style="font-size:12px;color:var(--m);margin-bottom:8px">Signed in as <b id="cloudSignedInAs">—</b>. Your data syncs automatically across every device signed in to this clinic account.</p>
+      <div id="cloudSyncStatus" style="font-size:12px;color:var(--g);font-weight:600;margin-bottom:10px">Not connected</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="manualCloudSync()">🔄 Sync Now</button>
+        <button class="btn btn-outline" onclick="staffSignOut()">🚪 Sign Out</button>
       </div>
     </div>
   </div>
@@ -1256,7 +1279,6 @@ let staff        = JSON.parse(localStorage.getItem('hd_staff')       ||JSON.stri
   {id:'4',name:'Manjula',role:'Attender'},
   {id:'5',name:'Nandini',role:'Attender'}
 ]));
-let apiKey       = localStorage.getItem('hd_apikey')||'';
 let scanType     = 'patient', scanImageB64 = null;
 let currentToothId = null, currentChartPatientId = null;
 let invItems     = [];
@@ -1271,88 +1293,7 @@ const CLINICS = {bagalkot:'Bagalkot Clinic',vidyagiri:'Vidyagiri Clinic',navanag
 const CLINIC_COLORS = {bagalkot:{bg:'#1a6b4a',light:'#d1fae5',text:'#065f46',grad:'linear-gradient(135deg,#0f4c2e,#1a6b4a)'},vidyagiri:{bg:'#1d4ed8',light:'#dbeafe',text:'#1e40af',grad:'linear-gradient(135deg,#1e3a8a,#1d4ed8)'},navanagar:{bg:'#7c3aed',light:'#ede9fe',text:'#5b21b6',grad:'linear-gradient(135deg,#4c1d95,#7c3aed)'}};
 
 // ── CLOUD SYNC ─────────────────────────────────────────────────
-// Cloud sync removed - tablet only mode
-
-function setCloudUrl(url) {
-  CLOUD_URL = url.trim();
-  localStorage.setItem('hd_cloud_url', CLOUD_URL);
-}
-
-function cloudEnabled() { return CLOUD_URL && CLOUD_URL.includes('script.google.com'); }
-
-async function cloudGet(action, params={}) {
-  if (!cloudEnabled()) return null;
-  const q = Object.entries({action,...params}).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join('&');
-  const r = await fetch(CLOUD_URL + '?' + q);
-  const text = await r.text();
-  try { return JSON.parse(text); }
-  catch(e) {
-    // Apps Script returned HTML error page
-    console.warn('cloudGet non-JSON response for '+action+':', text.slice(0,200));
-    return {error: 'Server returned non-JSON. Please update Apps Script deployment.'};
-  }
-}
-
-async function cloudPost(data) {
-  if (!cloudEnabled()) return null;
-  const r = await fetch(CLOUD_URL, {method:'POST', body:JSON.stringify(data)});
-  const text = await r.text();
-  try { return JSON.parse(text); }
-  catch(e) {
-    console.warn('cloudPost non-JSON for '+data.action+':', text.slice(0,100));
-    return {error: 'non-JSON response'};
-  }
-}
-
-// Pull all data from cloud for current clinic
-async function cloudPull(clinic, silent=false) {
-  if (!cloudEnabled()) return;
-  if (!silent) showSyncBadge('⏳ Syncing...');
-  try {
-    const data = await cloudGet('get_all', {clinic: clinic||currentClinic});
-    if (data && !data.error) {
-      if (data.patients)     { patients = mergeById(patients, data.patients); }
-      if (data.appointments) { appointments = mergeById(appointments, data.appointments); }
-      if (data.transactions) { transactions = mergeById(transactions, data.transactions); }
-      if (data.invoices)     { invoices = mergeById(invoices, data.invoices); }
-      if (data.staff && data.staff.length) { staff = data.staff; }
-      if (data.consultants)  { consultants = mergeById(consultants, data.consultants); }
-      if (data.consultCases) { consultCases = mergeById(consultCases, data.consultCases); }
-      save();
-      updateStats(); renderPatients(); renderAppointments(); renderTransactions(); renderInvoices();
-      if (!silent) showSyncBadge('✅ Synced');
-      showToast('✅ Data synced from cloud!');
-    } else {
-      if (!silent) showSyncBadge('❌ Sync failed');
-    }
-  } catch(e) {
-    if (!silent) showSyncBadge('❌ ' + e.message);
-  }
-}
-
-// Push all local data to cloud
-async function cloudPush() {
-  if (!cloudEnabled()) { showToast('⚠️ Add cloud URL in Settings first'); return; }
-  showSyncBadge('⬆️ Pushing...');
-  try {
-    // Push patients by clinic
-    const byClinic = {bagalkot:[], vidyagiri:[], navanagar:[]};
-    patients.forEach(p => { const c=p.clinic||'bagalkot'; if(byClinic[c]) byClinic[c].push(p); });
-    for (const [clinic, pts] of Object.entries(byClinic)) {
-      if (pts.length) await cloudPost({action:'bulk_patients', patients:pts, clinic});
-    }
-    // Push appointments
-    for (const a of appointments) await cloudPost({action:'save_appointment', ...a});
-    // Push transactions
-    for (const t of transactions) await cloudPost({action:'save_transaction', ...t});
-    showSyncBadge('✅ Pushed');
-    showToast('✅ All data pushed to cloud!');
-  } catch(e) {
-    showSyncBadge('❌ ' + e.message);
-  }
-}
-
-// mergeById and showSyncBadge defined below
+// Real implementation lives in cloud.js (Firebase Auth + Firestore), loaded after this script.
 
 const TODAY = new Date().toISOString().split('T')[0];
 const AV_COLORS = ['#d1fae5','#dbeafe','#ede9fe','#fef3c7','#fce7f3'];
@@ -1371,7 +1312,7 @@ const fmtDate  = d => {
   }catch(e){return '';}
 };
 const fmtTime  = t => { if(!t) return ''; const [h,m]=t.split(':'); return `${h%12||12}:${m} ${+h>=12?'PM':'AM'}`; };
-const save = () => {
+const saveLocal = () => {
   localStorage.setItem('hd_patients',JSON.stringify(patients));
   localStorage.setItem('hd_appointments',JSON.stringify(appointments));
   localStorage.setItem('hd_transactions',JSON.stringify(transactions));
@@ -1380,6 +1321,12 @@ const save = () => {
   localStorage.setItem('hd_staff',JSON.stringify(staff));
   localStorage.setItem('hd_consultants',JSON.stringify(consultants));
   localStorage.setItem('hd_consultcases',JSON.stringify(consultCases));
+};
+// save() writes to localStorage (always, offline-first) then, if signed in, queues a
+// diff-based push of every collection to Firestore so other devices pick it up. See cloud.js.
+const save = () => {
+  saveLocal();
+  if (typeof scheduleCloudPush === 'function') scheduleCloudPush();
 };
 
 // FDI tooth numbering
@@ -1407,7 +1354,6 @@ window.onload = () => {
   document.getElementById('txDate').value = TODAY;
   document.getElementById('invDate').value = TODAY;
   document.getElementById('attTodayDate').textContent = fmtDate(TODAY);
-  if(apiKey){ document.getElementById('apiKeyInput').value=apiKey; document.getElementById('apiStatus').textContent='✓ API key saved'; }
   updateStats(); renderPatients(); renderAppointments(); renderTransactions();
   renderStaffList(); renderStaffPunch(); renderAttMonthSel(); renderAttSummary();
   initInvItems(); renderInvoices(); renderDentalChart();
@@ -1532,7 +1478,7 @@ function resetScan() {
   scanImageB64=null;
   ['scanPreview','extractedBox','scanBtn','scanResult'].forEach(id=>document.getElementById(id).style.display='none');
 }
-function checkApiWarning(){ document.getElementById('apiWarning').style.display=apiKey?'none':'block'; }
+function checkApiWarning(){ document.getElementById('apiWarning').style.display=isSignedIn()?'none':'block'; document.getElementById('apiStatus').textContent=isSignedIn()?'✓ Signed in — AI scanning ready':''; }
 function handleImageSelect(e) {
   const file=e.target.files[0]; if(!file) return;
   const r=new FileReader();
@@ -1540,7 +1486,7 @@ function handleImageSelect(e) {
   r.readAsDataURL(file); e.target.value='';
 }
 async function runScan() {
-  if(!apiKey){ showToast('⚠️ Add API key in Settings first'); switchTab('settings'); return; }
+  if(!isSignedIn()){ showToast('⚠️ Please sign in first'); return; }
   if(!scanImageB64){ showToast('Please select an image first'); return; }
   const btn=document.getElementById('scanBtnContent');
   btn.innerHTML='<span class="spinner"></span> Reading with AI...';
@@ -1551,7 +1497,7 @@ async function runScan() {
     transaction:`You are reading a handwritten cash/transaction entry from a dental clinic notebook. Extract ALL entries visible. Return ONLY a JSON array where each object has: description, amount (number only), type ("in" for income/"out" for expense), date (YYYY-MM-DD if possible), category. No explanation, just JSON array.`
   };
   try {
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-opus-4-6',max_tokens:1500,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:scanImageB64}},{type:'text',text:prompts[scanType]}]}]})});
+    const res=await callClaudeAI({model:'claude-opus-4-6',max_tokens:1500,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:scanImageB64}},{type:'text',text:prompts[scanType]}]}]});
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
     const raw=data.content[0].text.trim();
@@ -1963,7 +1909,6 @@ function addStaff(){const name=document.getElementById('newStaffName').value.tri
   document.getElementById('newStaffRole').value='';
   showToast('✅ '+name+' added to staff!');}
 function removeStaff(id){if(!confirm('Remove this staff member?'))return;staff=staff.filter(s=>String(s.id)!==String(id));save();renderStaffList();renderStaffPunch();renderAttSummary();showToast('Staff member removed');}
-function saveApiKey(){apiKey=document.getElementById('apiKeyInput').value.trim();localStorage.setItem('hd_apikey',apiKey);document.getElementById('apiStatus').textContent=apiKey?'✓ API key saved':'Key cleared';checkApiWarning();showToast('✅ API key saved!');}
 function saveSettings(){localStorage.setItem('hd_waTemplate',document.getElementById('waTemplate').value);localStorage.setItem('hd_clinicName',document.getElementById('clinicName').value);localStorage.setItem('hd_clinicAddr',document.getElementById('clinicAddr').value);localStorage.setItem('hd_clinicPhone',document.getElementById('clinicPhone').value);showToast('✅ Settings saved!');}
 function exportData(){const d=JSON.stringify({patients,appointments,transactions,invoices,attendance,staff},null,2);const a=document.createElement('a');a.href='data:application/json;charset=utf-8,'+encodeURIComponent(d);a.download=`handral-clinic-${TODAY}.json`;a.click();}
 function clearData(){if(!confirm('Delete ALL data? Cannot be undone.'))return;patients=[];appointments=[];transactions=[];invoices=[];attendance=[];save();updateStats();renderPatients();renderAppointments();renderTransactions();renderInvoices();renderStaffPunch();showToast('Data cleared');}
@@ -2072,7 +2017,7 @@ function setScanStep(n){
 }
 
 async function runSmartScan(){
-  if(!apiKey){switchTab('settings');showToast('⚠️ Add API key in Settings first');return;}
+  if(!isSignedIn()){showToast('⚠️ Please sign in first');return;}
   if(!_scanB64){showToast('Select an image first');return;}
   const btn=document.getElementById('smartScanBtnTxt');
   btn.innerHTML='<span class="spinner"></span> Reading notebook...';
@@ -2083,7 +2028,7 @@ EXISTING PATIENTS IN DATABASE: ${existingNames||'none yet'}
 Extract EVERY patient entry visible. For each return JSON with: name, phone (null if missing), treatment (dental procedure done), amount (number, null if missing), payMode ("Cash"/"UPI"/"Card", default "Cash"), notes (other info), date (YYYY-MM-DD if visible else null), existingMatch (exact name from EXISTING PATIENTS if matches, else null).
 Return ONLY a JSON array. No markdown. No explanation.`;
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-opus-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_scanB64}},{type:'text',text:prompt}]}]})});
+    const res=await callClaudeAI({model:'claude-opus-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_scanB64}},{type:'text',text:prompt}]}]});
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
     let raw=data.content[0].text.trim().replace(/```json|```/g,'').trim();
@@ -2497,7 +2442,7 @@ function handleClinicScan(e){
   r.readAsDataURL(file); e.target.value='';
 }
 async function runClinicScan(){
-  if(!apiKey){switchTab('settings');showToast('⚠️ Add API key first');return;}
+  if(!isSignedIn()){showToast('⚠️ Please sign in first');return;}
   if(!_clinicScanB64){showToast('Select image first');return;}
   const btn=document.getElementById('clinicScanBtnTxt');
   btn.innerHTML='<span class="spinner"></span> Reading...';
@@ -2507,7 +2452,7 @@ async function runClinicScan(){
 EXISTING PATIENTS: ${existingNames||'none'}
 Extract every patient entry. Return ONLY a JSON array, each object: name, phone (null if missing), treatment, amount (number/null), payMode ("Cash"/"UPI"/"Card"), notes, date (YYYY-MM-DD/null), existingMatch (exact name from EXISTING PATIENTS if matches, else null). No markdown.`;
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-opus-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_clinicScanB64}},{type:'text',text:prompt}]}]})});
+    const res=await callClaudeAI({model:'claude-opus-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_clinicScanB64}},{type:'text',text:prompt}]}]});
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
     let raw=data.content[0].text.trim().replace(/```json|```/g,'').trim();
@@ -2600,7 +2545,7 @@ function handleApptScan(e){
 }
 
 async function runApptScan(){
-  if(!apiKey){switchTab('settings');showToast('⚠️ Add API key in Settings first');return;}
+  if(!isSignedIn()){showToast('⚠️ Please sign in first');return;}
   if(!_apptScanB64){showToast('Select an image first');return;}
   const clinic=document.getElementById('apptScanClinic').value;
   const btn=document.getElementById('apptScanBtnTxt');
@@ -2617,7 +2562,7 @@ Extract EVERY appointment entry visible. For each return JSON with:
 - notes: any other notes
 Return ONLY a JSON array. No markdown. No explanation.`;
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-opus-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_apptScanB64}},{type:'text',text:prompt}]}]})});
+    const res=await callClaudeAI({model:'claude-opus-4-6',max_tokens:2000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_apptScanB64}},{type:'text',text:prompt}]}]});
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
     let raw=data.content[0].text.trim().replace(/```json|```/g,'').trim();
@@ -2670,73 +2615,7 @@ function _saveAllScannedAppts(entries, clinic){
 }
 
 
-// Cloud sync removed
-function cloudEnabled(){return false;}
-function queueSync(){}
-function cloudPull(c,s){if(!s)showToast('Cloud sync disabled - tablet only mode');}
-function cloudPush(){showToast('Cloud sync disabled - tablet only mode');}
-function cloudGet(){return Promise.resolve(null);}
-function cloudPost(){return Promise.resolve(null);}
-function cloudSavePatient(){}
-function cloudSaveAppointment(){}
-function cloudSaveTransaction(){}
-function cloudSaveInvoice(){}
-function showSyncBadge(){}
-
-// ── CLOUD SETTINGS HELPERS ─────────────────────────────────────
-function saveCloudUrl(){
-  const url=document.getElementById('cloudUrlInput').value.trim();
-  setCloudUrl(url);
-  document.getElementById('cloudUrlStatus').textContent=url?'✓ Cloud URL saved':'URL cleared';
-  showToast('✅ Cloud URL saved!');
-}
-
-async function testCloud(){
-  const el=document.getElementById('cloudTestResult');
-  el.textContent='Testing connection...';
-  try{
-    const d=await cloudGet('ping');
-    if(d&&d.ok){el.textContent='✅ Connected! Server time: '+new Date(d.time).toLocaleTimeString('en-IN');}
-    else el.textContent='❌ Error: '+(d&&d.error||'No response');
-  }catch(e){el.textContent='❌ Failed: '+e.message;}
-}
-
-async function pushPatientsToCloud(){
-  if(!cloudEnabled()){showToast('Add cloud URL first');return;}
-  const btn=event.target;btn.textContent='⏳ Pushing...';btn.disabled=true;
-  const byClinic={bagalkot:[],vidyagiri:[],navanagar:[]};
-  patients.forEach(p=>{const c=p.clinic||'bagalkot';if(byClinic[c])byClinic[c].push(p);});
-  let total=0;
-  try{
-    for(const[clinic,pts]of Object.entries(byClinic)){
-      if(!pts.length) continue;
-      // Push in batches of 100
-      for(let i=0;i<pts.length;i+=100){
-        const batch=pts.slice(i,i+100);
-        const r=await cloudPost({action:'bulk_patients',patients:batch,clinic});
-        if(r&&r.created) total+=r.created;
-      }
-    }
-    document.getElementById('pushPatientsResult').textContent=`✅ ${total} patients pushed to cloud!`;
-    showToast(`✅ ${total} patients uploaded!`);
-  }catch(e){document.getElementById('pushPatientsResult').textContent='❌ '+e.message;}
-  btn.textContent='⬆️ Push All Patients to Cloud';btn.disabled=false;
-}
-
-// Auto-cloud save wrappers
-async function cloudSavePatient(p){
-  if(cloudEnabled()) cloudPost({action:'save_patient',...p}).catch(()=>{});
-}
-async function cloudSaveAppointment(a){
-  if(cloudEnabled()) cloudPost({action:'save_appointment',...a}).catch(()=>{});
-}
-async function cloudSaveTransaction(t){
-  if(cloudEnabled()) cloudPost({action:'save_transaction',...t}).catch(()=>{});
-}
-async function cloudSaveInvoice(inv){
-  if(cloudEnabled()) cloudPost({action:'save_invoice',...inv}).catch(()=>{});
-}
-
+// cloudEnabled/cloudGet/cloudPost/queueSync/cloudSave*/showSyncBadge are implemented for real in cloud.js
 
 // ══════════════════════════════════════════════════════════════
 // EDIT FUNCTIONS
@@ -3203,14 +3082,14 @@ function _profileScanImg(e){
   r.readAsDataURL(file);e.target.value='';
 }
 async function _runProfileScan(){
-  if(!apiKey){showToast('Add API key in Settings');return;}
+  if(!isSignedIn()){showToast('⚠️ Please sign in first');return;}
   if(!_ppScanB64||!_PP){showToast('No image selected');return;}
   const btn=document.getElementById('ppScanBtnTxt');
   if(btn) btn.innerHTML='Reading...';
   document.getElementById('ppScanBtn').disabled=true;
   const prompt='You are reading handwritten treatment notes for a dental patient named "'+_PP.name+'". Extract treatment entries. Return ONLY a JSON array with: treatment, amount (number or null), payMode ("Cash"/"UPI"/"Card"), date (YYYY-MM-DD or null), notes. No markdown.';
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-opus-4-6',max_tokens:1000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_ppScanB64}},{type:'text',text:prompt}]}]})});
+    const res=await callClaudeAI({model:'claude-opus-4-6',max_tokens:1000,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:_ppScanB64}},{type:'text',text:prompt}]}]});
     const data=await res.json();
     if(data.error) throw new Error(data.error.message);
     let raw=data.content[0].text.trim().replace(/```json|```/g,'').trim();
@@ -3672,7 +3551,7 @@ function agentAddTyping(){
 function agentRemoveTyping(){var t=document.getElementById('agentTyping');if(t)t.remove();}
 
 async function runAgent(){
-  if(!apiKey){agentAddMsg('assistant','⚠️ Add API key in ⚙️ Settings first.','error');return;}
+  if(!isSignedIn()){agentAddMsg('assistant','⚠️ Please sign in first.','error');return;}
   var input=document.getElementById('agentInput');
   var text=(input?input.value:'').trim();if(!text)return;
   agentAddMsg('user',text,'');
@@ -3689,11 +3568,7 @@ async function runAgent(){
   var sys='You are an AI assistant for Handral Dentistry, Bagalkot. TODAY:'+TODAY+' TOMORROW:'+tomorrow+' CLINIC:'+CLINICS[activeClinic]+' PATIENTS('+patients.length+'):'+ptSample+' TODAY APPTS:'+(todayApts||'None')+' Return ONLY JSON: {"message":"reply","actions":[...]} Actions available: book_appointment(patient,date,time,treatment,clinic), add_treatment(patient,treatment,amount,payMode,date), add_patient(name,phone,age,gender), add_payment(patient,amount,payMode), find_patient(name), list_appointments(date), none';
 
   try{
-    var res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-opus-4-6',max_tokens:800,system:sys,messages:_agentHistory.slice(-6)})
-    });
+    var res=await callClaudeAI({model:'claude-opus-4-6',max_tokens:800,system:sys,messages:_agentHistory.slice(-6)});
     var data=await res.json();
     agentRemoveTyping();
     if(data.error) throw new Error(data.error.message);
@@ -3981,5 +3856,11 @@ function importAllData(e){
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Firebase (Auth + Firestore) powers cross-device sign-in and sync; see cloud.js -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="cloud.js"></script>
 </body>
 </html>
