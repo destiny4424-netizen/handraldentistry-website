@@ -8,15 +8,17 @@
 // config below is not a secret — it identifies your project, but every
 // read/write is still gated by Firestore Security Rules + signed-in staff.
 const firebaseConfig = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  projectId: "REPLACE_ME",
-  storageBucket: "REPLACE_ME.appspot.com",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME"
+  apiKey: "AIzaSyCBWVRVesXCEGJ-rfAdY_p3qpSkWjQ6D2A",
+  authDomain: "handral-dentistry.firebaseapp.com",
+  projectId: "handral-dentistry",
+  storageBucket: "handral-dentistry.firebasestorage.app",
+  messagingSenderId: "1004568027588",
+  appId: "1:1004568027588:web:2dc655c6daf13a5df44491"
 };
-// URL of the deployed aiProxy Cloud Function, e.g.
-// "https://us-central1-your-project.cloudfunctions.net/aiProxy"
+// URL of the deployed aiProxy Cloud Function. Filled in once the function is
+// deployed (see README.md "Going online" step 3) — AI scanning won't work
+// until this points at the real deployed URL.
+// e.g. "https://us-central1-handral-dentistry.cloudfunctions.net/aiProxy"
 const AI_PROXY_URL = "REPLACE_ME";
 
 firebase.initializeApp(firebaseConfig);
