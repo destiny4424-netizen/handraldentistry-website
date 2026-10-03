@@ -581,7 +581,7 @@ def lines_to_txns(text):
     """Read statement lines like "01/04/24 UPI-NAME-... 01/04/24 500.00 12,345.67":
     a date first, the amount and balance last. Money in or out comes from how the
     balance moves, so it works without the Withdrawal and Deposit columns."""
-    out, opening = [], None
+    out, opening, follow = [], None, 0
     for line in text:
         line = " ".join(line.split())
         o = re.search(rf"opening balance\s*:?\s*(?:rs\.?|inr)?\s*({STMT_AMOUNT})", line, re.I)
@@ -602,9 +602,15 @@ def lines_to_txns(text):
                 bal = -abs(bal)
             out.append(dict(date=parse_date(m.group(1)), narration=body.strip(), ref=ref,
                             amount=parse_num(nums[-2]), balance=bal))
-        elif out and not nums and not m and line and len(line) < 100 and not re.search(
-                r"date|narration|particulars|withdraw|deposit|balance|statement|account", line, re.I):
+            follow = 3
+        elif re.search(r"bank limited|page no|closing balance includes|contents of this statement|"
+                       r"registered office|gstin|joint holders|nomination|account branch|"
+                       r"statement of account|generated|this is a computer", line, re.I):
+            follow = 0  # the page footer or the next page's header: nothing more to join
+        elif follow and out and not nums and not m and line and len(line) < 100 and not re.search(
+                r"date|narration|particulars|withdraw|deposit|balance|statement|account|:", line, re.I):
             out[-1]["narration"] += " " + line  # a narration running onto the next line
+            follow -= 1
     if len(out) < 2:
         return []
     near = lambda a, b: abs(a - b) < 0.02
