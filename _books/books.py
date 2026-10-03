@@ -58,7 +58,9 @@ CATS = [
     ("Income tax and TDS paid", "tax"), ("Donations (80G)", "tax"),
     ("School fees (80C)", "tax"),
     ("Trading transfer", "invest"), ("Investments", "invest"),
-    ("Loan received or repaid", "loans"), ("Credit card payment", "loans"),
+    ("Car loan", "loans"), ("Jewel loan", "loans"), ("Personal loan", "loans"),
+    ("Home loan", "loans"), ("Education loan", "loans"), ("Business loan", "loans"),
+    ("Other loan", "loans"), ("Credit card payment", "loans"),
     ("Own account transfer", "personal"),
     ("Cash deposit or withdrawal", "personal"),
     ("Family and friends", "personal"), ("Personal", "personal"),
@@ -86,8 +88,8 @@ SEED_RULES = [
     ("SALARY", "in", "Salary income"),
     ("Int.Pd", "in", "Interest received"),
     ("CRED Club", "out", "Credit card payment"),
-    ("Disbursement Credit", "in", "Loan received or repaid"),
-    ("JLOTH", "out", "Loan received or repaid"),
+    ("Disbursement Credit", "in", "Other loan"),
+    ("JLOTH", "out", "Jewel loan"),
     ("Dentalkart", "out", "Dental materials"),
     ("DENTICITY", "out", "Dental materials"),
 ]
@@ -100,8 +102,8 @@ SEED_RULES_2 = [
     ("Life Insurance Co", "out", "Life insurance premium (80C)"),
     ("CAMS-", "any", "Investments"),
     ("MUTUALFUND", "any", "Investments"),
-    ("BAJAJ FINANCE", "any", "Loan received or repaid"),
-    ("EARLYSALARY", "any", "Loan received or repaid"),
+    ("BAJAJ FINANCE", "any", "Personal loan"),
+    ("EARLYSALARY", "any", "Personal loan"),
     ("RETURN CHARGES", "out", "Bank charges"),
     ("JL APPRAISER", "out", "Bank charges"),
 ]
@@ -138,6 +140,13 @@ CREATE TABLE IF NOT EXISTS itr_returns(
   id INTEGER PRIMARY KEY, owner TEXT DEFAULT 'Self', ay INTEGER, form TEXT,
   name TEXT DEFAULT '', pan TEXT DEFAULT '', filename TEXT, uploaded TEXT,
   summary TEXT, flat TEXT, data BLOB);
+CREATE TABLE IF NOT EXISTS loans(
+  id INTEGER PRIMARY KEY, name TEXT, type TEXT, lender TEXT DEFAULT '',
+  owner TEXT DEFAULT 'Self', purpose TEXT DEFAULT 'Personal', amount REAL DEFAULT 0,
+  start TEXT DEFAULT '', rate REAL DEFAULT 0, emi REAL DEFAULT 0, match TEXT DEFAULT '',
+  closed TEXT DEFAULT '', note TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS loan_years(
+  loan_id INTEGER, fy INTEGER, interest REAL, outstanding REAL, UNIQUE(loan_id, fy));
 CREATE TABLE IF NOT EXISTS mf_uploads(
   id INTEGER PRIMARY KEY, owner TEXT, filename TEXT, uploaded TEXT, kind TEXT,
   added INTEGER DEFAULT 0);
@@ -234,6 +243,19 @@ def init():
             [s for s in SEED_RULES_3 if s[0] not in have])
         apply_rules(con)
         con.execute("PRAGMA user_version=3")
+    if version < 4:  # one category per kind of loan instead of "Loan received or repaid"
+        old = "Loan received or repaid"
+        for pat, cat in (("JLOTH", "Jewel loan"), ("JEWEL", "Jewel loan"), ("GOLD LOAN", "Jewel loan"),
+                         ("EARLYSALARY", "Personal loan"), ("BAJAJ FINANCE", "Personal loan"),
+                         ("CAR LOAN", "Car loan"), ("AUTO LOAN", "Car loan"),
+                         ("HOME LOAN", "Home loan"), ("HOUSING LOAN", "Home loan")):
+            con.execute("UPDATE txns SET category=? WHERE category=? AND narration LIKE ?",
+                        (cat, old, f"%{pat}%"))
+            con.execute("UPDATE rules SET category=? WHERE category=? AND pattern LIKE ?",
+                        (cat, old, f"%{pat}%"))
+        con.execute("UPDATE txns SET category='Other loan' WHERE category=?", (old,))
+        con.execute("UPDATE rules SET category='Other loan' WHERE category=?", (old,))
+        con.execute("PRAGMA user_version=4")
     con.commit()
     con.close()
 
@@ -626,10 +648,17 @@ def apply_rules(con):
         "SELECT * FROM rules ORDER BY LENGTH(pattern) DESC, id").fetchall()
     people = [(head, [r["match"] for r in con.execute(f"SELECT match FROM {table}")])
               for table, head in PEOPLE.values()]
+    loans = [(r["match"].lower(), r["type"]) for r in con.execute(
+        "SELECT match, type FROM loans WHERE LENGTH(match) >= 3 ORDER BY LENGTH(match) DESC")]
     n = 0
     for t in con.execute(
             "SELECT id,narration,payee,debit FROM txns WHERE category=''").fetchall():
         low = t["narration"].lower()
+        loan = next((typ for m, typ in loans if m in low), None)
+        if loan:
+            con.execute("UPDATE txns SET category=? WHERE id=?", (loan, t["id"]))
+            n += 1
+            continue
         head = t["debit"] > 0 and next(
             (h for h, ms in people
              if any(m.lower() in low or m == t["payee"] for m in ms)), None)
@@ -1509,6 +1538,110 @@ def mf_sheet_rows(q):
     return out
 
 
+# ---------- loans ----------
+
+LOAN_TYPES = ["Car loan", "Jewel loan", "Personal loan", "Home loan", "Education loan",
+              "Business loan", "Other loan"]
+LOAN_PURPOSES = ["Clinic", "Personal", "Home, self-occupied", "Home, let out"]
+
+
+def loan_tax_note(typ, purpose):
+    if purpose == "Home, self-occupied" or (typ == "Home loan" and purpose != "Home, let out"
+                                            and purpose != "Clinic"):
+        return ("Interest: section 24(b), up to 2 lakh a year for a self-occupied home. "
+                "Principal: 80C within the 1.5 lakh limit. Old tax regime only.")
+    if purpose == "Home, let out":
+        return ("Interest: section 24(b) against the rent; a loss can be set off up to "
+                "2 lakh a year. Principal: 80C.")
+    if typ == "Education loan":
+        return "Interest: section 80E, the full amount, for up to 8 years. Old tax regime only."
+    if purpose == "Clinic":
+        return ("Interest is a clinic expense if you keep books (not under 44ADA presumptive)."
+                + (" The car can also be depreciated." if typ == "Car loan" else ""))
+    return "No tax benefit for a loan used personally."
+
+
+def loan_schedule(amount, rate, emi, start):
+    """Month-by-month (date, interest, principal, balance) for an EMI loan."""
+    bal, r, d, out = amount, rate / 1200, start, []
+    if not (amount and rate and emi and start) or emi <= amount * r:
+        return out
+    for _ in range(480):
+        d = add_months(d, 1)
+        i = bal * r
+        p = min(emi - i, bal)
+        bal -= p
+        out.append((d, i, p, bal))
+        if bal <= 0.5:
+            break
+    return out
+
+
+def api_loans(q):
+    owner, fy = qget(q, "owner"), int(qget(q, "fy") or fy_of(datetime.now().strftime("%Y-%m-%d")))
+    a, b = fy_range(fy)
+    today = datetime.now().strftime("%Y-%m-%d")
+    con = db()
+    loans = [dict(r) for r in con.execute(
+        "SELECT * FROM loans" + (" WHERE owner=?" if owner else "") + " ORDER BY closed!='', type, name",
+        [owner] if owner else [])]
+    out = []
+    for l in loans:
+        received = paid = 0
+        if len(l["match"]) >= 3:
+            r = con.execute("SELECT COALESCE(SUM(credit),0) c, COALESCE(SUM(debit),0) d FROM txns"
+                            " WHERE category=? AND narration LIKE ? AND date BETWEEN ? AND ?",
+                            (l["type"], f"%{l['match']}%", a, b)).fetchone()
+            received, paid = r["c"], r["d"]
+        y = con.execute("SELECT * FROM loan_years WHERE loan_id=? AND fy=?", (l["id"], fy)).fetchone()
+        sched = loan_schedule(l["amount"], l["rate"], l["emi"], l["start"])
+        est_int = sum(i for d, i, _, _ in sched if a <= d <= b)
+        est_prin = sum(p for d, _, p, _ in sched if a <= d <= b)
+        upto = min(b, today)
+        past = [x for x in sched if x[0] <= upto]
+        est_out = past[-1][3] if past else (l["amount"] if sched and l["start"] <= upto else None)
+        interest = y["interest"] if y and y["interest"] is not None else (est_int if sched else None)
+        outstanding = y["outstanding"] if y and y["outstanding"] is not None else est_out
+        out.append(dict(l, received=received, paid=paid, interest=interest,
+                        interest_given=bool(y and y["interest"] is not None),
+                        principal=(paid - interest) if y and y["interest"] is not None and paid
+                        else (est_prin if sched else None),
+                        outstanding=outstanding,
+                        outstanding_given=bool(y and y["outstanding"] is not None),
+                        note_tax=loan_tax_note(l["type"], l["purpose"])))
+    w, args = "category IN (%s) AND date BETWEEN ? AND ?" % ",".join("?" * len(LOAN_TYPES)), LOAN_TYPES + [a, b]
+    if owner:
+        w += " AND account_id IN (SELECT id FROM accounts WHERE owner=?)"
+        args.append(owner)
+    allin = {r["category"]: (r["c"], r["d"], r["n"]) for r in con.execute(
+        f"SELECT category, SUM(credit) c, SUM(debit) d, COUNT(*) n FROM txns WHERE {w} GROUP BY 1", args)}
+    con.close()
+    by_type = []
+    for t in LOAN_TYPES:
+        c, d, n = allin.get(t, (0, 0, 0))
+        mine = [x for x in out if x["type"] == t]
+        if n or mine:
+            by_type.append(dict(type=t, received=c, paid=d, entries=n,
+                                matched=sum(x["received"] + x["paid"] for x in mine)))
+    return dict(rows=out, by_type=by_type, types=LOAN_TYPES, purposes=LOAN_PURPOSES)
+
+
+def loan_sheet_rows(q):
+    d = api_loans(q)
+    if not d["rows"] and not d["by_type"]:
+        return []
+    out = [("h", ["Loan", "Type", "Lender", "Owner", "Used for", "Received this year",
+                  "Paid this year", "Interest", "Principal", "Outstanding", "Tax note"])]
+    f = lambda v: float(round(v, 2)) if v is not None else ""
+    for l in d["rows"]:
+        out.append(("", [l["name"], l["type"], l["lender"], l["owner"], l["purpose"],
+                         f(l["received"]), f(l["paid"]),
+                         f(l["interest"]), f(l["principal"]), f(l["outstanding"]), l["note_tax"]]))
+    out += [("", []), ("h", ["All loan entries by type", "", "", "", "", "Received", "Paid"])]
+    out += [("", [t["type"], "", "", "", "", f(t["received"]), f(t["paid"])]) for t in d["by_type"]]
+    return out
+
+
 def books_year(fy, owner):
     """This year's figures from the books, in the same shape as an ITR summary."""
     q = {"fy": [str(fy)]}
@@ -1792,6 +1925,16 @@ def itr_rows(q):
         for r in sold:
             rows.append(("", [f"{r['name']} ({r['type']}, sold {r['sold']})", r["term"],
                               round((r["sale"] or 0) - (r["cost"] or 0), 2)]))
+    loans = api_loans(q)["rows"] if qget(q, "fy") else []
+    if loans:
+        rows.append(("", []))
+        rows.append(("h", ["J. Loans", "Interest this year", "Principal", "Outstanding"]))
+        for l in loans:
+            rows.append(("", [f"{l['name']} ({l['type']}, {l['purpose']})",
+                              round(l["interest"], 2) if l["interest"] is not None else "",
+                              round(l["principal"], 2) if l["principal"] is not None else "",
+                              round(l["outstanding"], 2) if l["outstanding"] is not None else ""]))
+            rows.append(("", ["   " + l["note_tax"]]))
     mf = api_mf(q)
     if mf["totals"]:
         rows.append(("", []))
@@ -2074,6 +2217,9 @@ def export_xlsx(q):
     if len(trade) > 2:
         sheets.append(("Trading P&L", trade, [22, 10] + [16] * 11 + [30], True))
     assets = asset_sheet_rows(q)
+    loans = loan_sheet_rows(q)
+    if loans:
+        sheets.append(("Loans", loans, [28, 14, 18, 10, 18, 14, 14, 14, 14, 14, 60], True))
     mf = mf_sheet_rows(q)
     if mf:
         sheets.append(("Mutual funds", mf, [44, 10, 12, 12, 12, 14, 14, 14, 22], True))
@@ -2148,6 +2294,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(api_itr(q))
             elif u.path == "/api/mf":
                 self.send(api_mf(q))
+            elif u.path == "/api/loans":
+                self.send(api_loans(q))
             elif u.path == "/api/itr/figures":
                 con = db()
                 r = con.execute("SELECT flat FROM itr_returns WHERE id=?",
@@ -2343,6 +2491,44 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         con.execute("INSERT INTO assets(name,type,owner,bought,cost,value,"
                                     "valued,sold,sale,note) VALUES(?,?,?,?,?,?,?,?,?,?)", vals)
+                elif u.path == "/api/loan":
+                    name = " ".join(str(d.get("name") or "").split())
+                    if not name:
+                        raise ValueError("Enter a name for the loan, e.g. HDFC car loan.")
+                    typ = d.get("type") if d.get("type") in LOAN_TYPES else "Other loan"
+                    purpose = d.get("purpose") if d.get("purpose") in LOAN_PURPOSES else "Personal"
+                    owner = d.get("owner") if d.get("owner") in OWNERS else "Self"
+                    match = " ".join(str(d.get("match") or "").split())
+                    if match and len(match) < 3:
+                        raise ValueError("The text in bank entries must be at least 3 letters.")
+                    vals = (name, typ, " ".join(str(d.get("lender") or "").split()), owner, purpose,
+                            to_num(d.get("amount")), check_date(d.get("start")), to_num(d.get("rate")),
+                            to_num(d.get("emi")), match, check_date(d.get("closed")),
+                            str(d.get("note") or "").strip())
+                    if d.get("id"):
+                        lid = int(d["id"])
+                        con.execute("UPDATE loans SET name=?, type=?, lender=?, owner=?, purpose=?,"
+                                    " amount=?, start=?, rate=?, emi=?, match=?, closed=?, note=?"
+                                    " WHERE id=?", vals + (lid,))
+                    else:
+                        lid = con.execute("INSERT INTO loans(name,type,lender,owner,purpose,amount,"
+                                          "start,rate,emi,match,closed,note) VALUES(?,?,?,?,?,?,?,?,?,"
+                                          "?,?,?)", vals).lastrowid
+                    if d.get("fy"):
+                        num = lambda k: None if str(d.get(k) or "").strip() == "" else to_num(d.get(k))
+                        con.execute("INSERT INTO loan_years(loan_id,fy,interest,outstanding) VALUES(?,?,?,?)"
+                                    " ON CONFLICT(loan_id,fy) DO UPDATE SET interest=excluded.interest,"
+                                    " outstanding=excluded.outstanding",
+                                    (lid, int(d["fy"]), num("interest"), num("outstanding")))
+                    res["changed"] = 0
+                    if match:  # file unsorted and generically sorted loan entries under this loan
+                        marks = ",".join("?" * len(LOAN_TYPES))
+                        res["changed"] = con.execute(
+                            f"UPDATE txns SET category=? WHERE narration LIKE ? AND (category=''"
+                            f" OR category IN ({marks}))", [typ, f"%{match}%"] + LOAN_TYPES).rowcount
+                elif u.path == "/api/loan/delete":
+                    con.execute("DELETE FROM loan_years WHERE loan_id=?", (int(d["id"]),))
+                    con.execute("DELETE FROM loans WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/mf/upload/delete":
                     for t in ("mf_txns", "mf_cg"):
                         con.execute(f"DELETE FROM {t} WHERE upload_id=?", (int(d["id"]),))
@@ -2507,6 +2693,17 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="card" id="tlist"></div>
   <button id="more" hidden>Show more</button>
 </section>
+<section id="loans">
+  <div class="row" style="margin-bottom:10px"><h2 class="grow" style="margin:0">Loans</h2>
+    <button class="pri" id="ln_add">Add loan</button></div>
+  <p class="mute">Add each loan once (car, jewel, personal, home and so on) with the text your bank uses
+  for it in entries, such as CAR LOAN, JLOTH or the loan account number. Its EMIs and disbursements are
+  then kept under that loan on every import. For exact interest, enter it from the lender's interest
+  certificate; otherwise it is estimated from the rate and EMI.</p>
+  <div class="stats" id="ln_stats"></div>
+  <div id="ln_list"></div>
+  <div class="card scroll" id="ln_types" hidden></div>
+</section>
 <section id="staff">
   <h2>Staff salaries</h2>
   <p class="mute">Add each staff member once. Salary payments to them are filed under Staff salaries
@@ -2622,6 +2819,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <button data-tab="txns">Entries</button>
   <button data-tab="trading">Trading</button>
   <button data-tab="assets">Assets</button>
+  <button data-tab="loans">Loans</button>
   <button data-tab="staff">Salaries</button>
   <button data-tab="consult">Consultants</button>
   <button data-tab="rules">Rules</button>
@@ -2690,6 +2888,34 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="row" style="margin-top:14px">
     <button class="link" id="as_del">Delete</button><span class="grow"></span>
     <button id="as_cancel">Cancel</button><button class="pri" id="as_save">Save</button></div>
+</dialog>
+<dialog id="lndlg">
+  <h3 id="ln_title">Loan</h3>
+  <label for="ln_name">Name</label><input type="text" id="ln_name" placeholder="e.g. HDFC car loan, IOB jewel loan">
+  <div class="two">
+    <div><label for="ln_type">Type</label><select id="ln_type"></select></div>
+    <div><label for="ln_purpose">Used for</label><select id="ln_purpose"></select></div>
+    <div><label for="ln_lender">Lender</label><input type="text" id="ln_lender"></div>
+    <div><label for="ln_owner">Owner</label><select id="ln_owner"></select></div>
+    <div><label for="ln_amount">Amount borrowed</label><input type="number" step="0.01" id="ln_amount"></div>
+    <div><label for="ln_start">Taken on</label><input type="date" id="ln_start"></div>
+    <div><label for="ln_rate">Interest rate (% a year)</label><input type="number" step="0.01" id="ln_rate"></div>
+    <div><label for="ln_emi">EMI (leave empty for jewel loans)</label><input type="number" step="0.01" id="ln_emi"></div>
+  </div>
+  <label for="ln_match">Text for this loan in bank entries</label>
+  <input type="text" id="ln_match" placeholder="e.g. CAR LOAN, JLOTH, or the loan account number">
+  <div class="two">
+    <div><label for="ln_closed">Closed on (if closed)</label><input type="date" id="ln_closed"></div>
+    <div><label for="ln_note">Note</label><input type="text" id="ln_note"></div>
+  </div>
+  <h3 style="margin-top:14px" id="ln_fytitle"></h3>
+  <div class="two">
+    <div><label for="ln_interest">Interest paid (from certificate)</label><input type="number" step="0.01" id="ln_interest" placeholder="empty: estimate"></div>
+    <div><label for="ln_outstanding">Outstanding at year end</label><input type="number" step="0.01" id="ln_outstanding" placeholder="empty: estimate"></div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button class="link" id="ln_del">Delete</button><span class="grow"></span>
+    <button id="ln_cancel">Cancel</button><button class="pri" id="ln_save">Save</button></div>
 </dialog>
 <dialog id="ifdlg">
   <div class="row"><b class="grow" id="if_title"></b><button id="if_close">Close</button></div>
@@ -3022,6 +3248,38 @@ async function loadAssets(){
   await loadMf();
   $('abank').textContent=A.bank?'Bank payments sorted as Investments in '+fyLabel(+y)+': '+inr(A.bank)+'. Add those purchases here too so the totals are complete.':'';
 }
+let L=null,lCur=null;
+async function loadLoans(){
+  const y=$('fy').value;L=await api('/api/loans?'+qs({owner:$('who').value,fy:y}));
+  const sum=k=>L.rows.reduce((a,r)=>a+(r[k]||0),0),fyName=fyLabel(+y).split(' (')[0];
+  $('ln_stats').innerHTML=L.rows.length?stat('Outstanding',sum('outstanding'))+stat('Interest, '+fyName,sum('interest'))+
+    stat('Paid (EMIs), '+fyName,sum('paid'))+stat('Received, '+fyName,sum('received')):'';
+  const cell=(label,v,est)=>'<div><span class="mute">'+label+'</span><span class="num">'+(v==null?'-':inr(v)+(est?' <i class="mute">est.</i>':''))+'</span></div>';
+  $('ln_list').innerHTML=L.rows.length?L.rows.map(l=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(l.name)+'</b> <span class="chip">'+esc(l.type)+
+    '</span> <span class="chip">'+esc(l.purpose)+'</span> <span class="chip">'+esc(l.owner)+'</span>'+(l.closed?' <span class="chip">closed '+l.closed+'</span>':'')+
+    '<div class="mute">'+esc([l.lender,l.amount?'borrowed '+inr(l.amount):'',l.start?'on '+l.start:'',l.rate?l.rate+'%':'',l.emi?'EMI '+inr(l.emi):''].filter(Boolean).join(', '))+'</div></div>'+
+    '<div style="text-align:right"><span class="mute">Outstanding</span><br><b class="num">'+(l.outstanding==null?'-':inr(l.outstanding))+'</b>'+(l.outstanding!=null&&!l.outstanding_given?' <i class="mute">est.</i>':'')+'</div></div>'+
+    '<div class="figs">'+cell('Received this year',l.received)+cell('Paid this year',l.paid)+cell('Interest',l.interest,!l.interest_given)+cell('Principal repaid',l.principal,!l.interest_given)+'</div>'+
+    '<p class="mute" style="margin:8px 0 0">'+esc(l.note_tax)+(l.match?'':' <b>Add the text for this loan in bank entries so its EMIs are picked up.</b>')+'</p>'+
+    '<div class="row" style="margin-top:8px"><span class="grow"></span>'+(l.match?'<button class="link" data-lview="'+l.id+'">View entries</button>':'')+
+    '<button class="pri" data-ledit="'+l.id+'">Edit</button></div></div>').join('')
+    :'<div class="card mute">No loans added yet. Use Add loan for each car, jewel, personal or home loan.</div>';
+  const box=$('ln_types');box.hidden=!L.by_type.length;
+  box.innerHTML='<h3>All loan entries in '+fyName+' by type</h3><table><tr><th>Type</th><th>Entries</th><th>Received</th><th>Paid</th><th>Not linked to a loan</th></tr>'+
+    L.by_type.map(t=>{const loose=t.received+t.paid-t.matched;return '<tr class="go" data-ltype="'+esc(t.type)+'"><td>'+esc(t.type)+'</td><td>'+t.entries+'</td><td class="num">'+inr(t.received)+
+      '</td><td class="num">'+inr(t.paid)+'</td><td class="num">'+(loose>0.5?inr(loose):'')+'</td></tr>';}).join('')+'</table>';
+}
+function openLoan(l){lCur=l||null;
+  keepValue('ln_type',L.types.map(t=>'<option>'+esc(t)+'</option>').join(''));
+  keepValue('ln_purpose',L.purposes.map(t=>'<option>'+esc(t)+'</option>').join(''));
+  keepValue('ln_owner',S.owners.map(o=>'<option>'+esc(o)+'</option>').join(''));
+  $('ln_title').textContent=l?'Edit loan':'Add loan';$('ln_del').style.visibility=l?'visible':'hidden';
+  const v=l||{name:'',type:'Car loan',purpose:'Personal',lender:'',owner:$('who').value||'Self',amount:'',start:'',rate:'',emi:'',match:'',closed:'',note:''};
+  for(const k of ['name','type','purpose','lender','owner','start','match','closed','note'])$('ln_'+k).value=v[k]||'';
+  for(const k of ['amount','rate','emi'])$('ln_'+k).value=v[k]||'';
+  $('ln_fytitle').textContent=fyLabel(+$('fy').value);
+  $('ln_interest').value=l&&l.interest_given?l.interest:'';$('ln_outstanding').value=l&&l.outstanding_given?l.outstanding:'';
+  $('lndlg').showModal();}
 async function loadMf(){
   const y=$('fy').value,d=await api('/api/mf?'+qs({owner:$('who').value,fy:y}));
   keepValue('mf_owner',S.owners.map(o=>'<option'+(o===($('who').value||'Self')?' selected':'')+'>'+esc(o)+'</option>').join(''));
@@ -3061,7 +3319,7 @@ function activeTab(){return document.querySelector('nav .on').dataset.tab;}
 function refresh(){const tab=activeTab();
   if(tab==='txns')return loadTxns(true);if(tab==='reports')return loadReport();if(tab==='sort')return loadSort();
   if(tab==='consult')return loadConsult();if(tab==='trading')return loadTrading();
-  if(tab==='staff')return loadStaff();if(tab==='banking')return loadCash();
+  if(tab==='staff')return loadStaff();if(tab==='loans')return loadLoans();if(tab==='banking')return loadCash();
   if(tab==='assets')return loadAssets();}
 const run=fn=>async(...a)=>{try{await fn(...a);}catch(e){toast(e.message);}};
 async function go(tab){
@@ -3174,6 +3432,21 @@ $('td_save').onclick=run(async()=>{const body={account_id:tAcct.id,fy:$('fy').va
   for(const f of T.fields)body[f[0]]=$('tf_'+f[0]).value;
   await api('/api/trading',body);$('tdlg').close();await loadTrading();toast('Saved '+tAcct.name);});
 $('as_add').onclick=()=>openAsset(null);
+$('ln_add').onclick=()=>openLoan(null);
+$('ln_cancel').onclick=()=>$('lndlg').close();
+$('ln_save').onclick=run(async()=>{const body={id:lCur?lCur.id:0,fy:$('fy').value};
+  for(const k of ['name','type','purpose','lender','owner','amount','start','rate','emi','match','closed','note','interest','outstanding'])body[k]=$('ln_'+k).value;
+  const r=await api('/api/loan',body);$('lndlg').close();
+  toast('Saved '+body.name+(r.changed?'. '+r.changed+' bank entries filed under it.':''));await loadState();await loadLoans();});
+$('ln_del').onclick=run(async()=>{if(!lCur||!confirm('Delete '+lCur.name+'? Its bank entries stay under '+lCur.type+'.'))return;
+  await api('/api/loan/delete',{id:lCur.id});$('lndlg').close();await loadLoans();});
+$('ln_list').onclick=run(async e=>{const d=e.target.dataset;
+  if(d.ledit)openLoan(L.rows.find(l=>l.id==d.ledit));
+  if(d.lview){const l=L.rows.find(x=>x.id==d.lview);payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';
+    await go('txns');$('f_cat').value=l.type;$('f_q').value=l.match;await loadTxns(true);}});
+$('ln_types').onclick=run(async e=>{const tr=e.target.closest('tr[data-ltype]');if(!tr)return;
+  payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';$('f_q').value='';
+  await go('txns');$('f_cat').value=tr.dataset.ltype;await loadTxns(true);});
 $('mf_up').onclick=()=>{$('mffile').value='';$('mffile').click();};
 $('mffile').onchange=run(async()=>{const f=$('mffile').files[0];if(!f)return;
   let pw='';if(/\.pdf$/i.test(f.name))pw=prompt('PDF password. For CAMS and KFintech statements it is usually your PAN in capitals.')||'';
