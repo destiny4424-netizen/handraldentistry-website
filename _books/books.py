@@ -134,6 +134,10 @@ CREATE TABLE IF NOT EXISTS trading_pnl(
   intraday REAL DEFAULT 0, fno REAL DEFAULT 0, stcg REAL DEFAULT 0,
   ltcg REAL DEFAULT 0, dividends REAL DEFAULT 0, charges REAL DEFAULT 0,
   turnover REAL DEFAULT 0, note TEXT DEFAULT '', UNIQUE(account_id, fy));
+CREATE TABLE IF NOT EXISTS itr_returns(
+  id INTEGER PRIMARY KEY, owner TEXT DEFAULT 'Self', ay INTEGER, form TEXT,
+  name TEXT DEFAULT '', pan TEXT DEFAULT '', filename TEXT, uploaded TEXT,
+  summary TEXT, flat TEXT, data BLOB);
 CREATE TABLE IF NOT EXISTS assets(
   id INTEGER PRIMARY KEY, name TEXT, type TEXT, owner TEXT DEFAULT 'Self',
   bought TEXT DEFAULT '', cost REAL DEFAULT 0, value REAL DEFAULT 0,
@@ -980,6 +984,295 @@ def asset_sheet_rows(q):
     return out
 
 
+# ---------- previous income tax returns ----------
+
+# (key, label, JSON keys in priority order, PDF line pattern)
+ITR_FIELDS = [
+    ("receipts", "Gross receipts from profession",
+     ["GrsReceipt", "GrossReceipt", "GrsTrnOverOrGrsRcpt", "TotRevenueFrmOperations"],
+     r"gross receipts?"),
+    ("presumptive", "Presumptive income u/s 44ADA",
+     ["TotPersumptiveInc44ADA", "TotPresumptiveInc44ADA"], r"44\s*ada"),
+    ("business", "Income from business or profession",
+     ["TotProfBusGain", "IncomeFromBusinessProf", "ProfBusGain"],
+     r"business or profession|profits and gains"),
+    ("salary", "Salary income", ["IncomeFromSal", "Salaries", "NetSalary", "TotalSalary"],
+     r"^\s*(income (from|under the head) )?salar(y|ies)"),
+    ("house", "House property income",
+     ["TotalIncomeOfHP", "IncomeFromHP", "TotalIncomeChargeableUnHP"], r"house property"),
+    ("stcg", "Short-term capital gains", ["TotalShortTerm", "TotalSTCG"], r"short[\s-]*term capital"),
+    ("ltcg", "Long-term capital gains", ["TotalLongTerm", "TotalLTCG"], r"long[\s-]*term capital"),
+    ("capital", "Capital gains (total)", ["TotalCapGains", "CapGain"], r"^\s*(income (from|under the head) )?capital gains?"),
+    ("other", "Income from other sources", ["IncomeOthSrc", "TotIncFromOS", "IncFromOS"],
+     r"other sources"),
+    ("gross_total", "Gross total income", ["GrossTotIncome", "GrossTotalIncome"],
+     r"gross total income"),
+    ("d80c", "Deduction 80C", ["Section80C"], r"\b80\s*c\b"),
+    ("d80d", "Deduction 80D", ["Section80D"], r"\b80\s*d\b"),
+    ("d80g", "Deduction 80G", ["Section80G"], r"\b80\s*g\b"),
+    ("d80tta", "Deduction 80TTA/80TTB", ["Section80TTA", "Section80TTB"], r"\b80\s*tt[ab]\b"),
+    ("deductions", "Total deductions (Chapter VI-A)",
+     ["TotalChapVIADeductions", "DeductionsUnderScheduleVIA", "TotalDeductions"],
+     r"chapter[\s-]*vi[\s-]*a|total deductions?"),
+    ("total_income", "Total income", ["TotalIncome", "TotIncome"],
+     r"(?<!gross )\btotal income\b"),
+    ("tax", "Tax payable", ["NetTaxLiability", "TotalTaxPayable", "GrossTaxLiability"],
+     r"(net |total )?tax (payable|liability)"),
+    ("tax_paid", "Taxes paid", ["TotalTaxesPaid"], r"taxes paid|total tax paid"),
+    ("refund", "Refund due", ["RefundDue"], r"\brefund"),
+]
+ITR_LABEL = {k: label for k, label, _, _ in ITR_FIELDS}
+ITR_USE_MAX = ("receipts",)
+
+
+def mask_pan(pan):
+    pan = str(pan or "").strip().upper()
+    return pan[:3] + "XXXX" + pan[-3:] if len(pan) == 10 else ""
+
+
+def flatten(obj, path=""):
+    """Every scalar in a JSON tree as (path, value)."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from flatten(v, f"{path}/{k}" if path else k)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from flatten(v, f"{path}[{i}]")
+    else:
+        yield path, obj
+
+
+def _as_num(v):
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return num_cell(v)
+
+
+def parse_itr_json(obj):
+    flat = list(flatten(obj))
+    by_key = {}
+    for path, v in flat:
+        key = path.split("/")[-1].split("[")[0]
+        by_key.setdefault(key, []).append((path, v))
+    figures = {}
+    for field, _, keys, _ in ITR_FIELDS:
+        for k in keys:
+            cands = [(p, _as_num(v)) for p, v in by_key.get(k, []) if _as_num(v) is not None]
+            if not cands:
+                continue
+            if field in ITR_USE_MAX:
+                figures[field] = max(v for _, v in cands)
+            else:  # the shallowest; the allowed figure rather than the one claimed
+                cands.sort(key=lambda c: ("Usr" in c[0], c[0].count("/")))
+                figures[field] = cands[0][1]
+            break
+    ay = next((str(v) for p, v in flat if p.endswith("AssessmentYear") and str(v)[:4].isdigit()), "")
+    form = next((m.group(1) for p, _ in flat for m in [re.search(r"\bITR([1-7])\b", p)] if m), "")
+    first = next((v for p, v in flat if p.endswith("AssesseeName/FirstName")), "") or ""
+    last = next((v for p, v in flat if p.endswith("AssesseeName/SurNameOrOrgName")), "") or ""
+    pan = next((v for p, v in flat if p.endswith("/PAN") or p == "PAN"), "")
+    banks = []
+    for p, v in flat:
+        if p.endswith("BankAccountNo"):
+            base = p[: -len("BankAccountNo")]
+            get = lambda k: next((x for q, x in flat if q == base + k), "")
+            banks.append(dict(bank=str(get("BankName") or ""), ifsc=str(get("IFSCCode") or ""),
+                              last4=str(v)[-4:]))
+    scheme = "44ADA" if figures.get("presumptive") else ""
+    return dict(ay=int(ay[:4]) if ay else None, form=f"ITR-{form}" if form else "",
+                name=" ".join(f"{first} {last}".split()).title(), pan=mask_pan(pan),
+                figures=figures, banks=banks, scheme=scheme), \
+        [[p, v] for p, v in flat if v not in (None, "", 0, "0")]
+
+
+def parse_itr_pdf(data, password):
+    rows, lines = pdf_rows(data, password)
+    text = "\n".join(" ".join(str(c or "") for c in r) for r in rows + lines)
+    ay = re.search(r"(?i)assessment\s+year\s*[:\-]?\s*(20\d\d)\s*-\s*\d\d", text)
+    form = re.search(r"\bITR\s*-?\s*([1-7])\b", text)
+    pan = re.search(r"\b[A-Z]{5}\d{4}[A-Z]\b", text)
+    figures, flat = {}, []
+    for raw in lines + rows:
+        cells = [str(c or "") for c in raw]
+        nums = [num_cell(c) for c in cells if num_cell(c) is not None]
+        label = " ".join(c for c in cells if num_cell(c) is None).strip()
+        if not nums or not label:
+            continue
+        flat.append([label, nums[-1]])
+        low = label.lower()
+        for field, _, _, pat in ITR_FIELDS:
+            if field not in figures and re.search(pat, low):
+                figures[field] = nums[-1]
+                break
+    if not figures:
+        raise ValueError("No figures found in this PDF. Upload the JSON of the return "
+                         "(income-tax portal, View Filed Returns, Download JSON) instead.")
+    return dict(ay=int(ay.group(1)) if ay else None,
+                form=f"ITR-{form.group(1)}" if form else "", name="",
+                pan=mask_pan(pan.group()) if pan else "", figures=figures, banks=[],
+                scheme="44ADA" if figures.get("presumptive") else ""), flat
+
+
+def parse_itr(name, data, password):
+    if len(data) > MAX_BYTES:
+        raise ValueError("File is larger than 15 MB; this is not an ITR file.")
+    if data[:2] == b"PK":  # a zip holding the JSON
+        try:
+            z = zipfile.ZipFile(io.BytesIO(data))
+            inner = next(n for n in z.namelist() if n.lower().endswith(".json"))
+            data = z.read(inner)
+        except (zipfile.BadZipFile, StopIteration):
+            raise ValueError("This zip file has no ITR JSON inside.")
+    if data[:4] == b"%PDF":
+        return parse_itr_pdf(data, password)
+    try:
+        obj = json.loads(data.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("Upload the ITR JSON or PDF downloaded from the income-tax portal.")
+    info, flat = parse_itr_json(obj)
+    if not info["figures"]:
+        raise ValueError("This JSON does not look like an income tax return.")
+    return info, flat
+
+
+def books_year(fy, owner):
+    """This year's figures from the books, in the same shape as an ITR summary."""
+    q = {"fy": [str(fy)]}
+    if owner:
+        q["owner"] = [owner]
+    c = {r[1]: r for r in summary_rows(q)}
+    inc = lambda *n: sum(c[x][3] - c[x][4] for x in n if x in c)
+    out = lambda *n: sum(c[x][4] - c[x][3] for x in n if x in c)
+    rec = inc("Patient receipts", "Other clinic income")
+    exp = out(*[n for n, g in CATS if g == "expenses"])
+    trade = api_trading(q)["rows"]
+    sold = sold_in(api_assets(q)["rows"], str(fy))
+    st = sum(r["stcg"] or 0 for r in trade) + sum(
+        (r["sale"] or 0) - (r["cost"] or 0) for r in sold if r["term"].startswith("Short"))
+    lt = sum(r["ltcg"] or 0 for r in trade) + sum(
+        (r["sale"] or 0) - (r["cost"] or 0) for r in sold if r["term"] == "Long term")
+    cash = api_cash(q)["total"]
+    return dict(receipts=rec, business=rec - exp, salary=inc("Salary income"),
+                other=inc("Interest received", "Other income"), stcg=st, ltcg=lt,
+                capital=st + lt,
+                d80c=out("Life insurance premium (80C)", "Tax-saving investment (80C)",
+                         "School fees (80C)"),
+                d80d=out("Health insurance premium (80D)"), d80g=out("Donations (80G)"),
+                tax_paid=out("Income tax and TDS paid"), cash=cash,
+                trading=sum(r["net"] for r in trade))
+
+
+def itr_insights(returns, fy, owner, now):
+    """Plain checks comparing the latest earlier return with this year's books."""
+    past = [r for r in returns if r["ay"] and r["ay"] - 1 < fy]
+    if not past:
+        return []
+    last = max(past, key=lambda r: (r["ay"], len(r["figures"])))
+    f, ay = last["figures"], f"AY {last['ay']}-{str(last['ay'] + 1)[2:]}"
+    tips = []
+    rec = now["receipts"]
+    if f.get("presumptive"):
+        base = f.get("receipts") or 0
+        rate = f["presumptive"] / base if base else 0.5
+        cash_share = now["cash"] / rec if rec else 0
+        tips.append(
+            f"{ay} was filed as {last['form'] or 'a return'} under presumptive taxation "
+            f"(section 44ADA): {inr_text(f['presumptive'])} declared on receipts of "
+            f"{inr_text(base)} ({rate * 100:.0f}%). This year's receipts so far are "
+            f"{inr_text(rec)}; at the same rate that is {inr_text(rec * rate)}. "
+            f"Cash is {cash_share * 100:.1f}% of receipts: the 44ADA limit is 75 lakh when "
+            f"cash receipts are within 5%, otherwise 50 lakh.")
+    elif f.get("business") is not None and f.get("receipts"):
+        tips.append(f"{ay} declared {inr_text(f['business'])} from profession on receipts of "
+                    f"{inr_text(f['receipts'])}. Books this year: receipts {inr_text(rec)}, "
+                    f"profit {inr_text(now['business'])}.")
+    for key, head in (("d80c", "80C (LIC, tax-saving investments, school fees)"),
+                      ("d80d", "Health insurance premium (80D)"), ("d80g", "Donations (80G)")):
+        if (f.get(key) or 0) > 0 and not now[key]:
+            tips.append(f"{ay} claimed {inr_text(f[key])} under {ITR_LABEL[key].replace('Deduction ', '')}. Nothing is "
+                        f"sorted under {head} this year yet; sort those payments so it is not missed.")
+    for key, where in (("salary", "sort salary credits as Salary income"),
+                       ("other", "sort bank and FD interest as Interest received"),
+                       ("capital", "fill in the Trading and Assets tabs")):
+        if (f.get(key) or 0) > 0 and not now[key]:
+            tips.append(f"{ay} had {ITR_LABEL[key].lower()} of {inr_text(f[key])}; none found "
+                        f"this year so far. If it applies again, {where}.")
+    if last["banks"]:
+        con = db()
+        names = " ".join(r[0] for r in con.execute("SELECT name FROM accounts")).upper()
+        con.close()
+        for b in last["banks"]:
+            if b["last4"] and b["last4"] not in names:
+                tips.append(f"Bank account in {ay}: {b['bank'] or 'bank'} ending {b['last4']} "
+                            f"({b['ifsc']}) is not in Banking. Add it as an account named with "
+                            f"{b['last4']} in it and import its statement.")
+    if (f.get("tax") or 0) > 10000:
+        tips.append(f"Tax for {ay} was {inr_text(f['tax'])}. If this year is similar, advance tax "
+                    f"is due (presumptive 44ADA filers may pay it all by 15 March; others in "
+                    f"instalments by 15 Jun, 15 Sep, 15 Dec and 15 Mar). Tax paid in the books "
+                    f"this year: {inr_text(now['tax_paid'])}.")
+    return tips
+
+
+def inr_text(v):
+    """Rupees in Indian grouping, e.g. 12,34,567."""
+    n = int(round(abs(v or 0)))
+    s = str(n)
+    if len(s) > 3:
+        head, tail = s[:-3], s[-3:]
+        head = ",".join(re.findall(r"\d{1,2}", head[::-1]))[::-1] if head else ""
+        s = head + "," + tail
+    return ("-" if (v or 0) < 0 else "") + "\u20b9" + s
+
+
+def api_itr(q):
+    owner = qget(q, "owner")
+    fy = int(qget(q, "fy") or fy_of(datetime.now().strftime("%Y-%m-%d")))
+    con = db()
+    rows = [dict(r) for r in con.execute(
+        "SELECT id, owner, ay, form, name, pan, filename, uploaded, summary FROM itr_returns"
+        + (" WHERE owner=?" if owner else "") + " ORDER BY ay DESC, id DESC",
+        [owner] if owner else [])]
+    con.close()
+    for r in rows:
+        s = json.loads(r.pop("summary") or "{}")
+        r.update(figures=s.get("figures", {}), banks=s.get("banks", []), scheme=s.get("scheme", ""))
+    best = {}
+    for r in rows:  # per person and year, the upload with the most figures
+        k = (r["owner"], r["ay"])
+        if k not in best or len(r["figures"]) > len(best[k]["figures"]):
+            best[k] = r
+    years = sorted({r["ay"] for r in best.values() if r["ay"]}, reverse=True)[:5]
+    now = books_year(fy, owner)
+    cols = [dict(title=f"AY {fy + 1}-{str(fy + 2)[2:]} (books so far)", values=now)]
+    for ay in years:
+        vals = {}
+        for r in best.values():
+            if r["ay"] == ay:
+                for k, v in r["figures"].items():
+                    vals[k] = (vals.get(k) or 0) + v
+        cols.append(dict(title=f"AY {ay}-{str(ay + 1)[2:]}", values=vals))
+    keys = [k for k, *_ in ITR_FIELDS if any(c["values"].get(k) for c in cols)]
+    return dict(returns=rows, columns=cols,
+                compare=[[ITR_LABEL[k]] + [c["values"].get(k) for c in cols] for k in keys],
+                insights=itr_insights(list(best.values()), fy, owner, now))
+
+
+def itr_sheet_rows(q):
+    d = api_itr(q)
+    if not d["returns"]:
+        return []
+    out = [("h", ["Figure"] + [c["title"] for c in d["columns"]])]
+    out += [("", [r[0]] + [float(round(v, 2)) if v is not None else "" for v in r[1:]])
+            for r in d["compare"]]
+    if d["insights"]:
+        out += [("", []), ("h", ["Checks from the last return"])]
+        out += [("", [t]) for t in d["insights"]]
+    return out
+
+
 def summary_rows(q):
     where, args = txn_filter(q)
     con = db()
@@ -1396,6 +1689,9 @@ def export_xlsx(q):
     if len(assets) > 1:
         sheets.append(("Investments", assets,
                        [30, 22, 10, 12, 14, 14, 12, 14, 12, 14, 14, 26, 30], True))
+    itr = itr_sheet_rows(q)
+    if itr:
+        sheets.append(("Previous ITRs", itr, [40] + [20] * 6, True))
     sheets.append(("All entries", [("h", ENTRY_HEAD)] + money(ent), ew, True))
     for kind in ("Clinic", "Personal"):
         part = [r for r in ent if r[8] == kind]
@@ -1457,6 +1753,24 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(api_people("staff", q))
             elif u.path == "/api/cash":
                 self.send(api_cash(q))
+            elif u.path == "/api/itr":
+                self.send(api_itr(q))
+            elif u.path == "/api/itr/figures":
+                con = db()
+                r = con.execute("SELECT flat FROM itr_returns WHERE id=?",
+                                (int(qget(q, "id")),)).fetchone()
+                con.close()
+                self.send({"rows": json.loads(r["flat"]) if r else []})
+            elif u.path == "/api/itr/file":
+                con = db()
+                r = con.execute("SELECT filename, data FROM itr_returns WHERE id=?",
+                                (int(qget(q, "id")),)).fetchone()
+                con.close()
+                if not r:
+                    return self.send({"error": "Not found"}, code=404)
+                fname = re.sub(r"[^A-Za-z0-9._-]+", "_", r["filename"] or "itr")
+                self.send(bytes(r["data"]), "application/octet-stream", extra={
+                    "Content-Disposition": f"attachment; filename={fname}"})
             elif u.path == "/api/groups":
                 self.send(api_groups(q))
             elif u.path == "/api/trading":
@@ -1489,6 +1803,25 @@ class Handler(BaseHTTPRequestHandler):
                 res = import_statement(int(q["account"][0]), q["name"][0],
                                        self.body(), (q.get("pw") or [""])[0])
                 return self.send(res)
+            if u.path == "/api/itr/upload":
+                data = self.body()
+                info, flat = parse_itr(qget(q, "name"), data, qget(q, "pw"))
+                if not info["ay"]:
+                    raise ValueError("Could not find the assessment year in this file.")
+                owner = qget(q, "owner") if qget(q, "owner") in OWNERS else "Self"
+                with LOCK:
+                    con = db()
+                    con.execute(
+                        "INSERT INTO itr_returns(owner,ay,form,name,pan,filename,uploaded,"
+                        "summary,flat,data) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (owner, info["ay"], info["form"], info["name"], info["pan"],
+                         qget(q, "name"), datetime.now().strftime("%Y-%m-%d"),
+                         json.dumps({k: info[k] for k in ("figures", "banks", "scheme")}),
+                         json.dumps(flat[:5000], default=str), data))
+                    con.commit()
+                    con.close()
+                return self.send(dict(ok=True, ay=info["ay"], form=info["form"],
+                                      found=len(info["figures"])))
             if u.path == "/api/trading/parse":
                 return self.send(parse_pnl(qget(q, "name"), self.body(), qget(q, "pw")))
             d = json.loads(self.body() or b"{}")
@@ -1614,6 +1947,8 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         con.execute("INSERT INTO assets(name,type,owner,bought,cost,value,"
                                     "valued,sold,sale,note) VALUES(?,?,?,?,?,?,?,?,?,?)", vals)
+                elif u.path == "/api/itr/delete":
+                    con.execute("DELETE FROM itr_returns WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/asset/delete":
                     con.execute("DELETE FROM assets WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/consultant/delete":
@@ -1843,6 +2178,18 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="stats" id="rstats"></div>
   <div id="heads"></div>
   <div id="chead"></div>
+  <div class="card" id="itrcard">
+    <div class="row"><h3 class="grow" style="margin:0">Previous income tax returns</h3>
+      <select id="itr_owner" aria-label="Whose return"></select>
+      <button class="pri" id="itr_up">Upload ITR</button></div>
+    <p class="mute" style="margin:6px 0">Best: the JSON from the income-tax portal (e-File, Income Tax Returns,
+    View Filed Returns, Download JSON). The ITR form PDF or ITR-V PDF also works. Each upload is compared
+    with this year's books and checked for anything missed.</p>
+    <div id="itr_tips"></div>
+    <div class="scroll" id="itr_cmp"></div>
+    <div id="itr_files"></div>
+    <input type="file" id="itrfile" hidden accept=".json,.pdf,.zip">
+  </div>
   <div class="card" id="dl">
     <h3>Download</h3>
     <div class="filters" style="margin:8px 0">
@@ -1936,6 +2283,11 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="row" style="margin-top:14px">
     <button class="link" id="as_del">Delete</button><span class="grow"></span>
     <button id="as_cancel">Cancel</button><button class="pri" id="as_save">Save</button></div>
+</dialog>
+<dialog id="ifdlg">
+  <div class="row"><b class="grow" id="if_title"></b><button id="if_close">Close</button></div>
+  <input type="text" id="if_q" placeholder="Search, e.g. 80C or Receipt" style="width:100%;margin:8px 0">
+  <div id="if_list" style="max-height:60vh;overflow:auto"></div>
 </dialog>
 <div id="selbar"><span class="grow" id="seltext"></span>
   <button class="ghost" id="selclear">Clear</button><button class="pri" id="selgo">Sort selected</button></div>
@@ -2139,7 +2491,25 @@ async function loadReport(){
     t+=line('Total',m=>tot(g,m),'tot');}
   t+=line('Clinic profit',m=>tot('receipts',m)-tot('expenses',m),'tot');
   $('rtable').innerHTML=t;
+  await loadItr();
 }
+let IF=[];
+async function loadItr(){
+  const d=await api('/api/itr?'+qs({owner:$('who').value,fy:$('fy').value}));
+  keepValue('itr_owner',S.owners.map(o=>'<option'+(o===($('who').value||'Self')?' selected':'')+'>'+esc(o)+'</option>').join(''));
+  $('itr_tips').innerHTML=d.insights.length?'<div class="card warn" style="margin:8px 0"><b>Checks from your last return</b><ul style="margin:6px 0 0;padding-left:20px">'+
+    d.insights.map(t=>'<li style="margin:4px 0">'+esc(t)+'</li>').join('')+'</ul></div>':'';
+  $('itr_cmp').innerHTML=d.returns.length?'<table><tr><th>Figure</th>'+d.columns.map(c=>'<th>'+esc(c.title)+'</th>').join('')+'</tr>'+
+    d.compare.map(r=>'<tr><td>'+esc(r[0])+'</td>'+r.slice(1).map(v=>'<td class="num">'+(v==null?'':inr(v))+'</td>').join('')+'</tr>').join('')+'</table>':'';
+  $('itr_files').innerHTML=d.returns.map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>AY '+r.ay+'-'+String(r.ay+1).slice(2)+'</b> '+
+    (r.form?'<span class="chip">'+esc(r.form)+'</span> ':'')+(r.scheme?'<span class="chip">'+esc(r.scheme)+'</span> ':'')+'<span class="chip">'+esc(r.owner)+'</span>'+
+    '<div class="mute">'+esc([r.name,r.pan,r.filename,'uploaded '+r.uploaded].filter(Boolean).join(', '))+'</div></div>'+
+    '<button class="link" data-ifig="'+r.id+'">All figures</button><button class="link" data-ifile="'+r.id+'">Download</button>'+
+    '<button class="link" data-idel="'+r.id+'">Delete</button></div>').join('');
+}
+function showFigures(){const q=$('if_q').value.toLowerCase();
+  $('if_list').innerHTML='<table>'+IF.filter(r=>!q||String(r[0]).toLowerCase().includes(q)).slice(0,500)
+    .map(r=>'<tr><td style="white-space:normal;word-break:break-word">'+esc(r[0])+'</td><td class="num">'+esc(r[1])+'</td></tr>').join('')+'</table>';}
 function renderPeople(box,rows,kind,head,empty){box.innerHTML='';
   if(!rows.length){box.innerHTML='<span class="mute">'+empty+'</span>';return;}
   for(const c of rows){
@@ -2379,6 +2749,18 @@ $('as_save').onclick=run(async()=>{const body={id:aCur?aCur.id:0};
   await api('/api/asset',body);$('asdlg').close();await loadAssets();toast('Saved '+body.name);});
 $('as_del').onclick=run(async()=>{if(!aCur||!confirm('Delete '+aCur.name+'?'))return;
   await api('/api/asset/delete',{id:aCur.id});$('asdlg').close();await loadAssets();});
+$('itr_up').onclick=()=>{$('itrfile').value='';$('itrfile').click();};
+$('itrfile').onchange=run(async()=>{const f=$('itrfile').files[0];if(!f)return;
+  let pw='';if(/\.pdf$/i.test(f.name))pw=prompt('PDF password, if any. For ITR-V it is usually your PAN in small letters followed by date of birth as DDMMYYYY.')||'';
+  toast('Reading '+f.name+'...');
+  const r=await api('/api/itr/upload?'+qs({name:f.name,pw:pw,owner:$('itr_owner').value}),f);
+  toast('Read '+(r.form||'return')+' for AY '+r.ay+'-'+String(r.ay+1).slice(2)+': '+r.found+' figures');await loadItr();});
+$('itr_files').onclick=run(async e=>{const d=e.target.dataset;
+  if(d.ifile)location.href='/api/itr/file?id='+d.ifile;
+  if(d.idel&&confirm('Delete this uploaded return?')){await api('/api/itr/delete',{id:+d.idel});await loadItr();}
+  if(d.ifig){IF=(await api('/api/itr/figures?id='+d.ifig)).rows;$('if_title').textContent='All figures in the file';
+    $('if_q').value='';showFigures();$('ifdlg').showModal();}});
+$('if_q').oninput=showFigures;$('if_close').onclick=()=>$('ifdlg').close();
 run(async()=>{await loadState();await loadCash();})();
 </script></body></html>"""
 
