@@ -183,6 +183,35 @@ CREATE TABLE IF NOT EXISTS assets(
 """
 
 
+def spellings(match):
+    """A person's names in bank entries: "GIRISH V CHOUR, vgirish5" -> two spellings."""
+    return [m for m in (" ".join(x.split()) for x in str(match or "").split(",")) if len(m) >= 3]
+
+
+def person_where(match):
+    alts = spellings(match)
+    sql = " OR ".join(["narration LIKE ? OR payee=?"] * len(alts)) or "0"
+    args = [x for m in alts for x in (f"%{m}%", m.upper())]
+    return f"({sql})", args
+
+
+def add_person(con, table, name, match, role=None):
+    """Add a consultant or staff member, or add spellings to one with the same name."""
+    name = " ".join(str(name or "").split()) or match
+    old = con.execute(f"SELECT * FROM {table} WHERE LOWER(name)=LOWER(?) OR match=?",
+                      (name, match)).fetchone()
+    if old:
+        merged = ", ".join(dict.fromkeys(spellings(old["match"]) + spellings(match)))
+        con.execute(f"UPDATE {table} SET match=? WHERE id=?", (merged, old["id"]))
+        pid, added = old["id"], 0
+    else:
+        pid, added = con.execute(f"INSERT INTO {table}(name,match) VALUES(?,?)",
+                                 (name, match)).lastrowid, 1
+    if table == "staff" and role is not None:
+        con.execute("UPDATE staff SET role=? WHERE id=?", (role, pid))
+    return added
+
+
 def db():
     con = sqlite3.connect(DB, timeout=30)
     con.row_factory = sqlite3.Row
@@ -192,6 +221,9 @@ def db():
 def payee_of(narration):
     """Best guess at who the money went to or came from, used to group entries."""
     n = narration.strip()
+    at = n.upper().find("UPI/")
+    if at > 0:  # e.g. SBI "BY TRANSFER- UPI/CR/ref/NAME/BANK/..."
+        n = n[at:]
     u = n.upper()
     name = ""
     if u.startswith("UPI/"):
@@ -282,6 +314,20 @@ def init():
             [s for s in SEED_RULES_5 if s[0] not in have])
         apply_rules(con)
         con.execute("PRAGMA user_version=5")
+    if version < 6:
+        rows = con.execute("SELECT id, narration, payee FROM txns").fetchall()
+        new = {r["id"]: payee_of(r["narration"]) for r in rows}
+        spread = {}
+        for r in rows:
+            spread.setdefault(r["payee"], set()).add(new[r["id"]])
+        blobs = [p for p, names in spread.items() if len(names) >= 3]
+        if blobs:  # one old name covered several real payers: its sorting was wrong
+            marks = ",".join("?" * len(blobs))
+            con.execute(f"DELETE FROM rules WHERE field='payee' AND pattern IN ({marks})", blobs)
+            con.execute(f"UPDATE txns SET category='', clinic='' WHERE payee IN ({marks})", blobs)
+        con.executemany("UPDATE txns SET payee=? WHERE id=?", [(p, i) for i, p in new.items()])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=6")
     con.commit()
     con.close()
 
@@ -672,7 +718,8 @@ def parse_pnl(name, data, password):
 def apply_rules(con):
     rules = con.execute(
         "SELECT * FROM rules ORDER BY LENGTH(pattern) DESC, id").fetchall()
-    people = [(head, [r["match"] for r in con.execute(f"SELECT match FROM {table}")])
+    people = [(head, [m for r in con.execute(f"SELECT match FROM {table}")
+                      for m in spellings(r["match"])])
               for table, head in PEOPLE.values()]
     loans = [(r["match"].lower(), r["type"]) for r in con.execute(
         "SELECT match, type FROM loans WHERE LENGTH(match) >= 3 ORDER BY LENGTH(match) DESC")]
@@ -691,7 +738,7 @@ def apply_rules(con):
             continue
         head = t["debit"] > 0 and next(
             (h for h, ms in people
-             if any(m.lower() in low or m == t["payee"] for m in ms)), None)
+             if any(m.lower() in low or m.upper() == t["payee"] for m in ms)), None)
         if head:
             con.execute("UPDATE txns SET category=? WHERE id=?", (head, t["id"]))
             n += 1
@@ -847,8 +894,9 @@ def api_people(kind, q):
     con = db()
     out = []
     for c in con.execute(f"SELECT * FROM {table} ORDER BY name").fetchall():
-        where = "category=? AND debit>0 AND (narration LIKE ? OR payee=?)"
-        args = [head, f"%{c['match']}%", c["match"]]
+        who, who_args = person_where(c["match"])
+        where = f"category=? AND debit>0 AND {who}"
+        args = [head] + who_args
         if fy:
             where += " AND date BETWEEN ? AND ?"
             args += list(fy_range(fy))
@@ -1844,14 +1892,11 @@ def import_rules(data):
         for kind, key in (("staff", "staff"), ("consultant", "consultants")):
             table = PEOPLE[kind][0]
             for x in d.get(key, []):
-                match = " ".join(str(x.get("match") or x.get("name") or "").split())
-                if len(match) < 4:
+                match = ", ".join(spellings(x.get("match") or x.get("name")))
+                if not match:
                     continue
-                cur = con.execute(f"INSERT OR IGNORE INTO {table}(name,match) VALUES(?,?)",
-                                  (" ".join(str(x.get("name") or match).split()), match))
-                if cur.rowcount and kind == "staff" and x.get("role"):
-                    con.execute("UPDATE staff SET role=? WHERE match=?", (str(x["role"]), match))
-                added[key] += cur.rowcount
+                added[key] += add_person(con, table, x.get("name"), match,
+                                         str(x["role"]) if kind == "staff" and x.get("role") else None)
         added["sorted"] = apply_rules(con)
         con.commit()
         con.close()
@@ -2653,23 +2698,18 @@ class Handler(BaseHTTPRequestHandler):
                 elif u.path in ("/api/consultant", "/api/staff"):
                     table, head = PEOPLE[u.path.rsplit("/", 1)[1]]
                     name = " ".join(str(d.get("name") or "").split())
-                    match = " ".join(str(d.get("match") or name).split())
-                    if len(match) < 4:
+                    match = ", ".join(spellings(d.get("match") or name))
+                    if not match or min(len(m) for m in spellings(match)) < 4:
                         raise ValueError("Enter at least 4 letters of the name.")
-                    con.execute(f"INSERT OR IGNORE INTO {table}(name,match) VALUES(?,?)",
-                                (name or match, match))
-                    if table == "staff":
-                        con.execute("UPDATE staff SET role=? WHERE match=?",
-                                    (" ".join(str(d.get("role") or "").split()), match))
-                    like = (f"%{match}%", match.upper())
-                    cur = con.execute(
-                        "UPDATE txns SET category=? WHERE category='' AND debit>0"
-                        " AND (narration LIKE ? OR payee=?)", (head,) + like)
+                    role = " ".join(str(d.get("role") or "").split()) if table == "staff" else None
+                    add_person(con, table, name, match, role or None)
+                    who, who_args = person_where(match)
+                    cur = con.execute(f"UPDATE txns SET category=? WHERE category='' AND debit>0"
+                                      f" AND {who}", [head] + who_args)
                     res["changed"] = cur.rowcount
                     res["other"] = con.execute(
-                        "SELECT COUNT(*) FROM txns WHERE category NOT IN ('', ?)"
-                        " AND debit>0 AND (narration LIKE ? OR payee=?)",
-                        (head,) + like).fetchone()[0]
+                        f"SELECT COUNT(*) FROM txns WHERE category NOT IN ('', ?) AND debit>0"
+                        f" AND {who}", [head] + who_args).fetchone()[0]
                 elif u.path == "/api/staff/delete":
                     con.execute("DELETE FROM staff WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/cash":
@@ -2996,9 +3036,9 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="card"><div class="filters" style="margin:0">
     <input id="st_name" type="text" placeholder="Staff name">
     <input id="st_role" type="text" placeholder="Role, e.g. Assistant (optional)">
-    <input id="st_match" type="text" placeholder="Name as shown in bank entries (optional)">
+    <input id="st_match" type="text" placeholder="Name in bank entries; several spellings: separate with commas">
     <button class="pri" id="st_add">Add staff</button></div>
-    <p class="mute" style="margin:8px 0 0">Banks often shorten names. If no payments are found, search
+    <p class="mute" style="margin:8px 0 0">Banks often shorten names, and each bank differently. For another spelling, add the same name again with that spelling. If no payments are found, search
     the name in Entries and enter the spelling used there in the third box.</p></div>
   <div class="card" id="stlist"></div>
   <div class="card scroll" id="stmonths" hidden></div>
@@ -3009,9 +3049,9 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   automatically, now and on every future import.</p>
   <div class="card"><div class="filters" style="margin:0">
     <input id="c_name" type="text" placeholder="Consultant name">
-    <input id="c_match" type="text" placeholder="Name as shown in bank entries (optional)">
+    <input id="c_match" type="text" placeholder="Name in bank entries; several spellings: separate with commas">
     <button class="pri" id="c_add">Add consultant</button></div>
-    <p class="mute" style="margin:8px 0 0">Banks often shorten names. If no payments are found, search
+    <p class="mute" style="margin:8px 0 0">Banks often shorten names, and each bank differently. For another spelling, add the same name again with that spelling. If no payments are found, search
     the name in Entries and enter the spelling used there in the second box.</p></div>
   <div class="card" id="clist"></div>
 </section>
