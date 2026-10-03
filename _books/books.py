@@ -1510,8 +1510,9 @@ def staff_rows(q):
 
 def cash_rows(q):
     d = api_cash(q)
-    out = [("h", ["Treatment", "Cash collected"])]
-    out += [("", [t, float(round(v, 2))]) for t, v in d["by_treatment"]]
+    out = [("h", ["Month", "Cash collected"])]
+    out += [("", [datetime.strptime(m, "%Y-%m").strftime("%b %Y"), float(round(v, 2))])
+            for m, v in sorted(d["by_month"].items())]
     out.append(("b", ["Total", float(round(d["total"], 2))]))
     return out
 
@@ -1681,7 +1682,7 @@ def export_xlsx(q):
         sheets.append(("Staff salaries", staff, [24, 18, 24, 10, 16] + [12] * 12, True))
     cash = cash_rows(q)
     if len(cash) > 2:
-        sheets.append(("Cash by treatment", cash, [30, 16], True))
+        sheets.append(("Cash by month", cash, [16, 16], True))
     trade = trading_sheet_rows(q)
     if len(trade) > 2:
         sheets.append(("Trading P&L", trade, [22, 10] + [16] * 11 + [30], True))
@@ -1895,20 +1896,19 @@ class Handler(BaseHTTPRequestHandler):
                     amount = to_num(d.get("amount"))
                     if not date:
                         raise ValueError("Enter the date.")
-                    if not patient:
-                        raise ValueError("Enter the patient name.")
                     if amount <= 0:
                         raise ValueError("Enter the amount received.")
                     clinic = d.get("clinic") if d.get("clinic") in CLINICS else ""
                     acct = cash_account(con)
                     seq = con.execute("SELECT COALESCE(MAX(seq),0)+1 FROM txns").fetchone()[0]
-                    narr = " - ".join(x for x in ("Cash", patient, treat) if x)
+                    note = " ".join(str(d.get("note") or "").split())
+                    narr = " - ".join(x for x in ("Cash collection", patient, treat, note) if x)
                     h = hashlib.sha1(f"cash|{time.time_ns()}|{narr}|{amount}".encode()).hexdigest()
                     con.execute(
                         "INSERT INTO txns(account_id,date,narration,ref,debit,credit,balance,"
                         "category,clinic,note,seq,hash,payee) VALUES(?,?,?,?,0,?,0,?,?,?,?,?,?)",
                         (acct, date, narr, treat, amount, CASH_HEAD, clinic,
-                         str(d.get("note") or "").strip(), seq, h, patient.upper()[:30]))
+                         note, seq, h, patient.upper()[:30] or "CASH"))
                 elif u.path == "/api/cash/delete":
                     con.execute("DELETE FROM txns WHERE id=? AND account_id IN"
                                 " (SELECT id FROM accounts WHERE kind='Cash')", (int(d["id"]),))
@@ -2062,12 +2062,9 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="card">
     <div class="filters" style="margin:0">
       <input type="date" id="cs_date" aria-label="Date">
-      <input type="text" id="cs_patient" list="cs_patients" placeholder="Patient name" autocomplete="off">
-      <input type="text" id="cs_treat" list="cs_treats" placeholder="Treatment" autocomplete="off">
       <input type="number" id="cs_amt" step="0.01" min="0" placeholder="Amount">
-      <select id="cs_clinic" aria-label="Clinic"></select>
+      <input type="text" id="cs_note" placeholder="Note (optional)">
       <button class="pri" id="cs_add">Add cash</button></div>
-    <datalist id="cs_patients"></datalist><datalist id="cs_treats"></datalist>
     <p class="mute" style="margin:8px 0 0">Counted as patient receipts in clinic profit and the ITR summary.
     When you deposit this cash in the bank, sort that bank entry as Cash deposit or withdrawal
     so it is not counted twice.</p></div>
@@ -2545,22 +2542,18 @@ const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth
 async function loadCash(){
   C=await api('/api/cash?'+qs({fy:$('fy').value}));
   if(!$('cs_date').value)$('cs_date').value=today();
-  keepValue('cs_clinic',clinicOptions('<option value="">Clinic (optional)</option>'));
-  $('cs_patients').innerHTML=C.patients.map(p=>'<option value="'+esc(p)+'">').join('');
-  $('cs_treats').innerHTML=C.treatments.map(t=>'<option value="'+esc(t)+'">').join('');
   const m=today().slice(0,7);
   $('cs_stats').innerHTML=stat('Cash this year',C.total)+stat('Cash this month',C.by_month[m]||0)+
-    '<div class="card"><span class="mute">Entries this year</span><b>'+C.count+'</b></div>'+
-    (C.by_treatment.length?'<div class="card"><span class="mute">Top treatment</span><b style="font-size:16px">'+esc(C.by_treatment[0][0])+'</b><span class="num">'+inr(C.by_treatment[0][1])+'</span></div>':'');
+    '<div class="card"><span class="mute">Entries this year</span><b>'+C.count+'</b></div>';
   const box=$('cs_list');
   if(!C.rows.length){box.innerHTML='<span class="mute">No cash entries for '+fyLabel(+$('fy').value)+' yet.</span>';return;}
+  const months=fyMonths().filter(x=>C.by_month[x[0]]);
   box.innerHTML='<div class="row"><h3 class="grow" style="margin:0">Recent cash entries</h3>'+
     (C.account?'<button class="link" id="cs_all">View all in Entries</button>':'')+'</div>'+
-    C.rows.slice(0,20).map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+esc(r.payee.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()))+'</b>'+
-      (r.treatment?' <span class="chip">'+esc(r.treatment)+'</span>':'')+(r.clinic?' <span class="chip">'+esc(r.clinic)+'</span>':'')+
-      '<div class="mute">'+r.date+(r.note?', '+esc(r.note):'')+'</div></div><div class="num in">+'+inr(r.credit)+'</div>'+
+    C.rows.slice(0,20).map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+r.date+'</b>'+
+      '<div class="mute">'+esc(r.note||r.narration.replace(/^Cash collection( - )?/,''))+'</div></div><div class="num in">+'+inr(r.credit)+'</div>'+
       '<button class="link" data-csdel="'+r.id+'">Delete</button></div>').join('')+
-    (C.by_treatment.length>1?'<h3 style="margin-top:12px">By treatment, this year</h3><table>'+C.by_treatment.map(t=>'<tr><td>'+esc(t[0])+'</td><td class="num">'+inr(t[1])+'</td></tr>').join('')+'</table>':'');
+    (months.length>1?'<h3 style="margin-top:12px">By month, this year</h3><table>'+months.map(x=>'<tr><td>'+x[1]+'</td><td class="num">'+inr(C.by_month[x[0]])+'</td></tr>').join('')+'</table>':'');
   if(C.account)$('cs_all').onclick=run(async()=>{payeeFilter='';$('f_month').value='';$('f_cat').value='';$('f_dir').value='';$('f_q').value='';
     await go('txns');$('f_account').value=C.account;await loadTxns(true);});
 }
@@ -2706,11 +2699,11 @@ const addPerson=(kind,head,ids)=>run(async()=>{
 $('c_add').onclick=addPerson('consultant','Consultant fees',['c_name','c_match']);
 $('st_add').onclick=addPerson('staff','Staff salaries',['st_name','st_match','st_role']);
 $('cs_add').onclick=run(async()=>{
-  const amt=$('cs_amt').value,who=$('cs_patient').value.trim();
-  await api('/api/cash',{date:$('cs_date').value,patient:who,treatment:$('cs_treat').value,amount:amt,clinic:$('cs_clinic').value});
-  $('cs_patient').value='';$('cs_treat').value='';$('cs_amt').value='';$('cs_patient').focus();
-  toast('Added '+inr(amt)+' cash from '+who);await loadState();await loadCash();});
-$('cs_amt').onkeydown=e=>{if(e.key==='Enter')$('cs_add').click();};
+  const amt=$('cs_amt').value;
+  await api('/api/cash',{date:$('cs_date').value,amount:amt,note:$('cs_note').value});
+  $('cs_amt').value='';$('cs_note').value='';$('cs_amt').focus();
+  toast('Added '+inr(amt)+' cash');await loadState();await loadCash();});
+$('cs_amt').onkeydown=$('cs_note').onkeydown=e=>{if(e.key==='Enter')$('cs_add').click();};
 $('cs_list').onclick=run(async e=>{const id=e.target.dataset.csdel;if(!id||!confirm('Delete this cash entry?'))return;
   await api('/api/cash/delete',{id:+id});await loadState();await loadCash();});
 $('g_cancel').onclick=()=>$('gdlg').close();

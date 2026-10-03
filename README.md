@@ -57,8 +57,8 @@ app" (Chrome: menu, Cast save and share, "Install page as app"). It then has its
 Start menu and taskbar icon.
 
 ### What's in the app
-Banking (with **Cash collections**: cash from patients by date, patient, treatment and
-clinic, counted as patient receipts), Sort, Entries, **Trading** (yearly P&L per broker, entered from each broker's
+Banking (with **Cash collections**: cash received, by date and amount with an optional
+note, counted as patient receipts), Sort, Entries, **Trading** (yearly P&L per broker, entered from each broker's
 Tax P&L report, with money moved to and from your banks filled in), **Assets** (mutual
 funds, shares, gold, plot, house, FD and so on, with gains and short or long term on
 sale), **Salaries** (add each staff member once; their bank payments are filed under
