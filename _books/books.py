@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 import zipfile
 from xml.sax.saxutils import escape as xesc
 from datetime import datetime
@@ -61,9 +62,16 @@ CATS = [
     ("Family and friends", "personal"), ("Personal", "personal"),
 ]
 CONSULT = "Consultant fees"
+SALARY = "Staff salaries"
+# Named people whose bank payments are filed under a fixed head: kind -> (table, head).
+PEOPLE = {"consultant": ("consultants", CONSULT), "staff": ("staff", SALARY)}
+CASH_HEAD = "Patient receipts"
+TREATMENTS = ["Consultation", "Scaling and cleaning", "Filling", "Root canal",
+              "Extraction", "Crown or cap", "Bridge", "Denture", "Implant", "Braces",
+              "Aligners", "X-ray", "Whitening", "Surgery"]
 CLINICS = ["Main", "Vidyagiri", "Navanagar", "Common"]
 OWNERS = ["Self", "Daughter"]
-KINDS = ["Bank", "Credit card", "Trading"]
+KINDS = ["Bank", "Credit card", "Trading", "Cash"]
 
 # Starter rules: (text to find in narration, direction, category). Edit in the app.
 SEED_RULES = [
@@ -100,6 +108,8 @@ SEED_RULES_2 = [
 SEED_RULES_3 = [
     ("SCHOOL", "out", "School fees (80C)"),
     ("VIDYALAYA", "out", "School fees (80C)"),
+    ("CASH DEP", "in", "Cash deposit or withdrawal"),
+    ("BY CASH", "in", "Cash deposit or withdrawal"),
 ]
 
 SCHEMA = """
@@ -115,6 +125,8 @@ CREATE TABLE IF NOT EXISTS rules(
   field TEXT DEFAULT 'narration');
 CREATE TABLE IF NOT EXISTS consultants(
   id INTEGER PRIMARY KEY, name TEXT, match TEXT UNIQUE);
+CREATE TABLE IF NOT EXISTS staff(
+  id INTEGER PRIMARY KEY, name TEXT, match TEXT UNIQUE, role TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS trading_pnl(
   id INTEGER PRIMARY KEY, account_id INTEGER, fy INTEGER,
   intraday REAL DEFAULT 0, fno REAL DEFAULT 0, stcg REAL DEFAULT 0,
@@ -351,14 +363,17 @@ def parse_statement(name, data, password):
 def apply_rules(con):
     rules = con.execute(
         "SELECT * FROM rules ORDER BY LENGTH(pattern) DESC, id").fetchall()
-    cons = con.execute("SELECT match FROM consultants").fetchall()
+    people = [(head, [r["match"] for r in con.execute(f"SELECT match FROM {table}")])
+              for table, head in PEOPLE.values()]
     n = 0
     for t in con.execute(
             "SELECT id,narration,payee,debit FROM txns WHERE category=''").fetchall():
         low = t["narration"].lower()
-        if t["debit"] > 0 and any(
-                c["match"].lower() in low or c["match"] == t["payee"] for c in cons):
-            con.execute("UPDATE txns SET category=? WHERE id=?", (CONSULT, t["id"]))
+        head = t["debit"] > 0 and next(
+            (h for h, ms in people
+             if any(m.lower() in low or m == t["payee"] for m in ms)), None)
+        if head:
+            con.execute("UPDATE txns SET category=? WHERE id=?", (head, t["id"]))
             n += 1
             continue
         for r in rules:
@@ -446,8 +461,9 @@ def api_state():
     accounts = [dict(r) for r in con.execute(
         "SELECT a.id, a.name, a.owner, a.kind, COUNT(t.id) n, MIN(t.date) first, MAX(t.date) last,"
         " SUM(CASE WHEN t.category='' THEN 1 ELSE 0 END) open,"
-        " (SELECT balance FROM txns x WHERE x.account_id=a.id"
-        "  ORDER BY date DESC, seq DESC LIMIT 1) balance"
+        " CASE WHEN a.kind='Cash' THEN COALESCE(SUM(t.credit)-SUM(t.debit),0)"
+        " ELSE (SELECT balance FROM txns x WHERE x.account_id=a.id"
+        "  ORDER BY date DESC, seq DESC LIMIT 1) END balance"
         " FROM accounts a LEFT JOIN txns t ON t.account_id=a.id"
         " GROUP BY a.id ORDER BY a.name")]
     rules = [dict(r) for r in con.execute("SELECT * FROM rules ORDER BY id")]
@@ -491,8 +507,9 @@ def sort_group(con, d, payee, direction):
     cur = con.execute(
         f"UPDATE txns SET category=?, clinic=? WHERE category='' AND payee=? AND {sign}",
         (d["category"], d.get("clinic", ""), payee))
-    if payee != "OTHER" and d["category"] == CONSULT and direction == "out":
-        con.execute("INSERT OR IGNORE INTO consultants(name,match) VALUES(?,?)",
+    table = {head: t for t, head in PEOPLE.values()}.get(d["category"])
+    if payee != "OTHER" and table and direction == "out":
+        con.execute(f"INSERT OR IGNORE INTO {table}(name,match) VALUES(?,?)",
                     (payee.title(), payee))
     elif d.get("rule") and payee != "OTHER":
         con.execute("DELETE FROM rules WHERE field='payee' AND pattern=? AND dir=?",
@@ -503,27 +520,76 @@ def sort_group(con, d, payee, direction):
     return cur.rowcount
 
 
-def api_consultants(q):
-    """Each consultant with what was paid to them in the chosen year."""
-    fy = (q.get("fy") or [""])[0]
+def api_people(kind, q):
+    """Each consultant or staff member with what was paid to them, by month."""
+    table, head = PEOPLE[kind]
+    fy, owner = qget(q, "fy"), qget(q, "owner")
     con = db()
     out = []
-    for c in con.execute("SELECT * FROM consultants ORDER BY name").fetchall():
+    for c in con.execute(f"SELECT * FROM {table} ORDER BY name").fetchall():
         where = "category=? AND debit>0 AND (narration LIKE ? OR payee=?)"
-        args = [CONSULT, f"%{c['match']}%", c["match"]]
+        args = [head, f"%{c['match']}%", c["match"]]
         if fy:
-            a, b = fy_range(fy)
             where += " AND date BETWEEN ? AND ?"
-            args += [a, b]
-        if (q.get("owner") or [""])[0]:
+            args += list(fy_range(fy))
+        if owner:
             where += " AND account_id IN (SELECT id FROM accounts WHERE owner=?)"
-            args.append(q["owner"][0])
+            args.append(owner)
+        months = {r[0]: r[1] for r in con.execute(
+            f"SELECT substr(date,1,7), SUM(debit) FROM txns WHERE {where} GROUP BY 1", args)}
         r = con.execute(f"SELECT COUNT(*) n, COALESCE(SUM(debit),0) total"
                         f" FROM txns WHERE {where}", args).fetchone()
-        out.append(dict(id=c["id"], name=c["name"], match=c["match"],
-                        n=r["n"], total=r["total"]))
+        out.append(dict(c, n=r["n"], total=r["total"], months=months))
     con.close()
     return dict(rows=out)
+
+
+def api_consultants(q):
+    return api_people("consultant", q)
+
+
+def cash_account(con):
+    """The account that holds cash collections, created on first use."""
+    r = con.execute("SELECT id FROM accounts WHERE kind='Cash' ORDER BY id LIMIT 1").fetchone()
+    if r:
+        return r[0]
+    name, i = "Cash collections", 1
+    while con.execute("SELECT 1 FROM accounts WHERE name=?", (name,)).fetchone():
+        i += 1
+        name = f"Cash collections {i}"
+    return con.execute("INSERT INTO accounts(name,owner,kind) VALUES(?,'Self','Cash')",
+                       (name,)).lastrowid
+
+
+def api_cash(q):
+    """Cash entries for the year with totals by month and treatment."""
+    fy = qget(q, "fy")
+    con = db()
+    where, args = "a.kind='Cash'", []
+    if fy:
+        where += " AND date BETWEEN ? AND ?"
+        args += list(fy_range(fy))
+    rows = [dict(r) for r in con.execute(
+        f"SELECT t.id, date, narration, ref treatment, payee, credit, debit, clinic, note,"
+        f" category FROM txns t JOIN accounts a ON a.id=t.account_id WHERE {where}"
+        f" ORDER BY date DESC, seq DESC", args)]
+    patients = sorted({r[0].title() for r in con.execute(
+        "SELECT DISTINCT payee FROM txns t JOIN accounts a ON a.id=t.account_id"
+        " WHERE a.kind='Cash' AND payee NOT IN ('', 'CASH')")})
+    treats = [r[0] for r in con.execute(
+        "SELECT DISTINCT ref FROM txns t JOIN accounts a ON a.id=t.account_id"
+        " WHERE a.kind='Cash' AND ref!=''")]
+    acct = con.execute("SELECT id FROM accounts WHERE kind='Cash' ORDER BY id LIMIT 1").fetchone()
+    con.close()
+    by_treat, by_month = {}, {}
+    for r in rows:
+        amt = r["credit"] - r["debit"]
+        by_treat[r["treatment"] or "Not given"] = by_treat.get(r["treatment"] or "Not given", 0) + amt
+        by_month[r["date"][:7]] = by_month.get(r["date"][:7], 0) + amt
+    return dict(rows=rows[:300], count=len(rows), total=sum(by_month.values()),
+                by_treatment=sorted(by_treat.items(), key=lambda x: -x[1]),
+                by_month=by_month, patients=patients, account=acct[0] if acct else None,
+                treatments=TREATMENTS + [t for t in treats if t not in TREATMENTS])
 
 
 def api_groups(q):
@@ -851,7 +917,7 @@ def itr_rows(q):
         rows.append(("", []))
         rows.append(("b", ["UNSORTED, not counted above", u[2], u[3], u[4]]))
     rows.append(("", []))
-    rows.append(("", ["Bank entries only. Cash never deposited is not included. Trading"
+    rows.append(("", ["Bank entries plus cash entered under Cash collections. Trading"
                       " figures are as entered from broker statements. Final heads and"
                       " deductions are for the CA to decide."]))
     return rows
@@ -923,6 +989,30 @@ def consultant_rows(q):
     return out
 
 
+def staff_rows(q):
+    fy = qget(q, "fy")
+    months = []
+    if fy:
+        y = int(fy)
+        months = [f"{y + (m < 4)}-{m:02d}" for m in list(range(4, 13)) + [1, 2, 3]]
+    out = [("h", ["Staff", "Role", "Name in bank entries", "Payments", "Total paid"]
+            + [datetime.strptime(m, "%Y-%m").strftime("%b %Y") for m in months])]
+    for c in api_people("staff", q)["rows"]:
+        if c["n"]:
+            out.append(("", [c["name"], c["role"], c["match"], c["n"], round(c["total"], 2)]
+                        + [float(round(c["months"][m], 2)) if c["months"].get(m) else ""
+                           for m in months]))
+    return out
+
+
+def cash_rows(q):
+    d = api_cash(q)
+    out = [("h", ["Treatment", "Cash collected"])]
+    out += [("", [t, float(round(v, 2))]) for t, v in d["by_treatment"]]
+    out.append(("b", ["Total", float(round(d["total"], 2))]))
+    return out
+
+
 def export_summary(q):
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -931,6 +1021,12 @@ def export_summary(q):
     cons = consultant_rows(q)
     if len(cons) > 1:
         blocks.append(cons)
+    staff = staff_rows(q)
+    if len(staff) > 1:
+        blocks.append([("h", ["Staff salaries"])] + staff)
+    cash = cash_rows(q)
+    if len(cash) > 2:
+        blocks.append([("h", ["Cash collections"])] + cash)
     trade = trading_sheet_rows(q)
     if len(trade) > 2:
         blocks.append([("h", ["Trading P&L"])] + trade)
@@ -1077,6 +1173,12 @@ def export_xlsx(q):
     cons = consultant_rows(q)
     if len(cons) > 1:
         sheets.append(("Consultants", cons, [26, 26, 10, 16], True))
+    staff = staff_rows(q)
+    if len(staff) > 1:
+        sheets.append(("Staff salaries", staff, [24, 18, 24, 10, 16] + [12] * 12, True))
+    cash = cash_rows(q)
+    if len(cash) > 2:
+        sheets.append(("Cash by treatment", cash, [30, 16], True))
     trade = trading_sheet_rows(q)
     if len(trade) > 2:
         sheets.append(("Trading P&L", trade, [22, 10] + [16] * 11 + [30], True))
@@ -1141,6 +1243,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(api_report(q))
             elif u.path == "/api/consultants":
                 self.send(api_consultants(q))
+            elif u.path == "/api/staff":
+                self.send(api_people("staff", q))
+            elif u.path == "/api/cash":
+                self.send(api_cash(q))
             elif u.path == "/api/groups":
                 self.send(api_groups(q))
             elif u.path == "/api/trading":
@@ -1215,22 +1321,52 @@ class Handler(BaseHTTPRequestHandler):
                         f"UPDATE txns SET category=?, clinic=? WHERE id IN ({marks})",
                         [d["category"], d.get("clinic", "")] + ids)
                     res["changed"] = cur.rowcount
-                elif u.path == "/api/consultant":
-                    name = " ".join(d["name"].split())
-                    match = " ".join((d.get("match") or name).split())
+                elif u.path in ("/api/consultant", "/api/staff"):
+                    table, head = PEOPLE[u.path.rsplit("/", 1)[1]]
+                    name = " ".join(str(d.get("name") or "").split())
+                    match = " ".join(str(d.get("match") or name).split())
                     if len(match) < 4:
                         raise ValueError("Enter at least 4 letters of the name.")
-                    con.execute("INSERT OR IGNORE INTO consultants(name,match)"
-                                " VALUES(?,?)", (name or match, match))
+                    con.execute(f"INSERT OR IGNORE INTO {table}(name,match) VALUES(?,?)",
+                                (name or match, match))
+                    if table == "staff":
+                        con.execute("UPDATE staff SET role=? WHERE match=?",
+                                    (" ".join(str(d.get("role") or "").split()), match))
                     like = (f"%{match}%", match.upper())
                     cur = con.execute(
                         "UPDATE txns SET category=? WHERE category='' AND debit>0"
-                        " AND (narration LIKE ? OR payee=?)", (CONSULT,) + like)
+                        " AND (narration LIKE ? OR payee=?)", (head,) + like)
                     res["changed"] = cur.rowcount
                     res["other"] = con.execute(
                         "SELECT COUNT(*) FROM txns WHERE category NOT IN ('', ?)"
                         " AND debit>0 AND (narration LIKE ? OR payee=?)",
-                        (CONSULT,) + like).fetchone()[0]
+                        (head,) + like).fetchone()[0]
+                elif u.path == "/api/staff/delete":
+                    con.execute("DELETE FROM staff WHERE id=?", (int(d["id"]),))
+                elif u.path == "/api/cash":
+                    date = check_date(d.get("date"))
+                    patient = " ".join(str(d.get("patient") or "").split())
+                    treat = " ".join(str(d.get("treatment") or "").split())
+                    amount = to_num(d.get("amount"))
+                    if not date:
+                        raise ValueError("Enter the date.")
+                    if not patient:
+                        raise ValueError("Enter the patient name.")
+                    if amount <= 0:
+                        raise ValueError("Enter the amount received.")
+                    clinic = d.get("clinic") if d.get("clinic") in CLINICS else ""
+                    acct = cash_account(con)
+                    seq = con.execute("SELECT COALESCE(MAX(seq),0)+1 FROM txns").fetchone()[0]
+                    narr = " - ".join(x for x in ("Cash", patient, treat) if x)
+                    h = hashlib.sha1(f"cash|{time.time_ns()}|{narr}|{amount}".encode()).hexdigest()
+                    con.execute(
+                        "INSERT INTO txns(account_id,date,narration,ref,debit,credit,balance,"
+                        "category,clinic,note,seq,hash,payee) VALUES(?,?,?,?,0,?,0,?,?,?,?,?,?)",
+                        (acct, date, narr, treat, amount, CASH_HEAD, clinic,
+                         str(d.get("note") or "").strip(), seq, h, patient.upper()[:30]))
+                elif u.path == "/api/cash/delete":
+                    con.execute("DELETE FROM txns WHERE id=? AND account_id IN"
+                                " (SELECT id FROM accounts WHERE kind='Cash')", (int(d["id"]),))
                 elif u.path == "/api/trading":
                     acct, fy = int(d["account_id"]), int(d["fy"])
                     keys = [k for k, _ in TRADE_FIELDS]
@@ -1375,6 +1511,21 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
 <header><h1>Handral Books</h1><select id="who" aria-label="Person"></select><select id="fy" aria-label="Financial year"></select></header>
 <main>
 <section id="banking" class="on">
+  <h2>Cash collections from patients</h2>
+  <div class="card">
+    <div class="filters" style="margin:0">
+      <input type="date" id="cs_date" aria-label="Date">
+      <input type="text" id="cs_patient" list="cs_patients" placeholder="Patient name" autocomplete="off">
+      <input type="text" id="cs_treat" list="cs_treats" placeholder="Treatment" autocomplete="off">
+      <input type="number" id="cs_amt" step="0.01" min="0" placeholder="Amount">
+      <select id="cs_clinic" aria-label="Clinic"></select>
+      <button class="pri" id="cs_add">Add cash</button></div>
+    <datalist id="cs_patients"></datalist><datalist id="cs_treats"></datalist>
+    <p class="mute" style="margin:8px 0 0">Counted as patient receipts in clinic profit and the ITR summary.
+    When you deposit this cash in the bank, sort that bank entry as Cash deposit or withdrawal
+    so it is not counted twice.</p></div>
+  <div class="stats" id="cs_stats"></div>
+  <div class="card" id="cs_list"></div>
   <h2>Bank accounts</h2><div id="accts"></div>
   <div class="card"><div class="row">
     <input id="newacct" class="grow" type="text" placeholder="New account name, e.g. HDFC 6324">
@@ -1410,6 +1561,20 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <button id="bulk">Categorise all shown</button></div></div>
   <div class="card" id="tlist"></div>
   <button id="more" hidden>Show more</button>
+</section>
+<section id="staff">
+  <h2>Staff salaries</h2>
+  <p class="mute">Add each staff member once. Salary payments to them are filed under Staff salaries
+  automatically, now and on every future import.</p>
+  <div class="card"><div class="filters" style="margin:0">
+    <input id="st_name" type="text" placeholder="Staff name">
+    <input id="st_role" type="text" placeholder="Role, e.g. Assistant (optional)">
+    <input id="st_match" type="text" placeholder="Name as shown in bank entries (optional)">
+    <button class="pri" id="st_add">Add staff</button></div>
+    <p class="mute" style="margin:8px 0 0">Banks often shorten names. If no payments are found, search
+    the name in Entries and enter the spelling used there in the third box.</p></div>
+  <div class="card" id="stlist"></div>
+  <div class="card scroll" id="stmonths" hidden></div>
 </section>
 <section id="consult">
   <h2>Visiting consultants</h2>
@@ -1490,6 +1655,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <button data-tab="txns">Entries</button>
   <button data-tab="trading">Trading</button>
   <button data-tab="assets">Assets</button>
+  <button data-tab="staff">Salaries</button>
   <button data-tab="consult">Consultants</button>
   <button data-tab="rules">Rules</button>
   <button data-tab="reports">ITR</button>
@@ -1625,7 +1791,7 @@ async function loadState(){
     '<span class="grow"></span><button class="link" data-view="'+a.id+'">View</button>'+
     '<button class="link" data-edit="'+a.id+'">Edit</button>'+
     '<button class="link" data-del="'+a.id+'">Delete</button>'+
-    '<button class="pri" data-imp="'+a.id+'">Import statement</button></div></div>').join('')
+    (a.kind==='Cash'?'':'<button class="pri" data-imp="'+a.id+'">Import statement</button>')+'</div></div>').join('')
     :'<div class="card mute">Add your first bank account below, then import its statement.</div>';
   const acctOpts='<option value="">All accounts</option>'+
     S.accounts.filter(a=>!$('who').value||a.owner===$('who').value).map(a=>'<option value="'+a.id+'">'+esc(a.name)+'</option>').join('');
@@ -1759,21 +1925,59 @@ async function loadReport(){
   t+=line('Clinic profit',m=>tot('receipts',m)-tot('expenses',m),'tot');
   $('rtable').innerHTML=t;
 }
-async function loadConsult(){
-  const d=await api('/api/consultants?'+qs({owner:$('who').value,fy:$('fy').value})),box=$('clist');box.innerHTML='';
-  if(!d.rows.length){box.innerHTML='<span class="mute">No consultants added yet. Add a name above, or in the Sort tab choose Consultant fees for a name and it is added here.</span>';return;}
-  for(const c of d.rows){
+function renderPeople(box,rows,kind,head,empty){box.innerHTML='';
+  if(!rows.length){box.innerHTML='<span class="mute">'+empty+'</span>';return;}
+  for(const c of rows){
     const el=document.createElement('div');el.className='tx';
-    el.innerHTML='<div class="grow"><b>'+esc(c.name)+'</b><div class="mute">'+c.n+(c.n===1?' payment':' payments')+' this year, matched on "'+esc(c.match)+'"</div></div>'+
-      '<div class="num out">'+inr(c.total)+'</div><button class="link" data-cdel="'+c.id+'">Remove</button>';
+    el.innerHTML='<div class="grow"><b>'+esc(c.name)+'</b>'+(c.role?' <span class="chip">'+esc(c.role)+'</span>':'')+
+      '<div class="mute">'+c.n+(c.n===1?' payment':' payments')+' this year, matched on "'+esc(c.match)+'"</div></div>'+
+      '<div class="num out">'+inr(c.total)+'</div><button class="link" data-pdel="1">Remove</button>';
     el.onclick=run(async e=>{
-      if(e.target.dataset.cdel){if(!confirm('Remove '+c.name+' from the list? Entries already filed stay as they are.'))return;
-        await api('/api/consultant/delete',{id:c.id});return loadConsult();}
+      if(e.target.dataset.pdel){if(!confirm('Remove '+c.name+' from the list? Entries already filed stay as they are.'))return;
+        await api('/api/'+kind+'/delete',{id:c.id});return refresh();}
       payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';
-      await go('txns');$('f_cat').value='Consultant fees';$('f_q').value=c.match;await loadTxns(true);});
+      await go('txns');$('f_cat').value=head;$('f_q').value=c.match;await loadTxns(true);});
     box.appendChild(el);}
   box.insertAdjacentHTML('beforeend','<div class="tx" style="cursor:default"><b class="grow">Total this year</b><b class="num">'+
-    inr(d.rows.reduce((a,c)=>a+c.total,0))+'</b></div>');
+    inr(rows.reduce((a,c)=>a+c.total,0))+'</b></div>');
+}
+async function loadConsult(){
+  const d=await api('/api/consultants?'+qs({owner:$('who').value,fy:$('fy').value}));
+  renderPeople($('clist'),d.rows,'consultant','Consultant fees','No consultants added yet. Add a name above, or in the Sort tab choose Consultant fees for a name and it is added here.');
+}
+async function loadStaff(){
+  const d=await api('/api/staff?'+qs({owner:$('who').value,fy:$('fy').value}));
+  renderPeople($('stlist'),d.rows,'staff','Staff salaries','No staff added yet. Add a name above, or in the Sort tab choose Staff salaries for a name and it is added here.');
+  const paid=d.rows.filter(c=>c.n),months=fyMonths(),box=$('stmonths');box.hidden=!paid.length;if(!paid.length)return;
+  const cell=v=>'<td class="num">'+(v?r0(v):'')+'</td>';
+  box.innerHTML='<h3>Month by month</h3><table><tr><th>Staff</th>'+months.map(m=>'<th>'+m[1].slice(0,3)+'</th>').join('')+'<th>Total</th></tr>'+
+    paid.map(c=>'<tr><td>'+esc(c.name)+'</td>'+months.map(m=>cell(c.months[m[0]])).join('')+'<td class="num"><b>'+r0(c.total)+'</b></td></tr>').join('')+
+    '<tr class="tot"><td>Total</td>'+months.map(m=>cell(paid.reduce((a,c)=>a+(c.months[m[0]]||0),0))).join('')+
+    '<td class="num">'+r0(paid.reduce((a,c)=>a+c.total,0))+'</td></tr></table>';
+}
+let C=null;
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+async function loadCash(){
+  C=await api('/api/cash?'+qs({fy:$('fy').value}));
+  if(!$('cs_date').value)$('cs_date').value=today();
+  keepValue('cs_clinic',clinicOptions('<option value="">Clinic (optional)</option>'));
+  $('cs_patients').innerHTML=C.patients.map(p=>'<option value="'+esc(p)+'">').join('');
+  $('cs_treats').innerHTML=C.treatments.map(t=>'<option value="'+esc(t)+'">').join('');
+  const m=today().slice(0,7);
+  $('cs_stats').innerHTML=stat('Cash this year',C.total)+stat('Cash this month',C.by_month[m]||0)+
+    '<div class="card"><span class="mute">Entries this year</span><b>'+C.count+'</b></div>'+
+    (C.by_treatment.length?'<div class="card"><span class="mute">Top treatment</span><b style="font-size:16px">'+esc(C.by_treatment[0][0])+'</b><span class="num">'+inr(C.by_treatment[0][1])+'</span></div>':'');
+  const box=$('cs_list');
+  if(!C.rows.length){box.innerHTML='<span class="mute">No cash entries for '+fyLabel(+$('fy').value)+' yet.</span>';return;}
+  box.innerHTML='<div class="row"><h3 class="grow" style="margin:0">Recent cash entries</h3>'+
+    (C.account?'<button class="link" id="cs_all">View all in Entries</button>':'')+'</div>'+
+    C.rows.slice(0,20).map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+esc(r.payee.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()))+'</b>'+
+      (r.treatment?' <span class="chip">'+esc(r.treatment)+'</span>':'')+(r.clinic?' <span class="chip">'+esc(r.clinic)+'</span>':'')+
+      '<div class="mute">'+r.date+(r.note?', '+esc(r.note):'')+'</div></div><div class="num in">+'+inr(r.credit)+'</div>'+
+      '<button class="link" data-csdel="'+r.id+'">Delete</button></div>').join('')+
+    (C.by_treatment.length>1?'<h3 style="margin-top:12px">By treatment, this year</h3><table>'+C.by_treatment.map(t=>'<tr><td>'+esc(t[0])+'</td><td class="num">'+inr(t[1])+'</td></tr>').join('')+'</table>':'');
+  if(C.account)$('cs_all').onclick=run(async()=>{payeeFilter='';$('f_month').value='';$('f_cat').value='';$('f_dir').value='';$('f_q').value='';
+    await go('txns');$('f_account').value=C.account;await loadTxns(true);});
 }
 let T=null,tAcct=null,A=null,aCur=null;
 const signed=n=>'<span class="num '+(n<0?'out':'in')+'">'+inr(n)+'</span>';
@@ -1836,6 +2040,7 @@ function activeTab(){return document.querySelector('nav .on').dataset.tab;}
 function refresh(){const tab=activeTab();
   if(tab==='txns')return loadTxns(true);if(tab==='reports')return loadReport();if(tab==='sort')return loadSort();
   if(tab==='consult')return loadConsult();if(tab==='trading')return loadTrading();
+  if(tab==='staff')return loadStaff();if(tab==='banking')return loadCash();
   if(tab==='assets')return loadAssets();}
 const run=fn=>async(...a)=>{try{await fn(...a);}catch(e){toast(e.message);}};
 async function go(tab){
@@ -1903,11 +2108,21 @@ $('selgo').onclick=()=>{bulkMode='sel';$('b_save').textContent='Apply to selecte
   $('b_title').textContent='Sort '+$('seltext').textContent.replace(' selected','');$('bdlg').showModal();};
 $('s_all').onclick=()=>{const boxes=[...document.querySelectorAll('#glist .pick input')],on=boxes.some(c=>!c.checked);
   boxes.forEach(c=>{if(c.checked!==on){c.checked=on;c.onchange();}});};
-$('c_add').onclick=run(async()=>{
-  const r=await api('/api/consultant',{name:$('c_name').value,match:$('c_match').value});
-  $('c_name').value='';$('c_match').value='';
-  toast(r.changed+' payments filed under Consultant fees.'+(r.other?' '+r.other+' more are already under other heads; change them in Entries if needed.':''));
-  await loadState();await loadConsult();});
+const addPerson=(kind,head,ids)=>run(async()=>{
+  const r=await api('/api/'+kind,{name:$(ids[0]).value,match:$(ids[1]).value,role:ids[2]?$(ids[2]).value:''});
+  ids.forEach(id=>$(id).value='');
+  toast(r.changed+' payments filed under '+head+'.'+(r.other?' '+r.other+' more are already under other heads; change them in Entries if needed.':''));
+  await loadState();await refresh();});
+$('c_add').onclick=addPerson('consultant','Consultant fees',['c_name','c_match']);
+$('st_add').onclick=addPerson('staff','Staff salaries',['st_name','st_match','st_role']);
+$('cs_add').onclick=run(async()=>{
+  const amt=$('cs_amt').value,who=$('cs_patient').value.trim();
+  await api('/api/cash',{date:$('cs_date').value,patient:who,treatment:$('cs_treat').value,amount:amt,clinic:$('cs_clinic').value});
+  $('cs_patient').value='';$('cs_treat').value='';$('cs_amt').value='';$('cs_patient').focus();
+  toast('Added '+inr(amt)+' cash from '+who);await loadState();await loadCash();});
+$('cs_amt').onkeydown=e=>{if(e.key==='Enter')$('cs_add').click();};
+$('cs_list').onclick=run(async e=>{const id=e.target.dataset.csdel;if(!id||!confirm('Delete this cash entry?'))return;
+  await api('/api/cash/delete',{id:+id});await loadState();await loadCash();});
 $('g_cancel').onclick=()=>$('gdlg').close();
 $('g_view').onclick=run(async()=>{$('gdlg').close();
   $('f_account').value=$('s_account').value;$('f_month').value='';$('f_q').value='';
@@ -1936,7 +2151,7 @@ $('as_save').onclick=run(async()=>{const body={id:aCur?aCur.id:0};
   await api('/api/asset',body);$('asdlg').close();await loadAssets();toast('Saved '+body.name);});
 $('as_del').onclick=run(async()=>{if(!aCur||!confirm('Delete '+aCur.name+'?'))return;
   await api('/api/asset/delete',{id:aCur.id});$('asdlg').close();await loadAssets();});
-run(loadState)();
+run(async()=>{await loadState();await loadCash();})();
 </script></body></html>"""
 
 
