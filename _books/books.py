@@ -572,15 +572,80 @@ def looks_like_pnl(rows):
                                    "long term", "intraday", "turnover", "f&o")) >= 2
 
 
+STMT_DATE = r"\d{1,2}[/\-. ](?:\d{1,2}|[A-Za-z]{3})[/\-. ]\d{2,4}"
+STMT_AMOUNT = r"-?[\d,]+\.\d{2}(?:\s*(?:Cr|Dr|CR|DR)\b)?"
+STMT_SKIP = r"opening balance|closing balance|statement summary|page \d|brought forward|carried forward"
+
+
+def lines_to_txns(text):
+    """Read statement lines like "01/04/24 UPI-NAME-... 01/04/24 500.00 12,345.67":
+    a date first, the amount and balance last. Money in or out comes from how the
+    balance moves, so it works without the Withdrawal and Deposit columns."""
+    out, opening = [], None
+    for line in text:
+        line = " ".join(line.split())
+        o = re.search(rf"opening balance\s*:?\s*(?:rs\.?|inr)?\s*({STMT_AMOUNT})", line, re.I)
+        if o and opening is None:
+            opening = parse_signed(o.group(1))
+        m = re.match(rf"({STMT_DATE})\s+(.*)$", line)
+        found = list(re.finditer(STMT_AMOUNT, line))
+        nums = [f.group() for f in found]
+        if m and len(nums) >= 2 and parse_date(m.group(1)) and not re.search(STMT_SKIP, line, re.I):
+            body = line[m.end(1):found[-2].start()].strip()
+            body = re.sub(rf"\s+{STMT_DATE}$", "", body)  # the value date
+            ref = ""
+            r = re.search(r"\s(\d{8,})$", body)
+            if r:
+                ref, body = r.group(1), body[:r.start()]
+            bal = parse_signed(nums[-1])
+            if re.search(r"dr\.?$", nums[-1], re.I):
+                bal = -abs(bal)
+            out.append(dict(date=parse_date(m.group(1)), narration=body.strip(), ref=ref,
+                            amount=parse_num(nums[-2]), balance=bal))
+        elif out and not nums and not m and line and len(line) < 100 and not re.search(
+                r"date|narration|particulars|withdraw|deposit|balance|statement|account", line, re.I):
+            out[-1]["narration"] += " " + line  # a narration running onto the next line
+    if len(out) < 2:
+        return []
+    near = lambda a, b: abs(a - b) < 0.02
+    fwd = sum(near(abs(out[i]["balance"] - out[i - 1]["balance"]), out[i]["amount"])
+              for i in range(1, len(out)))
+    back = sum(near(abs(out[i - 1]["balance"] - out[i]["balance"]), out[i - 1]["amount"])
+               for i in range(1, len(out)))
+    if back > fwd:  # newest first
+        out.reverse()
+    txns = []
+    for i, t in enumerate(out):
+        if i:
+            credit = t["balance"] > out[i - 1]["balance"]
+        elif opening is not None and near(abs(t["balance"] - opening), t["amount"]):
+            credit = t["balance"] > opening
+        else:  # the first entry with no opening balance: go by its wording
+            credit = bool(re.search(r"\b(cr|credit|deposit|by)\b", t["narration"], re.I))
+        txns.append(dict(date=t["date"], narration=t["narration"], ref=t["ref"],
+                         debit=0.0 if credit else t["amount"], credit=t["amount"] if credit else 0.0,
+                         balance=t["balance"]))
+    return txns
+
+
 def parse_statement(name, data, password):
     rows, lines = read_rows(name, data, password)
     try:
-        return rows_to_txns(rows or lines)
+        txns = rows_to_txns(rows or lines)
     except ValueError:
         if looks_like_pnl(rows + lines):
             raise ValueError("This looks like a broker P&L report, not a bank statement. "
                              "Open the Trading tab and use Import P&L report on that account.")
-        raise
+        txns = None
+        if data[:4] != b"%PDF":
+            raise
+    if not txns and data[:4] == b"%PDF":  # tables not found: read the text lines instead
+        txns = lines_to_txns(pdf_text_lines(data, password))
+    if not txns:
+        raise ValueError("No entries could be read from this file. Download the statement from "
+                         "net banking as Excel or CSV (Delimited) and import that, or send the "
+                         "file so its layout can be added.")
+    return txns
 
 
 # ---------- broker P&L reports ----------
