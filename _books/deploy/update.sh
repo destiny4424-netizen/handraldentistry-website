@@ -61,6 +61,7 @@ sync_files() {
   done
   install -m 755 "$DEPLOY/update.sh" /usr/local/sbin/handral-books-update
   install -m 755 "$DEPLOY/backup.sh" /usr/local/sbin/handral-books-backup
+  install -m 755 "$DEPLOY/web.sh" /usr/local/sbin/handral-books-web
   if [ "$changed" = 1 ]; then
     systemctl daemon-reload
   fi
