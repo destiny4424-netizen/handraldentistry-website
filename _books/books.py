@@ -1799,6 +1799,65 @@ def insurance_sheet_rows(q):
     return out
 
 
+# ---------- sharing rules between computers or with a CA ----------
+
+def export_rules():
+    con = db()
+    out = dict(app="Handral Books", version=1,
+               rules=[dict(pattern=r["pattern"], dir=r["dir"], category=r["category"],
+                           clinic=r["clinic"] or "", field=r["field"] or "narration")
+                      for r in con.execute("SELECT * FROM rules ORDER BY id")],
+               staff=[dict(name=r["name"], match=r["match"], role=r["role"] or "")
+                      for r in con.execute("SELECT * FROM staff ORDER BY name")],
+               consultants=[dict(name=r["name"], match=r["match"])
+                            for r in con.execute("SELECT * FROM consultants ORDER BY name")])
+    con.close()
+    return out
+
+
+def import_rules(data):
+    try:
+        d = json.loads(data.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("This is not a rules file. Use a .json file made by Download rules.")
+    if not isinstance(d, dict) or not isinstance(d.get("rules", []), list):
+        raise ValueError("This is not a rules file. Use a .json file made by Download rules.")
+    cats = dict(CATS)
+    added = dict(rules=0, staff=0, consultants=0, skipped=0)
+    with LOCK:
+        con = db()
+        have = {(r["pattern"], r["dir"], r["field"] or "narration")
+                for r in con.execute("SELECT * FROM rules")}
+        for r in d.get("rules", []):
+            pat = " ".join(str(r.get("pattern") or "").split())
+            field = "payee" if r.get("field") == "payee" else "narration"
+            way = r.get("dir") if r.get("dir") in ("in", "out", "any") else "any"
+            cat = r.get("category")
+            if len(pat) < 3 or cat not in cats or (pat, way, field) in have:
+                added["skipped"] += 1
+                continue
+            clinic = r.get("clinic") if r.get("clinic") in CLINICS else ""
+            con.execute("INSERT INTO rules(pattern,dir,category,clinic,field) VALUES(?,?,?,?,?)",
+                        (pat, way, cat, clinic, field))
+            have.add((pat, way, field))
+            added["rules"] += 1
+        for kind, key in (("staff", "staff"), ("consultant", "consultants")):
+            table = PEOPLE[kind][0]
+            for x in d.get(key, []):
+                match = " ".join(str(x.get("match") or x.get("name") or "").split())
+                if len(match) < 4:
+                    continue
+                cur = con.execute(f"INSERT OR IGNORE INTO {table}(name,match) VALUES(?,?)",
+                                  (" ".join(str(x.get("name") or match).split()), match))
+                if cur.rowcount and kind == "staff" and x.get("role"):
+                    con.execute("UPDATE staff SET role=? WHERE match=?", (str(x["role"]), match))
+                added[key] += cur.rowcount
+        added["sorted"] = apply_rules(con)
+        con.commit()
+        con.close()
+    return added
+
+
 def books_year(fy, owner):
     """This year's figures from the books, in the same shape as an ITR summary."""
     q = {"fy": [str(fy)]}
@@ -2457,6 +2516,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(api_txns(q))
             elif u.path == "/api/report":
                 self.send(api_report(q))
+            elif u.path == "/rules.json":
+                self.send(json.dumps(export_rules(), indent=1).encode(), "application/json", extra={
+                    "Content-Disposition": "attachment; filename=handral-books-rules.json"})
             elif u.path == "/api/consultants":
                 self.send(api_consultants(q))
             elif u.path == "/api/staff":
@@ -2519,6 +2581,8 @@ class Handler(BaseHTTPRequestHandler):
                 res = import_statement(int(q["account"][0]), q["name"][0],
                                        self.body(), (q.get("pw") or [""])[0])
                 return self.send(res)
+            if u.path == "/api/rules/import":
+                return self.send(import_rules(self.body()))
             if u.path == "/api/mf/upload":
                 parsed = parse_mf(qget(q, "name"), self.body(), qget(q, "pw"))
                 owner = qget(q, "owner") if qget(q, "owner") in OWNERS else "Self"
@@ -2994,6 +3058,11 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
       <option value="in">Money in only</option><option value="out">Money out only</option></select>
     <select id="r_cat"></select><select id="r_clinic"></select>
     <button class="pri" id="r_add">Add rule</button></div></div>
+  <div class="card"><div class="row"><div class="grow"><b>Share rules</b><div class="mute">Save all rules, staff and
+    consultants to a file, or add the ones in a file you were given. Adding sorts matching unsorted entries
+    straight away; nothing already sorted is changed.</div></div>
+    <button id="r_export">Download rules</button><button class="pri" id="r_import">Upload rules file</button></div>
+    <input type="file" id="rfile" hidden accept=".json"></div>
   <div class="card" id="rlist"></div>
 </section>
 <section id="reports">
@@ -3696,6 +3765,12 @@ $('g_save').onclick=run(async()=>{
 $('r_add').onclick=run(async()=>{
   const r=await api('/api/rule',{pattern:$('r_pat').value,dir:$('r_dir').value,category:$('r_cat').value,clinic:$('r_clinic').value});
   $('r_pat').value='';toast('Rule added and applied to '+r.changed+' entries');await loadState();});
+$('r_export').onclick=()=>{location.href='/rules.json';};
+$('r_import').onclick=()=>{$('rfile').value='';$('rfile').click();};
+$('rfile').onchange=run(async()=>{const f=$('rfile').files[0];if(!f)return;
+  const r=await api('/api/rules/import',f);
+  toast('Added '+r.rules+' rules, '+r.staff+' staff, '+r.consultants+' consultants. '+r.sorted+' entries sorted.'+(r.skipped?' '+r.skipped+' already there.':''));
+  await loadState();});
 $('rlist').onclick=run(async e=>{const id=e.target.dataset.rdel;if(!id)return;
   await api('/api/rule/delete',{id:+id});await loadState();});
 $('t_add').onclick=run(async()=>{const n=$('t_new').value.trim();if(!n)return toast('Enter the broker name.');
