@@ -1,0 +1,6 @@
+[Unit]
+Description=Handral Books: daily database backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/handral-books-backup
