@@ -1,0 +1,4 @@
+books.db
+books.db-wal
+books.db-shm
+__pycache__/

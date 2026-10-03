@@ -1,0 +1,30 @@
+[Unit]
+Description=Handral Books bookkeeping server
+After=network.target
+# Never give up restarting, however often it crashes.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=books
+Group=books
+Environment=PYTHONUNBUFFERED=1
+Environment=BOOKS_DB=/var/lib/handral-books/books.db
+Environment=BOOKS_HOST=127.0.0.1
+Environment=BOOKS_PORT=3020
+# Local overrides (e.g. BOOKS_PORT) go in this file; it survives updates.
+EnvironmentFile=-/etc/default/handral-books
+ExecStart=/usr/bin/python3 /opt/handral-books/repo/_books/books.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+# Hardening: the app can only write to its data folder.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/handral-books
+
+[Install]
+WantedBy=multi-user.target
