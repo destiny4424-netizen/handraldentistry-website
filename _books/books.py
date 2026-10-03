@@ -5,6 +5,7 @@ Python 3 standard library only. pdfplumber is optional (needed for PDF import).
 Data lives in books.db next to this file unless BOOKS_DB points elsewhere.
 Listens on 127.0.0.1:3020 by default.
 """
+import calendar
 import csv
 import hashlib
 import io
@@ -52,6 +53,7 @@ CATS = [
     ("Health insurance premium (80D)", "tax"),
     ("Tax-saving investment (80C)", "tax"),
     ("Income tax and TDS paid", "tax"), ("Donations (80G)", "tax"),
+    ("School fees (80C)", "tax"),
     ("Trading transfer", "invest"), ("Investments", "invest"),
     ("Loan received or repaid", "loans"), ("Credit card payment", "loans"),
     ("Own account transfer", "personal"),
@@ -94,6 +96,12 @@ SEED_RULES_2 = [
     ("JL APPRAISER", "out", "Bank charges"),
 ]
 
+# Added in database version 3.
+SEED_RULES_3 = [
+    ("SCHOOL", "out", "School fees (80C)"),
+    ("VIDYALAYA", "out", "School fees (80C)"),
+]
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts(id INTEGER PRIMARY KEY, name TEXT UNIQUE);
 CREATE TABLE IF NOT EXISTS txns(
@@ -107,6 +115,16 @@ CREATE TABLE IF NOT EXISTS rules(
   field TEXT DEFAULT 'narration');
 CREATE TABLE IF NOT EXISTS consultants(
   id INTEGER PRIMARY KEY, name TEXT, match TEXT UNIQUE);
+CREATE TABLE IF NOT EXISTS trading_pnl(
+  id INTEGER PRIMARY KEY, account_id INTEGER, fy INTEGER,
+  intraday REAL DEFAULT 0, fno REAL DEFAULT 0, stcg REAL DEFAULT 0,
+  ltcg REAL DEFAULT 0, dividends REAL DEFAULT 0, charges REAL DEFAULT 0,
+  turnover REAL DEFAULT 0, note TEXT DEFAULT '', UNIQUE(account_id, fy));
+CREATE TABLE IF NOT EXISTS assets(
+  id INTEGER PRIMARY KEY, name TEXT, type TEXT, owner TEXT DEFAULT 'Self',
+  bought TEXT DEFAULT '', cost REAL DEFAULT 0, value REAL DEFAULT 0,
+  valued TEXT DEFAULT '', sold TEXT DEFAULT '', sale REAL DEFAULT 0,
+  note TEXT DEFAULT '');
 """
 
 
@@ -178,6 +196,15 @@ def init():
         con.execute("ALTER TABLE accounts ADD COLUMN owner TEXT DEFAULT 'Self'")
     if "kind" not in acols:
         con.execute("ALTER TABLE accounts ADD COLUMN kind TEXT DEFAULT 'Bank'")
+    if "bank_match" not in acols:
+        con.execute("ALTER TABLE accounts ADD COLUMN bank_match TEXT DEFAULT ''")
+    if version < 3:
+        have = {r[0] for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany(
+            "INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+            [s for s in SEED_RULES_3 if s[0] not in have])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=3")
     con.commit()
     con.close()
 
@@ -515,6 +542,168 @@ def api_groups(q):
     return dict(rows=rows, total=tot["n"], open=tot["open"] or 0)
 
 
+# ---------- trading accounts and investments ----------
+
+# Yearly figures per trading account, copied from the broker's Tax P&L report.
+TRADE_FIELDS = [
+    ("intraday", "Intraday equity (speculative)"),
+    ("fno", "F&O (non-speculative business)"),
+    ("stcg", "Short-term capital gains"),
+    ("ltcg", "Long-term capital gains"),
+    ("dividends", "Dividends"),
+    ("charges", "Charges not already deducted"),
+    ("turnover", "F&O turnover (for audit limit)"),
+]
+PNL_KEYS = ("intraday", "fno", "stcg", "ltcg", "dividends")
+
+# (type, months held before a sale counts as long term). 0: interest-type, no
+# capital gain. -1: always taxed at slab rate (debt funds bought after Mar 2023).
+ASSET_TYPES = [
+    ("Mutual fund (equity)", 12), ("Mutual fund (debt)", -1),
+    ("Shares (delivery)", 12), ("Gold", 24), ("Plot or land", 24),
+    ("House or flat", 24), ("Fixed deposit", 0), ("PPF, EPF or NPS", 0),
+    ("Insurance (LIC or ULIP)", 0), ("Other", 24),
+]
+TERM_OF = dict(ASSET_TYPES)
+
+
+def trade_net(r):
+    return sum(r[k] or 0 for k in PNL_KEYS) - (r["charges"] or 0)
+
+
+def add_months(date, n):
+    y, m, d = (int(x) for x in date.split("-"))
+    m += n
+    y, m = y + (m - 1) // 12, (m - 1) % 12 + 1
+    return f"{y:04d}-{m:02d}-{min(d, calendar.monthrange(y, m)[1]):02d}"
+
+
+def asset_term(r):
+    """Short or long term for a sold investment, by type and holding period."""
+    if not r.get("sold"):
+        return ""
+    rule = TERM_OF.get(r["type"], 24)
+    if rule == 0:
+        return "Interest or maturity, not capital gain"
+    if rule == -1:
+        return "Short term (slab rate)"
+    if not r.get("bought"):
+        return "Add purchase date"
+    return "Long term" if r["sold"] > add_months(r["bought"], rule) else "Short term"
+
+
+def check_date(v):
+    v = str(v or "").strip()
+    if not v:
+        return ""
+    try:
+        return datetime.strptime(v, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        raise ValueError(f"Date {v} is not valid.")
+
+
+def to_num(v):
+    s = str(v if v is not None else "").replace(",", "").strip()
+    if not s:
+        return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        raise ValueError(f"{s} is not a number.")
+
+
+def api_trading(q):
+    """Each trading account's P&L for the year (all years summed if none)."""
+    fy, owner = qget(q, "fy"), qget(q, "owner")
+    con = db()
+    out = []
+    accts = con.execute(
+        "SELECT * FROM accounts WHERE kind='Trading'" + (" AND owner=?" if owner else "")
+        + " ORDER BY name", [owner] if owner else []).fetchall()
+    sums = ", ".join(f"COALESCE(SUM({k}),0) {k}" for k, _ in TRADE_FIELDS)
+    for a in accts:
+        args = [a["id"]] + ([int(fy)] if fy else [])
+        p = dict(con.execute(
+            f"SELECT {sums}, COALESCE(GROUP_CONCAT(NULLIF(note,''),'; '),'') note"
+            f" FROM trading_pnl WHERE account_id=?" + (" AND fy=?" if fy else ""),
+            args).fetchone())
+        words = a["name"].split()
+        match = (a["bank_match"] or "").strip() or (words[0] if words else "")
+        added = withdrawn = 0
+        if len(match) >= 3:
+            w = ("category='Trading transfer' AND narration LIKE ? AND account_id IN"
+                 " (SELECT id FROM accounts WHERE kind!='Trading')")
+            targs = [f"%{match}%"]
+            if fy:
+                w += " AND date BETWEEN ? AND ?"
+                targs += list(fy_range(fy))
+            r = con.execute(f"SELECT COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c"
+                            f" FROM txns WHERE {w}", targs).fetchone()
+            added, withdrawn = r["d"], r["c"]
+        out.append(dict(p, id=a["id"], name=a["name"], owner=a["owner"], match=match,
+                        added=added, withdrawn=withdrawn, net=trade_net(p)))
+    con.close()
+    return dict(fields=TRADE_FIELDS, rows=out)
+
+
+def api_assets(q):
+    owner, fy = qget(q, "owner"), qget(q, "fy")
+    con = db()
+    rows = [dict(r) for r in con.execute(
+        "SELECT * FROM assets" + (" WHERE owner=?" if owner else "")
+        + " ORDER BY type, name", [owner] if owner else [])]
+    bank = 0
+    if fy:
+        w, args = "category='Investments' AND date BETWEEN ? AND ?", list(fy_range(fy))
+        if owner:
+            w += " AND account_id IN (SELECT id FROM accounts WHERE owner=?)"
+            args.append(owner)
+        bank = con.execute(f"SELECT COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0)"
+                           f" FROM txns WHERE {w}", args).fetchone()[0]
+    con.close()
+    for r in rows:
+        r["term"] = asset_term(r)
+    return dict(types=[t for t, _ in ASSET_TYPES], rows=rows, bank=bank)
+
+
+def sold_in(rows, fy):
+    if not fy:
+        return [r for r in rows if r["sold"]]
+    a, b = fy_range(fy)
+    return [r for r in rows if r["sold"] and a <= r["sold"] <= b]
+
+
+def trading_sheet_rows(q):
+    d = api_trading(q)
+    out = [("h", ["Account", "Owner"] + [l for _, l in TRADE_FIELDS]
+            + ["Net P&L", "Added from bank", "Withdrawn to bank", "Note"])]
+    tot = [0.0] * (len(TRADE_FIELDS) + 3)
+    for r in d["rows"]:
+        nums = [r[k] or 0 for k, _ in TRADE_FIELDS] + [r["net"], r["added"], r["withdrawn"]]
+        tot = [a + b for a, b in zip(tot, nums)]
+        out.append(("", [r["name"], r["owner"]] + [float(round(v, 2)) for v in nums]
+                    + [r["note"]]))
+    out.append(("b", ["Total", ""] + [float(round(v, 2)) for v in tot]))
+    return out
+
+
+def asset_sheet_rows(q):
+    out = [("h", ["Name", "Type", "Owner", "Bought on", "Cost", "Current value",
+                  "Value as on", "Unrealised gain", "Sold on", "Sale value",
+                  "Realised gain", "Term", "Note"])]
+    for r in api_assets(q)["rows"]:
+        cost = r["cost"] or 0
+        if r["sold"]:
+            mid = ["", "", "", r["sold"], float(r["sale"] or 0),
+                   float(round((r["sale"] or 0) - cost, 2))]
+        else:
+            mid = [float(r["value"] or 0), r["valued"],
+                   float(round((r["value"] or 0) - cost, 2)), "", "", ""]
+        out.append(("", [r["name"], r["type"], r["owner"], r["bought"], float(cost)]
+                    + mid + [r["term"], r["note"]]))
+    return out
+
+
 def summary_rows(q):
     where, args = txn_filter(q)
     con = db()
@@ -640,13 +829,30 @@ def itr_rows(q):
     for g in ("invest", "loans", "personal"):
         for n in names(g):
             rows.append(("", [n, cats[n][2], val(n, 3), val(n, 4)]))
+    trade = api_trading(q)["rows"]
+    if any(r[k] for r in trade for k, _ in TRADE_FIELDS):
+        rows.append(("", []))
+        rows.append(("h", ["G. Trading (from broker P&L statements)", "Accounts", "Amount"]))
+        for k, label in TRADE_FIELDS:
+            v = sum(r[k] or 0 for r in trade)
+            if v:
+                rows.append(("", [label, len(trade), round(v, 2)]))
+        rows.append(("b", ["Net trading result (excluding turnover)", "",
+                           round(sum(r["net"] for r in trade), 2)]))
+    sold = sold_in(api_assets(q)["rows"], qget(q, "fy"))
+    if sold:
+        rows.append(("", []))
+        rows.append(("h", ["H. Investments and property sold", "Term", "Gain"]))
+        for r in sold:
+            rows.append(("", [f"{r['name']} ({r['type']}, sold {r['sold']})", r["term"],
+                              round((r["sale"] or 0) - (r["cost"] or 0), 2)]))
     if "Uncategorised" in cats:
         u = cats["Uncategorised"]
         rows.append(("", []))
         rows.append(("b", ["UNSORTED, not counted above", u[2], u[3], u[4]]))
     rows.append(("", []))
     rows.append(("", ["Bank entries only. Cash never deposited is not included. Trading"
-                      " profit or loss comes from broker statements. Final heads and"
+                      " figures are as entered from broker statements. Final heads and"
                       " deductions are for the CA to decide."]))
     return rows
 
@@ -725,6 +931,12 @@ def export_summary(q):
     cons = consultant_rows(q)
     if len(cons) > 1:
         blocks.append(cons)
+    trade = trading_sheet_rows(q)
+    if len(trade) > 2:
+        blocks.append([("h", ["Trading P&L"])] + trade)
+    assets = asset_sheet_rows(q)
+    if len(assets) > 1:
+        blocks.append([("h", ["Investments"])] + assets)
     for b in blocks:
         w.writerows(r for _, r in b)
         w.writerow([])
@@ -865,6 +1077,13 @@ def export_xlsx(q):
     cons = consultant_rows(q)
     if len(cons) > 1:
         sheets.append(("Consultants", cons, [26, 26, 10, 16], True))
+    trade = trading_sheet_rows(q)
+    if len(trade) > 2:
+        sheets.append(("Trading P&L", trade, [22, 10] + [16] * 11 + [30], True))
+    assets = asset_sheet_rows(q)
+    if len(assets) > 1:
+        sheets.append(("Investments", assets,
+                       [30, 22, 10, 12, 14, 14, 12, 14, 12, 14, 14, 26, 30], True))
     sheets.append(("All entries", [("h", ENTRY_HEAD)] + money(ent), ew, True))
     for kind in ("Clinic", "Personal"):
         part = [r for r in ent if r[8] == kind]
@@ -924,6 +1143,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(api_consultants(q))
             elif u.path == "/api/groups":
                 self.send(api_groups(q))
+            elif u.path == "/api/trading":
+                self.send(api_trading(q))
+            elif u.path == "/api/assets":
+                self.send(api_assets(q))
             elif u.path == "/export-summary.csv":
                 self.send(export_summary(q), "text/csv", extra={
                     "Content-Disposition":
@@ -968,6 +1191,7 @@ class Handler(BaseHTTPRequestHandler):
                                     " VALUES(?,?,?)", (name, owner, kind))
                 elif u.path == "/api/account/delete":
                     con.execute("DELETE FROM txns WHERE account_id=?", (d["id"],))
+                    con.execute("DELETE FROM trading_pnl WHERE account_id=?", (d["id"],))
                     con.execute("DELETE FROM accounts WHERE id=?", (d["id"],))
                 elif u.path == "/api/txn":
                     con.execute("UPDATE txns SET category=?, clinic=?, note=? WHERE id=?",
@@ -1007,6 +1231,43 @@ class Handler(BaseHTTPRequestHandler):
                         "SELECT COUNT(*) FROM txns WHERE category NOT IN ('', ?)"
                         " AND debit>0 AND (narration LIKE ? OR payee=?)",
                         (CONSULT,) + like).fetchone()[0]
+                elif u.path == "/api/trading":
+                    acct, fy = int(d["account_id"]), int(d["fy"])
+                    keys = [k for k, _ in TRADE_FIELDS]
+                    con.execute(
+                        f"INSERT INTO trading_pnl(account_id,fy,{','.join(keys)},note)"
+                        f" VALUES(?,?,{','.join('?' * len(keys))},?)"
+                        f" ON CONFLICT(account_id,fy) DO UPDATE SET "
+                        + ", ".join(f"{k}=excluded.{k}" for k in keys + ["note"]),
+                        [acct, fy] + [to_num(d.get(k)) for k in keys]
+                        + [str(d.get("note") or "").strip()])
+                    if "match" in d:
+                        con.execute("UPDATE accounts SET bank_match=? WHERE id=?",
+                                    (" ".join(str(d["match"]).split()), acct))
+                elif u.path == "/api/asset":
+                    name = " ".join(str(d.get("name") or "").split())
+                    if not name:
+                        raise ValueError("Enter a name for the investment.")
+                    kind = d.get("type") if d.get("type") in TERM_OF else "Other"
+                    owner = d.get("owner") if d.get("owner") in OWNERS else "Self"
+                    bought, valued, sold = (check_date(d.get(k))
+                                            for k in ("bought", "valued", "sold"))
+                    cost, value, sale = (to_num(d.get(k)) for k in ("cost", "value", "sale"))
+                    if sold and bought and sold < bought:
+                        raise ValueError("Sale date is before the purchase date.")
+                    if value and not valued:
+                        valued = datetime.now().strftime("%Y-%m-%d")
+                    vals = (name, kind, owner, bought, cost, value, valued, sold,
+                            sale if sold else 0, str(d.get("note") or "").strip())
+                    if d.get("id"):
+                        con.execute("UPDATE assets SET name=?, type=?, owner=?, bought=?,"
+                                    " cost=?, value=?, valued=?, sold=?, sale=?, note=?"
+                                    " WHERE id=?", vals + (int(d["id"]),))
+                    else:
+                        con.execute("INSERT INTO assets(name,type,owner,bought,cost,value,"
+                                    "valued,sold,sale,note) VALUES(?,?,?,?,?,?,?,?,?,?)", vals)
+                elif u.path == "/api/asset/delete":
+                    con.execute("DELETE FROM assets WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/consultant/delete":
                     con.execute("DELETE FROM consultants WHERE id=?", (d["id"],))
                 elif u.path == "/api/rule":
@@ -1101,7 +1362,12 @@ body{overflow-x:hidden}
 padding:8px 12px;background:var(--ink);color:var(--bg)}
 #selbar button{min-height:38px;padding:6px 12px}
 #selbar .ghost{background:none;border-color:currentColor;color:inherit}
-@media(max-width:560px){nav button{font-size:12px;padding:14px 0}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:4px 16px;margin-top:8px;font-size:14px}
+.figs div{display:flex;justify-content:space-between;gap:8px;border-bottom:1px dashed var(--line);padding:3px 0}
+dialog .two{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+dialog input[type=number],dialog input[type=date]{width:100%}
+dialog{max-height:92vh;overflow-y:auto}
+@media(max-width:560px){nav{overflow-x:auto}nav button{flex:0 0 auto;min-width:66px;font-size:12px;padding:14px 4px}
 #sweep .row{flex-direction:column;align-items:stretch}}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);
 color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;z-index:9}
@@ -1157,6 +1423,29 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     the name in Entries and enter the spelling used there in the second box.</p></div>
   <div class="card" id="clist"></div>
 </section>
+<section id="trading">
+  <h2>Trading accounts</h2>
+  <p class="mute">For each broker and year, copy the totals from its Tax P&amp;L report
+  (Zerodha Console, Fyers, Kotak, Angel One and so on). Enter losses as negative numbers.
+  Money moved between your banks and the broker is filled in from bank entries sorted as
+  Trading transfer.</p>
+  <div class="stats" id="tstats"></div>
+  <div id="tacc"></div>
+  <div class="card"><div class="row">
+    <input id="t_new" class="grow" type="text" placeholder="New trading account, e.g. Zerodha">
+    <select id="t_owner" aria-label="Owner"></select>
+    <button class="pri" id="t_add">Add trading account</button></div></div>
+</section>
+<section id="assets">
+  <div class="row" style="margin-bottom:10px"><h2 class="grow" style="margin:0">Investments and property</h2>
+    <button class="pri" id="as_add">Add investment</button></div>
+  <div class="stats" id="astats"></div>
+  <div id="alist"></div>
+  <p class="mute" id="abank"></p>
+  <p class="mute">Short or long term is worked out from the type and how long it was held
+  (equity 12 months, property, gold and others 24 months, debt funds always slab rate).
+  Your CA confirms the final tax treatment.</p>
+</section>
 <section id="rules">
   <h2>Rules</h2>
   <p class="mute">Rules categorise matching entries automatically on every import. They only
@@ -1199,6 +1488,8 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <button data-tab="banking" class="on">Banking</button>
   <button data-tab="sort">Sort</button>
   <button data-tab="txns">Entries</button>
+  <button data-tab="trading">Trading</button>
+  <button data-tab="assets">Assets</button>
   <button data-tab="consult">Consultants</button>
   <button data-tab="rules">Rules</button>
   <button data-tab="reports">ITR</button>
@@ -1239,6 +1530,32 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="row" style="margin-top:14px;justify-content:flex-end">
     <button class="link" id="g_view">View entries</button><span class="grow"></span>
     <button id="g_cancel">Cancel</button><button class="pri" id="g_save">Apply</button></div>
+</dialog>
+<dialog id="tdlg">
+  <div class="row"><b class="grow" id="td_title"></b><span class="mute" id="td_fy"></span></div>
+  <div id="td_fields" class="two"></div>
+  <label for="td_note">Note</label><input type="text" id="td_note">
+  <label for="td_match">Name of this broker in bank entries</label><input type="text" id="td_match">
+  <div class="row" style="margin-top:14px;justify-content:flex-end">
+    <button id="td_cancel">Cancel</button><button class="pri" id="td_save">Save</button></div>
+</dialog>
+<dialog id="asdlg">
+  <h3 id="as_title">Investment</h3>
+  <label for="as_name">Name</label><input type="text" id="as_name" placeholder="e.g. Parag Parikh Flexi Cap, Plot at Navanagar">
+  <div class="two">
+    <div><label for="as_type">Type</label><select id="as_type"></select></div>
+    <div><label for="as_owner">Owner</label><select id="as_owner"></select></div>
+    <div><label for="as_bought">Bought on</label><input type="date" id="as_bought"></div>
+    <div><label for="as_cost">Total cost</label><input type="number" step="0.01" id="as_cost"></div>
+    <div><label for="as_value">Current value</label><input type="number" step="0.01" id="as_value"></div>
+    <div><label for="as_valued">Value as on</label><input type="date" id="as_valued"></div>
+    <div><label for="as_sold">Sold on (if sold)</label><input type="date" id="as_sold"></div>
+    <div><label for="as_sale">Sale value</label><input type="number" step="0.01" id="as_sale"></div>
+  </div>
+  <label for="as_note">Note</label><input type="text" id="as_note">
+  <div class="row" style="margin-top:14px">
+    <button class="link" id="as_del">Delete</button><span class="grow"></span>
+    <button id="as_cancel">Cancel</button><button class="pri" id="as_save">Save</button></div>
 </dialog>
 <div id="selbar"><span class="grow" id="seltext"></span>
   <button class="ghost" id="selclear">Clear</button><button class="pri" id="selgo">Sort selected</button></div>
@@ -1295,7 +1612,7 @@ async function loadState(){
   $('fy').value=want;
   const ow=S.owners.map(o=>'<option>'+esc(o)+'</option>').join(''),kd=S.kinds.map(o=>'<option>'+esc(o)+'</option>').join('');
   keepValue('who','<option value="">Everyone</option>'+ow);keepValue('newowner',ow);keepValue('newkind',kd);
-  $('a_owner').innerHTML=ow;$('a_kind').innerHTML=kd;
+  $('a_owner').innerHTML=ow;$('a_kind').innerHTML=kd;keepValue('t_owner',ow);keepValue('as_owner',ow);
   $('dl_fy').innerHTML=years.map(y=>'<option value="'+y+'">'+fyLabel(y)+'</option>').join('')+'<option value="">All years together</option>';
   $('dl_fy').value=want;
   keepValue('dl_bank','<option value="">All accounts</option>'+S.accounts.filter(a=>!$('who').value||a.owner===$('who').value).map(a=>'<option value="'+a.id+'">'+esc(a.name)+' only</option>').join(''));
@@ -1458,10 +1775,68 @@ async function loadConsult(){
   box.insertAdjacentHTML('beforeend','<div class="tx" style="cursor:default"><b class="grow">Total this year</b><b class="num">'+
     inr(d.rows.reduce((a,c)=>a+c.total,0))+'</b></div>');
 }
+let T=null,tAcct=null,A=null,aCur=null;
+const signed=n=>'<span class="num '+(n<0?'out':'in')+'">'+inr(n)+'</span>';
+const stat=(label,v,col)=>'<div class="card"><span class="mute">'+label+'</span><b class="num'+(col?(v<0?' out':' in'):'')+'">'+inr(v)+'</b></div>';
+async function loadTrading(){
+  const y=$('fy').value;
+  T=await api('/api/trading?'+qs({owner:$('who').value,fy:y}));
+  const tot=k=>T.rows.reduce((a,r)=>a+(r[k]||0),0);
+  $('tstats').innerHTML=T.rows.length?stat('Net trading P&amp;L',tot('net'),1)+stat('Intraday and F&amp;O',tot('intraday')+tot('fno'),1)+
+    stat('Capital gains',tot('stcg')+tot('ltcg'),1)+stat('Added from bank',tot('added'))+stat('Withdrawn to bank',tot('withdrawn')):'';
+  $('tacc').innerHTML=T.rows.length?T.rows.map(r=>
+    '<div class="card"><div class="row"><div class="grow"><b>'+esc(r.name)+'</b> <span class="chip">'+esc(r.owner)+'</span>'+
+    '<div class="mute">'+fyLabel(+y)+'</div></div><div style="text-align:right"><span class="mute">Net P&amp;L</span><br><b>'+signed(r.net)+'</b></div></div>'+
+    '<div class="figs">'+T.fields.map(f=>'<div><span class="mute">'+esc(f[1])+'</span>'+(!r[f[0]]?'<span class="mute">-</span>':
+      f[0]==='charges'||f[0]==='turnover'?'<span class="num">'+inr(r[f[0]])+'</span>':signed(r[f[0]]))+'</div>').join('')+'</div>'+
+    '<div class="row" style="margin-top:8px"><span class="mute grow">Bank to broker: added '+inr(r.added)+', withdrawn '+inr(r.withdrawn)+
+    (r.match?' (matched on "'+esc(r.match)+'")':'')+(r.note?'<br>'+esc(r.note):'')+'</span>'+
+    '<button class="pri" data-tedit="'+r.id+'">Enter figures</button></div></div>').join('')
+    :'<div class="card mute">No trading accounts yet. Add one below for each broker (Zerodha, Fyers, Kotak and so on).</div>';
+}
+function openTrade(id){tAcct=T.rows.find(r=>r.id==id);
+  $('td_title').textContent=tAcct.name;$('td_fy').textContent=fyLabel(+$('fy').value);
+  $('td_fields').innerHTML=T.fields.map(f=>'<div><label for="tf_'+f[0]+'">'+esc(f[1])+'</label>'+
+    '<input type="number" step="0.01" id="tf_'+f[0]+'" value="'+(tAcct[f[0]]||'')+'"></div>').join('');
+  $('td_note').value=tAcct.note||'';$('td_match').value=tAcct.match||'';$('tdlg').showModal();}
+
+const fyBounds=y=>[y+'-04-01',(+y+1)+'-03-31'];
+async function loadAssets(){
+  const y=$('fy').value,[a,b]=fyBounds(y);
+  A=await api('/api/assets?'+qs({owner:$('who').value,fy:y}));
+  keepValue('as_type',A.types.map(t=>'<option>'+esc(t)+'</option>').join(''));
+  const held=A.rows.filter(r=>!r.sold),soldNow=A.rows.filter(r=>r.sold&&r.sold>=a&&r.sold<=b);
+  const cost=held.reduce((s,r)=>s+(r.cost||0),0),val=held.reduce((s,r)=>s+(r.value||0),0);
+  const real=soldNow.reduce((s,r)=>s+(r.sale||0)-(r.cost||0),0);
+  $('astats').innerHTML=A.rows.length?stat('Invested (held now)',cost)+stat('Current value',val)+stat('Gain on holdings',val-cost,1)+
+    stat('Gain on sales, '+fyLabel(+y).split(' (')[0],real,1):'';
+  const pct=(g,c)=>c?' <span class="mute">('+(g/c*100).toFixed(1)+'%)</span>':'';
+  let h='';
+  for(const t of A.types){const list=held.filter(r=>r.type===t);if(!list.length)continue;
+    const c=list.reduce((s,r)=>s+(r.cost||0),0),v=list.reduce((s,r)=>s+(r.value||0),0);
+    h+='<div class="card scroll"><h3>'+esc(t)+'</h3><table><tr><th>Name</th><th>Owner</th><th>Cost</th><th>Value</th><th>Gain</th></tr>'+
+      list.map(r=>'<tr class="go" data-aid="'+r.id+'"><td>'+esc(r.name)+(r.valued?'<div class="mute">value as on '+r.valued+'</div>':'')+'</td><td>'+esc(r.owner)+
+        '</td><td class="num">'+inr(r.cost)+'</td><td class="num">'+inr(r.value)+'</td><td>'+signed((r.value||0)-(r.cost||0))+pct((r.value||0)-(r.cost||0),r.cost)+'</td></tr>').join('')+
+      '<tr class="tot"><td>Total</td><td></td><td class="num">'+inr(c)+'</td><td class="num">'+inr(v)+'</td><td>'+signed(v-c)+pct(v-c,c)+'</td></tr></table></div>';}
+  const soldTable=(title,list)=>list.length?'<div class="card scroll"><h3>'+title+'</h3><table><tr><th>Name</th><th>Sold on</th><th>Cost</th><th>Sale</th><th>Gain</th><th>Term</th></tr>'+
+    list.map(r=>'<tr class="go" data-aid="'+r.id+'"><td>'+esc(r.name)+'<div class="mute">'+esc(r.type)+', '+esc(r.owner)+'</div></td><td>'+r.sold+'</td><td class="num">'+inr(r.cost)+
+      '</td><td class="num">'+inr(r.sale)+'</td><td>'+signed((r.sale||0)-(r.cost||0))+'</td><td>'+esc(r.term)+'</td></tr>').join('')+'</table></div>':'';
+  h+=soldTable('Sold in '+fyLabel(+y).split(' (')[0]+' (for ITR)',soldNow)+soldTable('Sold in other years',A.rows.filter(r=>r.sold&&!(r.sold>=a&&r.sold<=b)));
+  $('alist').innerHTML=h||'<div class="card mute">Nothing added yet. Use Add investment for each mutual fund, plot, gold, house, FD and so on.</div>';
+  $('abank').textContent=A.bank?'Bank payments sorted as Investments in '+fyLabel(+y)+': '+inr(A.bank)+'. Add those purchases here too so the totals are complete.':'';
+}
+function openAsset(r){aCur=r||null;
+  $('as_title').textContent=r?'Edit investment':'Add investment';$('as_del').style.visibility=r?'visible':'hidden';
+  const v=r||{name:'',type:A.types[0],owner:$('who').value||S.owners[0],bought:'',cost:'',value:'',valued:'',sold:'',sale:'',note:''};
+  for(const k of ['name','type','owner','bought','valued','sold','note'])$('as_'+k).value=v[k]||'';
+  for(const k of ['cost','value','sale'])$('as_'+k).value=v[k]||'';
+  $('asdlg').showModal();}
+
 function activeTab(){return document.querySelector('nav .on').dataset.tab;}
 function refresh(){const tab=activeTab();
   if(tab==='txns')return loadTxns(true);if(tab==='reports')return loadReport();if(tab==='sort')return loadSort();
-  if(tab==='consult')return loadConsult();}
+  if(tab==='consult')return loadConsult();if(tab==='trading')return loadTrading();
+  if(tab==='assets')return loadAssets();}
 const run=fn=>async(...a)=>{try{await fn(...a);}catch(e){toast(e.message);}};
 async function go(tab){
   clearSel();
@@ -1546,6 +1921,21 @@ $('r_add').onclick=run(async()=>{
   $('r_pat').value='';toast('Rule added and applied to '+r.changed+' entries');await loadState();});
 $('rlist').onclick=run(async e=>{const id=e.target.dataset.rdel;if(!id)return;
   await api('/api/rule/delete',{id:+id});await loadState();});
+$('t_add').onclick=run(async()=>{const n=$('t_new').value.trim();if(!n)return toast('Enter the broker name.');
+  await api('/api/account',{name:n,owner:$('t_owner').value,kind:'Trading'});$('t_new').value='';await loadState();await loadTrading();toast('Added '+n);});
+$('tacc').onclick=e=>{const id=e.target.dataset.tedit;if(id)openTrade(id);};
+$('td_cancel').onclick=()=>$('tdlg').close();
+$('td_save').onclick=run(async()=>{const body={account_id:tAcct.id,fy:$('fy').value,note:$('td_note').value,match:$('td_match').value};
+  for(const f of T.fields)body[f[0]]=$('tf_'+f[0]).value;
+  await api('/api/trading',body);$('tdlg').close();await loadTrading();toast('Saved '+tAcct.name);});
+$('as_add').onclick=()=>openAsset(null);
+$('alist').onclick=e=>{const tr=e.target.closest('tr[data-aid]');if(tr)openAsset(A.rows.find(r=>r.id==tr.dataset.aid));};
+$('as_cancel').onclick=()=>$('asdlg').close();
+$('as_save').onclick=run(async()=>{const body={id:aCur?aCur.id:0};
+  for(const k of ['name','type','owner','bought','cost','value','valued','sold','sale','note'])body[k]=$('as_'+k).value;
+  await api('/api/asset',body);$('asdlg').close();await loadAssets();toast('Saved '+body.name);});
+$('as_del').onclick=run(async()=>{if(!aCur||!confirm('Delete '+aCur.name+'?'))return;
+  await api('/api/asset/delete',{id:aCur.id});$('asdlg').close();await loadAssets();});
 run(loadState)();
 </script></body></html>"""
 
