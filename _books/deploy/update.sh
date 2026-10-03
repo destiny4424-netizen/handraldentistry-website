@@ -33,8 +33,17 @@ main() {
     return 1
   fi
 
+  ensure_packages
   update_code
   watchdog
+}
+
+# Python packages the app imports lazily; installed here so no one has to log in.
+ensure_packages() {
+  python3 -c "import xlrd" 2>/dev/null && return
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-xlrd >/dev/null 2>&1 \
+    || pip3 install -q --break-system-packages xlrd >/dev/null 2>&1 \
+    || log "Could not install xlrd (needed for old .xls files)."
 }
 
 log() { echo "$*"; }
