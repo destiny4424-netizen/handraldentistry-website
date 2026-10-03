@@ -16,6 +16,8 @@ import sqlite3
 import threading
 import time
 import zipfile
+import xml.etree.ElementTree as ET
+from datetime import date as Date, timedelta
 from xml.sax.saxutils import escape as xesc
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -227,13 +229,19 @@ DATE_FORMATS = ("%d/%m/%y", "%d/%m/%Y", "%d-%m-%Y", "%d-%m-%y", "%d-%b-%y",
                 "%d-%b-%Y", "%d %b %Y", "%d %b %y", "%Y-%m-%d", "%d.%m.%Y")
 
 
-def parse_date(cell):
+def parse_date(cell, serial=False):
+    """Text date to YYYY-MM-DD. With serial=True also accepts Excel day numbers."""
     s = str(cell or "").strip().split("\n")[0].split("(")[0].strip()
     for fmt in DATE_FORMATS:
         try:
             return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except ValueError:
             pass
+    s = re.sub(r"\s+\d{1,2}:\d{2}(:\d{2})?$", "", s)  # "2025-04-01 00:00:00"
+    if s != str(cell or "").strip():
+        return parse_date(s)
+    if serial and re.fullmatch(r"\d{5}(\.0+)?", s) and 30000 < float(s) < 60000:
+        return (Date(1899, 12, 30) + timedelta(days=int(float(s)))).isoformat()
     return None
 
 
@@ -290,7 +298,7 @@ def rows_to_txns(rows):
             i = cols.get(key)
             return row[i] if i is not None and i < len(row) else ""
 
-        date = parse_date(get("date"))
+        date = parse_date(get("date"), serial=True)
         narr = re.sub(r"\s*/\s*", "/", " ".join(str(get("narr") or "").split()))
         if not date:
             if out and narr and not str(get("date") or "").strip():
@@ -312,52 +320,254 @@ def rows_to_txns(rows):
     return out
 
 
-def parse_csv(data):
+def csv_rows(data):
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         text = data.decode("latin-1")
     counts = {d: text[:5000].count(d) for d in (",", "\t", ";", "|")}
     delim = max(counts, key=counts.get)
-    return rows_to_txns(list(csv.reader(io.StringIO(text), delimiter=delim)))
+    try:
+        return list(csv.reader(io.StringIO(text, newline=""), delimiter=delim))
+    except csv.Error:
+        raise ValueError("Could not read this file. Use the CSV, Excel or PDF file "
+                         "downloaded from the bank or broker website.")
 
 
-def parse_pdf(data, password):
+def _cell(v):
+    """Excel cell value as text; whole numbers without a trailing .0."""
+    if isinstance(v, float):
+        return str(int(v)) if v.is_integer() else repr(v)
+    return "" if v is None else str(v)
+
+
+LOCKED_EXCEL = ValueError(
+    "This Excel file is password-protected. Open it in Excel, remove the password "
+    "(File, Info, Protect Workbook), save it, and import it again.")
+
+
+def xlsx_rows(data):
+    """All sheets of an .xlsx file as rows of text, using only the standard library."""
+    m = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise ValueError("Could not open this Excel file.")
+    names = z.namelist()
+    shared = []
+    if "xl/sharedStrings.xml" in names:
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(m + "si"):
+            shared.append("".join(t.text or "" for t in si.iter(m + "t")))
+    sheets = sorted((n for n in names if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n)),
+                    key=lambda n: int(re.findall(r"\d+", n)[-1]))
+    rows = []
+    for sheet in sheets:
+        for row in ET.fromstring(z.read(sheet)).iter(m + "row"):
+            cells = {}
+            for i, c in enumerate(row.iter(m + "c")):
+                letters = re.match(r"[A-Z]+", c.get("r", ""))
+                col = i
+                if letters:
+                    col = 0
+                    for ch in letters.group():
+                        col = col * 26 + ord(ch) - 64
+                    col -= 1
+                kind, v = c.get("t"), c.find(m + "v")
+                if kind == "s" and v is not None:
+                    val = shared[int(v.text)]
+                elif kind == "inlineStr":
+                    val = "".join(t.text or "" for t in c.iter(m + "t"))
+                else:
+                    val = v.text if v is not None and v.text else ""
+                    if kind not in ("str", "e", "b") and val:
+                        try:
+                            val = _cell(float(val))
+                        except ValueError:
+                            pass
+                cells[col] = val
+            rows.append([cells.get(i, "") for i in range(max(cells) + 1)] if cells else [])
+        rows.append([])
+    return rows
+
+
+def xls_rows(data):
+    """Old-style .xls files, via xlrd (installed on the droplet by the updater)."""
+    try:
+        import xlrd
+    except ImportError:
+        raise ValueError("Old .xls files need one more package, which installs itself "
+                         "within 5 minutes. Try again shortly, or save it as .xlsx.")
+    try:
+        book = xlrd.open_workbook(file_contents=data)
+    except Exception as e:
+        if "encrypt" in str(e).lower() or "password" in str(e).lower():
+            raise LOCKED_EXCEL
+        raise ValueError("Could not open this Excel file. Save it as .xlsx and try again.")
+    rows = []
+    for sh in book.sheets():
+        rows += [[_cell(v) for v in sh.row_values(r)] for r in range(sh.nrows)] + [[]]
+    return rows
+
+
+def pdf_rows(data, password):
+    """Table rows from a PDF, plus each text line split into label and numbers."""
     try:
         import pdfplumber
     except ImportError:
         raise ValueError("PDF import needs pdfplumber. On the droplet run: "
                          "pip3 install --break-system-packages pdfplumber")
-    rows = []
+    rows, lines = [], []
     try:
         pdf = pdfplumber.open(io.BytesIO(data), password=password or None)
     except Exception:
         raise ValueError("Could not open the PDF. If it is locked, enter its password.")
     no_text = ValueError(
         "No readable text in this PDF. It is probably a scan or was made with "
-        "Print to PDF. Download the statement from net banking instead.")
+        "Print to PDF. Download the file from the website again instead.")
     with pdf:
         if not (pdf.pages[0].extract_text() or "").strip():
             raise no_text
         for page in pdf.pages:
             for table in page.extract_tables():
                 rows.extend(table)
+            for line in (page.extract_text() or "").splitlines():
+                nums = re.findall(r"\(?-?[\d,]+\.?\d*\)?(?=\s|$)", line)
+                label = re.sub(r"\(?-?[\d,]+\.?\d*\)?(?=\s|$)", " ", line)
+                lines.append([" ".join(label.split())] + nums)
             page.flush_cache()
-    if not rows:
-        raise no_text
-    return rows_to_txns(rows)
+    return rows, lines
+
+
+def read_rows(name, data, password):
+    """Any supported file (CSV, Excel, PDF) as rows of cells, plus PDF text lines."""
+    if len(data) > MAX_BYTES:
+        raise ValueError("File is larger than 15 MB. Real statements are far smaller; "
+                         "this is probably a scanned or printed copy.")
+    if data[:4] == b"%PDF":
+        return pdf_rows(data, password)
+    if data[:2] == b"PK":
+        return xlsx_rows(data), []
+    if data[:4] == b"\xd0\xcf\x11\xe0":
+        if b"E\x00n\x00c\x00r\x00y\x00p\x00t\x00e\x00d\x00P\x00a\x00c\x00k\x00a\x00g\x00e" in data:
+            raise LOCKED_EXCEL
+        return xls_rows(data), []
+    if data.lstrip()[:1] == b"<":
+        raise ValueError("This file is a web page saved as Excel. Open it in Excel and "
+                         "save it as .xlsx or CSV, then import that.")
+    return csv_rows(data), []
+
+
+def looks_like_pnl(rows):
+    text = " ".join(" ".join(str(c or "") for c in r) for r in rows[:400]).lower()
+    return sum(w in text for w in ("realised", "realized", "p&l", "short term",
+                                   "long term", "intraday", "turnover", "f&o")) >= 2
 
 
 def parse_statement(name, data, password):
-    if len(data) > MAX_BYTES:
-        raise ValueError("File is larger than 15 MB. Real bank statements are far "
-                         "smaller; this is probably a scanned or printed copy.")
-    if data[:4] == b"%PDF":
-        return parse_pdf(data, password)
-    if name.lower().endswith((".xls", ".xlsx")) or data[:2] in (b"PK", b"\xd0\xcf"):
-        raise ValueError("Excel files are not supported. In net banking choose "
-                         "CSV or Delimited as the download format.")
-    return parse_csv(data)
+    rows, lines = read_rows(name, data, password)
+    try:
+        return rows_to_txns(rows or lines)
+    except ValueError:
+        if looks_like_pnl(rows + lines):
+            raise ValueError("This looks like a broker P&L report, not a bank statement. "
+                             "Open the Trading tab and use Import P&L report on that account.")
+        raise
+
+
+# ---------- broker P&L reports ----------
+
+# (field, pattern) in the order they are tried; the first match decides the field.
+PNL_PATTERNS = [
+    ("turnover", r"turnover"),
+    ("dividends", r"dividend"),
+    ("charges", r"charges|brokerage|\bstt\b|stamp duty|\bgst\b"),
+    ("fno", r"f\s*&\s*o|\bfno\b|future|option|derivative|non[\s-]*specul"),
+    ("intraday", r"intraday|specul"),
+    ("ltcg", r"long[\s-]*term|\bltcg\b"),
+    ("stcg", r"short[\s-]*term|\bstcg\b"),
+]
+PNL_HEADER = r"p\s*&\s*l|pnl|profit|realis|realiz|net\s+(gain|amount)|gain"
+
+
+def num_cell(v):
+    """A cell that is only a number, e.g. "1,234.50", "-12", "(1,000)" or "₹ 500 Cr"."""
+    s = str(v if v is not None else "").replace("₹", "").replace(",", "").strip()
+    s = re.sub(r"(?i)^rs\.?\s*|\s*(cr|dr)\.?$", "", s).strip()
+    neg = s.startswith("(") and s.endswith(")")
+    s = s.strip("()").strip()
+    if not re.fullmatch(r"-?\d+(\.\d+)?", s):
+        return None
+    return -float(s) if neg else float(s)
+
+
+def detect_fy(rows):
+    """Financial year the report covers, from "FY 2025-26", "2025-2026" or its dates."""
+    text = " ".join(" ".join(str(c or "") for c in r) for r in rows[:300])
+    votes = {}
+    for a, b in re.findall(r"(20\d\d)\s*[-/–]\s*((?:20)?\d\d)\b", text):
+        if int(b[-2:]) == (int(a) + 1) % 100:
+            votes[int(a)] = votes.get(int(a), 0) + 1
+    if votes:
+        return max(votes, key=votes.get)
+    for d in re.findall(r"\b\d{1,2}[-/ ](?:\d{1,2}|[A-Za-z]{3})[-/ ]\d{2,4}\b|\b20\d\d-\d\d-\d\d\b", text):
+        got = parse_date(d)
+        if got:
+            return fy_of(got)
+    return None
+
+
+def parse_pnl(name, data, password):
+    """Pull yearly totals out of a broker P&L report. Nothing is saved here."""
+    rows, lines = read_rows(name, data, password)
+    found, pcol = [], None
+    for raw in rows + [[]] + lines:
+        cells = []
+        for c in raw:  # split "Realised P&L : 1,234" into label and number
+            c = " ".join(str(c if c is not None else "").split())
+            m = re.fullmatch(r"(.*[A-Za-z].*?)\s*[:=]\s*(\(?-?[\d,₹ .]+\)?)", c)
+            cells += [m.group(1), m.group(2)] if m and num_cell(m.group(2)) is not None else [c]
+        if not any(cells):
+            pcol = None
+            continue
+        nums = {i: num_cell(c) for i, c in enumerate(cells) if num_cell(c) is not None}
+        texts = [c for i, c in enumerate(cells) if c and i not in nums]
+        if any(parse_date(c) for c in texts):
+            continue  # a single trade, not a total
+        if not nums:
+            if len(texts) >= 2:  # a header row: remember which column holds the P&L
+                pcol = next((i for i, c in enumerate(cells) if re.search(PNL_HEADER, c.lower())), pcol)
+            continue
+        label = " ".join(texts)
+        if not label or len(label) > 80:
+            continue
+        low = label.lower()
+        field = next((f for f, pat in PNL_PATTERNS if re.search(pat, low)), None)
+        if not field:
+            continue
+        if field in ("charges", "turnover", "dividends") or pcol is None or pcol not in nums:
+            value = nums[max(nums)]  # the right-most number
+        else:
+            value = nums[pcol]
+        found.append(dict(field=field, label=label, value=value,
+                          total=bool(re.search(r"total|net|overall", low))))
+    figures, used = {}, []
+    for field, _ in TRADE_FIELDS:
+        cands = [f for f in found if f["field"] == field]
+        if not cands:
+            continue
+        if field in ("charges", "turnover"):
+            pick = max(cands, key=lambda f: abs(f["value"]))  # the total is the largest
+        else:
+            pick = next((f for f in cands if f["total"]), cands[0])
+        figures[field] = round(pick["value"], 2)
+        used.append(pick)
+    if not figures:
+        raise ValueError("Could not find P&L totals in this file. Enter the figures by hand "
+                         "with Enter figures, or send this report so its layout can be added.")
+    labels = dict(TRADE_FIELDS)
+    return dict(figures=figures, fy=detect_fy(rows + lines),
+                found=[dict(field=labels[f["field"]], label=f["label"], value=f["value"])
+                       for f in used])
 
 
 def apply_rules(con):
@@ -1279,6 +1489,8 @@ class Handler(BaseHTTPRequestHandler):
                 res = import_statement(int(q["account"][0]), q["name"][0],
                                        self.body(), (q.get("pw") or [""])[0])
                 return self.send(res)
+            if u.path == "/api/trading/parse":
+                return self.send(parse_pnl(qget(q, "name"), self.body(), qget(q, "pw")))
             d = json.loads(self.body() or b"{}")
             with LOCK:
                 con = db()
@@ -1532,7 +1744,8 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <select id="newowner" aria-label="Owner"></select>
     <select id="newkind" aria-label="Account type"></select>
     <button class="pri" id="addacct">Add account</button></div></div>
-  <input type="file" id="file" hidden accept=".csv,.txt,.pdf">
+  <input type="file" id="file" hidden accept=".csv,.txt,.pdf,.xls,.xlsx">
+  <input type="file" id="pfile" hidden accept=".csv,.txt,.pdf,.xls,.xlsx">
 </section>
 <section id="sort">
   <div class="card"><div id="prog"></div><div class="bar"><i id="progbar"></i></div></div>
@@ -1699,6 +1912,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
 </dialog>
 <dialog id="tdlg">
   <div class="row"><b class="grow" id="td_title"></b><span class="mute" id="td_fy"></span></div>
+  <div id="td_found" class="mute" style="margin-top:8px"></div>
   <div id="td_fields" class="two"></div>
   <label for="td_note">Note</label><input type="text" id="td_note">
   <label for="td_match">Name of this broker in bank entries</label><input type="text" id="td_match">
@@ -1791,7 +2005,8 @@ async function loadState(){
     '<span class="grow"></span><button class="link" data-view="'+a.id+'">View</button>'+
     '<button class="link" data-edit="'+a.id+'">Edit</button>'+
     '<button class="link" data-del="'+a.id+'">Delete</button>'+
-    (a.kind==='Cash'?'':'<button class="pri" data-imp="'+a.id+'">Import statement</button>')+'</div></div>').join('')
+    (a.kind==='Cash'?'':a.kind==='Trading'?'<button class="pri" data-pimp="'+a.id+'">Import P&amp;L report</button>'
+      :'<button class="pri" data-imp="'+a.id+'">Import statement</button>')+'</div></div>').join('')
     :'<div class="card mute">Add your first bank account below, then import its statement.</div>';
   const acctOpts='<option value="">All accounts</option>'+
     S.accounts.filter(a=>!$('who').value||a.owner===$('who').value).map(a=>'<option value="'+a.id+'">'+esc(a.name)+'</option>').join('');
@@ -1995,14 +2210,18 @@ async function loadTrading(){
       f[0]==='charges'||f[0]==='turnover'?'<span class="num">'+inr(r[f[0]])+'</span>':signed(r[f[0]]))+'</div>').join('')+'</div>'+
     '<div class="row" style="margin-top:8px"><span class="mute grow">Bank to broker: added '+inr(r.added)+', withdrawn '+inr(r.withdrawn)+
     (r.match?' (matched on "'+esc(r.match)+'")':'')+(r.note?'<br>'+esc(r.note):'')+'</span>'+
-    '<button class="pri" data-tedit="'+r.id+'">Enter figures</button></div></div>').join('')
+    '<button data-timp="'+r.id+'">Import P&amp;L report</button><button class="pri" data-tedit="'+r.id+'">Enter figures</button></div></div>').join('')
     :'<div class="card mute">No trading accounts yet. Add one below for each broker (Zerodha, Fyers, Kotak and so on).</div>';
 }
-function openTrade(id){tAcct=T.rows.find(r=>r.id==id);
+function openTrade(id,imp){tAcct=T.rows.find(r=>r.id==id);
   $('td_title').textContent=tAcct.name;$('td_fy').textContent=fyLabel(+$('fy').value);
   $('td_fields').innerHTML=T.fields.map(f=>'<div><label for="tf_'+f[0]+'">'+esc(f[1])+'</label>'+
     '<input type="number" step="0.01" id="tf_'+f[0]+'" value="'+(tAcct[f[0]]||'')+'"></div>').join('');
-  $('td_note').value=tAcct.note||'';$('td_match').value=tAcct.match||'';$('tdlg').showModal();}
+  $('td_note').value=tAcct.note||'';$('td_match').value=tAcct.match||'';
+  $('td_found').innerHTML=imp?'<b>Read from the file. Check these against the report, correct anything wrong, then Save.</b><br>'+
+    imp.found.map(f=>esc(f.label)+' → '+inr(f.value)+' <i>('+esc(f.field)+')</i>').join('<br>'):'';
+  if(imp)for(const k in imp.figures)$('tf_'+k).value=imp.figures[k];
+  $('tdlg').showModal();}
 
 const fyBounds=y=>[y+'-04-01',(+y+1)+'-03-31'];
 async function loadAssets(){
@@ -2073,6 +2292,7 @@ $('addacct').onclick=run(async()=>{await api('/api/account',{name:$('newacct').v
 $('accts').onclick=run(async e=>{const d=e.target.dataset;
   if(d.edit){editAcct=S.accounts.find(a=>a.id==d.edit);$('a_name').value=editAcct.name;$('a_owner').value=editAcct.owner;$('a_kind').value=editAcct.kind;$('adlg').showModal();}
   if(d.imp){importAcct=d.imp;$('file').value='';$('file').click();}
+  if(d.pimp)pickPnl(d.pimp);
   if(d.view){payeeFilter='';await go('txns');$('f_account').value=d.view;await loadTxns(true);}
   if(d.del&&confirm('Delete this account and all its entries? This cannot be undone.')){
     await api('/api/account/delete',{id:+d.del});await loadState();}});
@@ -2138,7 +2358,15 @@ $('rlist').onclick=run(async e=>{const id=e.target.dataset.rdel;if(!id)return;
   await api('/api/rule/delete',{id:+id});await loadState();});
 $('t_add').onclick=run(async()=>{const n=$('t_new').value.trim();if(!n)return toast('Enter the broker name.');
   await api('/api/account',{name:n,owner:$('t_owner').value,kind:'Trading'});$('t_new').value='';await loadState();await loadTrading();toast('Added '+n);});
-$('tacc').onclick=e=>{const id=e.target.dataset.tedit;if(id)openTrade(id);};
+$('tacc').onclick=e=>{const d=e.target.dataset;if(d.tedit)openTrade(d.tedit);if(d.timp)pickPnl(d.timp);};
+let pnlAcct=null;
+function pickPnl(id){pnlAcct=id;$('pfile').value='';$('pfile').click();}
+$('pfile').onchange=run(async()=>{const f=$('pfile').files[0];if(!f)return;
+  let pw='';if(/\.pdf$/i.test(f.name))pw=prompt('PDF password (leave empty if the file is not locked)')||'';
+  toast('Reading '+f.name+'...');
+  const r=await api('/api/trading/parse?'+qs({name:f.name,pw:pw}),f);
+  if(r.fy){yearPicked=true;$('fy').value=r.fy;}
+  await go('trading');openTrade(pnlAcct,r);});
 $('td_cancel').onclick=()=>$('tdlg').close();
 $('td_save').onclick=run(async()=>{const body={account_id:tAcct.id,fy:$('fy').value,note:$('td_note').value,match:$('td_match').value};
   for(const f of T.fields)body[f[0]]=$('tf_'+f[0]).value;
