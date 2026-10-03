@@ -499,6 +499,7 @@ def num_cell(v):
     s = re.sub(r"(?i)^rs\.?\s*|\s*(cr|dr)\.?$", "", s).strip()
     neg = s.startswith("(") and s.endswith(")")
     s = s.strip("()").strip()
+    s = s[1:].strip() if s.startswith("+") else s
     if not re.fullmatch(r"-?\d+(\.\d+)?", s):
         return None
     return -float(s) if neg else float(s)
@@ -520,40 +521,70 @@ def detect_fy(rows):
     return None
 
 
-def parse_pnl(name, data, password):
-    """Pull yearly totals out of a broker P&L report. Nothing is saved here."""
-    rows, lines = read_rows(name, data, password)
-    found, pcol = [], None
-    for raw in rows + [[]] + lines:
+GENERIC_PNL = r"p\s*&\s*l|\bpnl\b|profit|gain"
+
+
+def pnl_pairs(rows):
+    """(label, value, P&L column value) pairs from rows of cells, in three layouts:
+    a label and its number in one row; labels in one row with numbers in the row
+    below; and label, number, label, number across one row."""
+    header, pcol = None, None
+    for raw in rows:
         cells = []
         for c in raw:  # split "Realised P&L : 1,234" into label and number
             c = " ".join(str(c if c is not None else "").split())
-            m = re.fullmatch(r"(.*[A-Za-z].*?)\s*[:=]\s*(\(?-?[\d,₹ .]+\)?)", c)
+            m = re.fullmatch(r"(.*[A-Za-z].*?)\s*[:=]\s*([(+\-]?[\d,₹ .]+\)?)", c)
             cells += [m.group(1), m.group(2)] if m and num_cell(m.group(2)) is not None else [c]
         if not any(cells):
-            pcol = None
+            header = pcol = None
             continue
         nums = {i: num_cell(c) for i, c in enumerate(cells) if num_cell(c) is not None}
-        texts = [c for i, c in enumerate(cells) if c and i not in nums]
-        if any(parse_date(c) for c in texts):
+        texts = {i: c for i, c in enumerate(cells) if c and i not in nums}
+        if any(parse_date(c) for c in texts.values()):
             continue  # a single trade, not a total
         if not nums:
-            if len(texts) >= 2:  # a header row: remember which column holds the P&L
-                pcol = next((i for i, c in enumerate(cells) if re.search(PNL_HEADER, c.lower())), pcol)
+            if len(texts) >= 2:  # a header row
+                header = texts
+                pcol = next((i for i, c in texts.items() if re.search(PNL_HEADER, c.lower())), pcol)
             continue
-        label = " ".join(texts)
-        if not label or len(label) > 80:
-            continue
+        filled = [i for i, c in enumerate(cells) if c]
+        pairs = [(texts[i], nums[j]) for i, j in zip(filled, filled[1:]) if i in texts and j in nums]
+        if len(texts) >= 2 and len(pairs) >= 2:  # label, number, label, number
+            for label, v in pairs:
+                yield label, v
+        elif not texts and header:  # numbers under a row of labels
+            for i, v in nums.items():
+                if i in header:
+                    yield header[i], v
+        elif texts:
+            label = " ".join(texts[i] for i in sorted(texts))
+            yield label, (nums[pcol] if pcol in nums else nums[max(nums)])
+
+
+def parse_pnl(name, data, password):
+    """Pull yearly totals out of a broker P&L report. Nothing is saved here."""
+    rows, lines = read_rows(name, data, password)
+    text = " ".join(" ".join(str(c or "") for c in r) for r in rows + lines).lower()
+    fno_hits = len(re.findall(r"f\s*&\s*o|\bfno\b|futures?|options?|derivative", text))
+    intra_hits = len(re.findall(r"intraday", text))
+    segment = "fno" if fno_hits and fno_hits >= intra_hits else "intraday" if intra_hits else "stcg"
+    found = []
+    for pair in pnl_pairs(rows + [[]] + lines):
+        label, value = pair[0], pair[1]
         low = label.lower()
+        if len(label) > 80:
+            continue
         field = next((f for f, pat in PNL_PATTERNS if re.search(pat, low)), None)
+        generic = not field and re.search(GENERIC_PNL, low)
+        if generic:  # "Net P&L" with no segment named: use the segment the report is about
+            field = segment
         if not field:
             continue
-        if field in ("charges", "turnover", "dividends") or pcol is None or pcol not in nums:
-            value = nums[max(nums)]  # the right-most number
-        else:
-            value = nums[pcol]
-        found.append(dict(field=field, label=label, value=value,
-                          total=bool(re.search(r"total|net|overall", low))))
+        if field == "turnover" and segment != "fno" and not re.search(PNL_PATTERNS[3][1], low):
+            continue  # only F&O turnover matters for the audit limit
+        rank = (3 if re.search(r"\bnet\b", low) else 2 if re.search(r"realis|realiz", low)
+                else 1 if re.search(r"total|overall", low) else 0)
+        found.append(dict(field=field, label=label, value=value, rank=rank, generic=bool(generic)))
     figures, used = {}, []
     for field, _ in TRADE_FIELDS:
         cands = [f for f in found if f["field"] == field]
@@ -561,16 +592,21 @@ def parse_pnl(name, data, password):
             continue
         if field in ("charges", "turnover"):
             pick = max(cands, key=lambda f: abs(f["value"]))  # the total is the largest
-        else:
-            pick = next((f for f in cands if f["total"]), cands[0])
+        else:  # a named segment over a generic P&L line, then net, realised, total
+            pick = max(cands, key=lambda f: (not f["generic"], f["rank"]))
         figures[field] = round(pick["value"], 2)
         used.append(pick)
+    if "charges" in figures and any(re.search(r"\bnet\b", f["label"].lower())
+                                    for f in used if f["field"] in PNL_KEYS):
+        figures.pop("charges")  # a net P&L already has the charges taken off
+        used = [f for f in used if f["field"] != "charges"]
     if not figures:
         raise ValueError("Could not find P&L totals in this file. Enter the figures by hand "
                          "with Enter figures, or send this report so its layout can be added.")
     labels = dict(TRADE_FIELDS)
     return dict(figures=figures, fy=detect_fy(rows + lines),
-                found=[dict(field=labels[f["field"]], label=f["label"], value=f["value"])
+                found=[dict(field=labels[f["field"]], value=f["value"],
+                            label=f["label"] + (" (whole report)" if f["generic"] else ""))
                        for f in used])
 
 
