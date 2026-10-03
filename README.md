@@ -65,6 +65,10 @@ sale), **Salaries** (add each staff member once; their bank payments are filed u
 Staff salaries automatically, with a month-by-month table), Consultants, Rules and ITR. School fees are a category under tax deductions
 (80C); bank payments mentioning SCHOOL or VIDYALAYA are sorted there automatically.
 The ITR summary and Excel download include the trading and investment figures.
+In the ITR tab, **Upload ITR** takes previous returns (the JSON from the income-tax
+portal, or the ITR / ITR-V PDF). It shows a year-by-year comparison with this year's
+books and checks for anything missed: deductions claimed before, income heads, bank
+accounts not added, the 44ADA scheme and advance tax.
 
 ### Web address
 By default it uses `books.handraldentistry.com` if that name points at the droplet,
