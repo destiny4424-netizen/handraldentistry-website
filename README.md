@@ -61,7 +61,9 @@ Banking (with **Cash collections**: cash received, by date and amount with an op
 note, counted as patient receipts), Sort, Entries, **Trading** (yearly P&L per broker, entered from each broker's
 Tax P&L report, with money moved to and from your banks filled in), **Assets** (mutual
 funds, shares, gold, plot, house, FD and so on, with gains and short or long term on
-sale), **Salaries** (add each staff member once; their bank payments are filed under
+sale; **Upload statement** reads CAMS/KFintech CAS PDFs, capital gains statements
+and Groww/Coin/Kuvera transaction lists, matches sales oldest units first and shows short
+and long term gains and holdings), **Salaries** (add each staff member once; their bank payments are filed under
 Staff salaries automatically, with a month-by-month table), Consultants, Rules and ITR. School fees are a category under tax deductions
 (80C); bank payments mentioning SCHOOL or VIDYALAYA are sorted there automatically.
 The ITR summary and Excel download include the trading and investment figures.

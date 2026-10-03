@@ -138,6 +138,17 @@ CREATE TABLE IF NOT EXISTS itr_returns(
   id INTEGER PRIMARY KEY, owner TEXT DEFAULT 'Self', ay INTEGER, form TEXT,
   name TEXT DEFAULT '', pan TEXT DEFAULT '', filename TEXT, uploaded TEXT,
   summary TEXT, flat TEXT, data BLOB);
+CREATE TABLE IF NOT EXISTS mf_uploads(
+  id INTEGER PRIMARY KEY, owner TEXT, filename TEXT, uploaded TEXT, kind TEXT,
+  added INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS mf_txns(
+  id INTEGER PRIMARY KEY, upload_id INTEGER, owner TEXT, folio TEXT DEFAULT '',
+  scheme TEXT, date TEXT, type TEXT, units REAL, amount REAL, hash TEXT UNIQUE);
+CREATE TABLE IF NOT EXISTS mf_cg(
+  id INTEGER PRIMARY KEY, upload_id INTEGER, owner TEXT, scheme TEXT, sold TEXT,
+  bought TEXT DEFAULT '', units REAL DEFAULT 0, sale REAL DEFAULT 0, cost REAL DEFAULT 0,
+  stcg REAL DEFAULT 0, ltcg REAL DEFAULT 0, hash TEXT UNIQUE);
+CREATE TABLE IF NOT EXISTS mf_nav(scheme TEXT PRIMARY KEY, date TEXT, nav REAL);
 CREATE TABLE IF NOT EXISTS assets(
   id INTEGER PRIMARY KEY, name TEXT, type TEXT, owner TEXT DEFAULT 'Self',
   bought TEXT DEFAULT '', cost REAL DEFAULT 0, value REAL DEFAULT 0,
@@ -1173,6 +1184,331 @@ def parse_itr(name, data, password):
     return info, flat
 
 
+# ---------- mutual fund statements ----------
+
+MF_SELL = r"redempt|redeem|switch[\s-]*out|stp[\s-]*out|\bswp\b|withdrawal|\bsell|\bsale\b|\bsold\b"
+MF_BUY = r"purchase|\bsip\b|systematic|switch[\s-]*in|stp[\s-]*in|reinvest|\bbuy|\bbought|allot|bonus|new fund|\bnfo\b"
+MF_SKIP = r"stamp duty|\bstt\b|idcw paid|dividend paid|payout|tds|address|nominee|kyc"
+
+
+def mf_kind(scheme):
+    """equity, debt or other (gold, international, fund of funds) from the scheme name."""
+    s = scheme.lower()
+    if re.search(r"gold|silver|international|global|overseas|nasdaq|s&p|u\.?s\.? equity|"
+                 r"fund of funds?|\bfof\b", s):
+        return "other"
+    if re.search(r"arbitrage|equity savings", s):
+        return "equity"
+    if re.search(r"liquid|debt|gilt|bond|money market|overnight|duration|corporate|banking "
+                 r"(&|and) psu|credit risk|floater|floating|treasury|income fund|conservative "
+                 r"hybrid|target maturity|\bsdl\b|g-?sec|fixed maturity|\bfmp\b", s):
+        return "debt"
+    return "equity"
+
+
+def mf_term(kind, bought, sold):
+    if not bought:
+        return "Add purchase history"
+    if kind == "debt" and bought >= "2023-04-01":
+        return "Short term (slab rate)"
+    months = 12 if kind == "equity" else (24 if sold >= "2024-07-23" else 36)
+    return "Long term" if sold > add_months(bought, months) else "Short term"
+
+
+def clean_scheme(s):
+    s = re.split(r"\s*-?\s*ISIN\b|\(Advisor|Registrar\s*:", str(s))[0]
+    s = re.sub(r"^[A-Z0-9]{2,10}-(?=[A-Za-z])", "", s.strip())
+    s = s.replace("(Non-Demat)", "").replace("(Demat)", "")
+    return " ".join(s.split()).strip(" -")[:120]
+
+
+def pdf_text_lines(data, password):
+    import pdfplumber
+    try:
+        pdf = pdfplumber.open(io.BytesIO(data), password=password or None)
+    except Exception:
+        raise ValueError("Could not open the PDF. If it is locked, enter its password "
+                         "(for a CAMS or KFintech statement this is usually your PAN).")
+    out = []
+    with pdf:
+        for page in pdf.pages:
+            out += (page.extract_text() or "").splitlines()
+            page.flush_cache()
+    return out
+
+
+def mf_columns(cells):
+    cols = {}
+    for i, c in enumerate(cells):
+        l = c.lower()
+        if not l:
+            continue
+        if re.search(r"short", l):
+            cols.setdefault("st", i)
+        elif re.search(r"long", l):
+            if "lt" not in cols or "without" in l:  # prefer the gain without indexation
+                cols["lt"] = i
+        elif re.search(r"purchase|acquisition|acquired|buy", l) and "date" in l:
+            cols.setdefault("bought", i)
+        elif re.search(r"purchase|acquisition|cost", l) and re.search(r"amount|value|cost|price", l):
+            cols.setdefault("cost", i)
+        elif "date" in l and "nav" not in l:
+            cols.setdefault("date", i)
+        elif "folio" in l:
+            cols.setdefault("folio", i)
+        elif re.search(r"scheme|fund name|\bfund\b|security|isin name", l):
+            cols.setdefault("scheme", i)
+        elif "unit" in l and not re.search(r"balance|price|nav", l):
+            cols.setdefault("units", i)
+        elif re.search(r"\bnav\b|price", l):
+            cols.setdefault("nav", i)
+        elif re.search(r"amount|value|consideration|invested", l) and "market" not in l:
+            cols.setdefault("amount", i)
+        elif re.search(r"transaction|type|description|particular|order|nature", l):
+            cols.setdefault("type", i)
+    return cols
+
+
+def parse_mf(name, data, password):
+    """Mutual fund transactions or realised gains from a statement. Returns
+    dict(kind, txns, gains, navs)."""
+    if len(data) > MAX_BYTES:
+        raise ValueError("File is larger than 15 MB.")
+    if data[:4] == b"%PDF":
+        rows, _ = pdf_rows(data, password)
+        text = pdf_text_lines(data, password)
+    else:
+        rows, _ = read_rows(name, data, password)
+        text = []
+    txns, gains, navs = [], [], {}
+    cols, scheme, folio = None, "", ""
+    for raw in rows:
+        cells = [" ".join(str(c if c is not None else "").split()) for c in raw]
+        if not any(cells):
+            continue
+        got = mf_columns(cells)
+        if not any(num_cell(c) is not None for c in cells) and (
+                {"st", "lt"} <= got.keys() or {"date", "units"} <= got.keys()):
+            cols = got
+            continue
+        texts = [c for c in cells if c and num_cell(c) is None and not parse_date(c, serial=True)]
+        dated = [c for c in cells if parse_date(c, serial=True)]
+        if not dated:  # a scheme heading between blocks
+            if len(texts) == 1 and re.search(r"fund|scheme|plan|growth|idcw|isin", texts[0], re.I):
+                scheme = clean_scheme(texts[0])
+            m = re.search(r"folio\s*(no\.?)?\s*:?\s*([\w/ ]+)", " ".join(texts), re.I)
+            if m:
+                folio = m.group(2).strip()
+            continue
+        if not cols:
+            continue
+        get = lambda k: cells[cols[k]] if k in cols and cols[k] < len(cells) else ""
+        num = lambda k: num_cell(get(k)) or 0
+        sch = clean_scheme(get("scheme")) or scheme
+        if not sch:
+            continue
+        if {"st", "lt"} <= cols.keys():  # a capital gains statement
+            sold = parse_date(get("date"), serial=True)
+            if not sold:
+                continue
+            gains.append(dict(scheme=sch, sold=sold, bought=parse_date(get("bought"), serial=True) or "",
+                              units=abs(num("units")), sale=abs(num("amount")), cost=abs(num("cost")),
+                              stcg=num("st"), ltcg=num("lt")))
+            continue
+        date = parse_date(get("date"), serial=True)
+        units = num_cell(get("units"))
+        if not date or not units:
+            continue
+        kind_text = get("type").lower()
+        if re.search(MF_SKIP, kind_text):
+            continue
+        amount = abs(num("amount")) or abs(units) * abs(num("nav"))
+        sell = bool(re.search(MF_SELL, kind_text)) or (units < 0 and not re.search(MF_BUY, kind_text))
+        txns.append(dict(scheme=sch, folio=get("folio") or folio, date=date,
+                         type="sell" if sell else "buy", units=abs(units), amount=amount))
+        if num("nav"):
+            navs[sch] = (date, abs(num("nav")))
+    if not txns and not gains and text:  # CAS text: one transaction per line
+        num_re = r"\(?-?[\d,]+\.\d+\)?"
+        line_re = re.compile(rf"^(\d{{2}}-[A-Za-z]{{3}}-\d{{4}})\s+(.+?)\s+({num_re})\s+({num_re})\s+"
+                             rf"({num_re})\s+({num_re})\s*$")
+        for line in text:
+            line = " ".join(line.split())
+            m = re.search(r"folio\s*no\s*:\s*([\w/ ]+?)(\s{2,}|\s+[A-Z]{2,}\b|$)", line, re.I)
+            if m:
+                folio = m.group(1).strip()
+            if re.search(r"\bISIN\b", line) or (re.search(r"\b(fund|scheme)\b", line, re.I)
+                                               and re.search(r"growth|idcw|dividend|plan", line, re.I)
+                                               and not re.match(r"\d{2}-", line)):
+                scheme = clean_scheme(line)
+                continue
+            m = re.search(r"NAV on (\d{2}-[A-Za-z]{3}-\d{4})\s*:?\s*INR\s*([\d,]+\.\d+)", line)
+            if m and scheme:
+                navs[scheme] = (parse_date(m.group(1)), num_cell(m.group(2)))
+            m = line_re.match(line)
+            if not m or not scheme or re.search(MF_SKIP, m.group(2), re.I):
+                continue
+            amount, units, nav = num_cell(m.group(3)), num_cell(m.group(4)), num_cell(m.group(5))
+            if not units:
+                continue
+            sell = bool(re.search(MF_SELL, m.group(2), re.I)) or units < 0
+            txns.append(dict(scheme=scheme, folio=folio, date=parse_date(m.group(1)),
+                             type="sell" if sell else "buy", units=abs(units),
+                             amount=abs(amount or units * nav)))
+            navs[scheme] = (parse_date(m.group(1)), abs(nav))
+    if not txns and not gains:
+        raise ValueError("No mutual fund transactions found. Upload the CAMS or KFintech "
+                         "statement (CAS PDF, password usually your PAN), a capital gains "
+                         "statement, or the transaction list from Groww, Coin or Kuvera.")
+    return dict(kind="capital gains" if gains else "transactions", txns=txns, gains=gains,
+                navs=navs)
+
+
+def store_mf(owner, filename, parsed):
+    with LOCK:
+        con = db()
+        uid = con.execute("INSERT INTO mf_uploads(owner,filename,uploaded,kind) VALUES(?,?,?,?)",
+                          (owner, filename, datetime.now().strftime("%Y-%m-%d"),
+                           parsed["kind"])).lastrowid
+        seen, added = {}, 0
+        for t in parsed["txns"]:
+            key = "|".join(str(x) for x in (owner, t["scheme"], t["date"], t["type"],
+                                           round(t["units"], 3), round(t["amount"], 2)))
+            seen[key] = seen.get(key, 0) + 1
+            h = hashlib.sha1(f"mf|{key}|{seen[key]}".encode()).hexdigest()
+            added += con.execute(
+                "INSERT OR IGNORE INTO mf_txns(upload_id,owner,folio,scheme,date,type,units,"
+                "amount,hash) VALUES(?,?,?,?,?,?,?,?,?)",
+                (uid, owner, t["folio"], t["scheme"], t["date"], t["type"], t["units"],
+                 t["amount"], h)).rowcount
+        for g in parsed["gains"]:
+            key = "|".join(str(x) for x in (owner, g["scheme"], g["sold"], g["bought"],
+                                           round(g["units"], 3), round(g["stcg"], 2),
+                                           round(g["ltcg"], 2), round(g["sale"], 2)))
+            seen[key] = seen.get(key, 0) + 1
+            h = hashlib.sha1(f"mfcg|{key}|{seen[key]}".encode()).hexdigest()
+            added += con.execute(
+                "INSERT OR IGNORE INTO mf_cg(upload_id,owner,scheme,sold,bought,units,sale,cost,"
+                "stcg,ltcg,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (uid, owner, g["scheme"], g["sold"], g["bought"], g["units"], g["sale"],
+                 g["cost"], g["stcg"], g["ltcg"], h)).rowcount
+        for sch, (d, nav) in parsed["navs"].items():
+            if d and nav:
+                con.execute("INSERT INTO mf_nav(scheme,date,nav) VALUES(?,?,?) ON CONFLICT(scheme)"
+                            " DO UPDATE SET date=excluded.date, nav=excluded.nav"
+                            " WHERE excluded.date >= mf_nav.date", (sch, d, nav))
+        con.execute("UPDATE mf_uploads SET added=? WHERE id=?", (added, uid))
+        con.commit()
+        con.close()
+    n = len(parsed["txns"]) + len(parsed["gains"])
+    return dict(kind=parsed["kind"], found=n, added=added, duplicates=n - added,
+                schemes=len({t["scheme"] for t in parsed["txns"] + parsed["gains"]}))
+
+
+def mf_fifo(txns):
+    """Match each sale against the oldest units first. Returns (open lots, sales)."""
+    lots, sales = [], []
+    for t in sorted(txns, key=lambda t: (t["date"], t["type"] != "buy")):
+        if t["type"] == "buy":
+            lots.append([t["date"], t["units"], t["amount"]])
+            continue
+        left = t["units"]
+        while left > 1e-6 and lots:
+            d, u, c = lots[0]
+            take = min(u, left)
+            cost = c * take / u
+            sales.append(dict(bought=d, sold=t["date"], units=take, cost=cost,
+                              sale=t["amount"] * take / t["units"]))
+            lots[0][1] -= take
+            lots[0][2] -= cost
+            left -= take
+            if lots[0][1] <= 1e-6:
+                lots.pop(0)
+        if left > 1e-3:
+            sales.append(dict(bought="", sold=t["date"], units=left, cost=0,
+                              sale=t["amount"] * left / t["units"]))
+    return lots, sales
+
+
+def api_mf(q):
+    owner, fy = qget(q, "owner"), qget(q, "fy")
+    w, args = ("WHERE owner=?", [owner]) if owner else ("", [])
+    con = db()
+    uploads = [dict(r) for r in con.execute(
+        f"SELECT * FROM mf_uploads {w} ORDER BY id DESC", args)]
+    txns = [dict(r) for r in con.execute(f"SELECT * FROM mf_txns {w}", args)]
+    cg = [dict(r) for r in con.execute(f"SELECT * FROM mf_cg {w}", args)]
+    navs = {r["scheme"]: (r["date"], r["nav"]) for r in con.execute("SELECT * FROM mf_nav")}
+    con.close()
+    groups = {}
+    for t in txns:
+        groups.setdefault((t["owner"], t["folio"], t["scheme"]), []).append(t)
+    holdings, sales = [], []
+    for (own, folio, sch), ts in groups.items():
+        kind = mf_kind(sch)
+        lots, sold = mf_fifo(ts)
+        for x in sold:
+            sales.append(dict(x, scheme=sch, owner=own, kind=kind,
+                              term=mf_term(kind, x["bought"], x["sold"]),
+                              old=bool(x["bought"]) and x["bought"] < "2018-02-01" and kind == "equity"))
+        units = sum(l[1] for l in lots)
+        if units > 1e-3:
+            cost = sum(l[2] for l in lots)
+            last = max(ts, key=lambda t: t["date"])
+            nd, nav = navs.get(sch, (last["date"], last["amount"] / last["units"]))
+            holdings.append(dict(scheme=sch, owner=own, folio=folio, kind=kind, units=units,
+                                 cost=cost, nav=nav, nav_date=nd, value=units * nav,
+                                 since=lots[0][0], old=lots[0][0] < "2018-02-01" and kind == "equity"))
+    a, b = fy_range(fy) if fy else ("0000", "9999")
+    cg_now = [g for g in cg if a <= g["sold"] <= b]
+    rows = []
+    if cg_now:  # a capital gains statement wins for the schemes it covers
+        for g in cg_now:
+            kind = mf_kind(g["scheme"])
+            for v, term in ((g["stcg"], "Short term (slab rate)" if kind == "debt" and
+                             (g["bought"] or "0") >= "2023-04-01" else "Short term"),
+                            (g["ltcg"], "Long term")):
+                if v:
+                    rows.append(dict(scheme=g["scheme"], owner=g["owner"], kind=kind, sold=g["sold"],
+                                     bought=g["bought"], units=g["units"], sale=g["sale"],
+                                     cost=g["cost"], gain=v, term=term, old=False))
+    covered = {g["scheme"].lower() for g in cg_now}
+    own = [dict(x, gain=x["sale"] - x["cost"]) for x in sales
+           if a <= x["sold"] <= b and x["scheme"].lower() not in covered]
+    source = ("statement" if not own else "both") if cg_now else "computed"
+    rows += own
+    totals = {}
+    for r in rows:
+        k = ("Debt funds, slab rate" if r["term"].startswith("Short term (slab")
+             else f"Purchase missing ({r['kind']})" if not r["bought"] and source != "statement"
+             else f"{r['term']} ({r['kind']})")
+        totals[k] = totals.get(k, 0) + r["gain"]
+    holdings.sort(key=lambda h: -h["value"])
+    rows.sort(key=lambda r: (r["sold"], r["scheme"]))
+    return dict(uploads=uploads, holdings=holdings, gains=rows, source=source,
+                totals=sorted(totals.items()))
+
+
+def mf_sheet_rows(q):
+    d = api_mf(q)
+    out = []
+    if d["gains"]:
+        out.append(("h", ["Scheme", "Owner", "Bought on", "Sold on", "Units", "Sale value",
+                          "Cost", "Gain", "Term"]))
+        out += [("", [r["scheme"], r["owner"], r["bought"], r["sold"], float(round(r["units"], 3)),
+                      float(round(r["sale"], 2)), float(round(r["cost"], 2)),
+                      float(round(r["gain"], 2)), r["term"]]) for r in d["gains"]]
+        out += [("b", [k, "", "", "", "", "", "", float(round(v, 2))]) for k, v in d["totals"]]
+        out.append(("", []))
+    if d["holdings"]:
+        out.append(("h", ["Holding", "Owner", "Held since", "NAV date", "Units", "Value",
+                          "Cost", "Gain", "Type"]))
+        out += [("", [h["scheme"], h["owner"], h["since"], h["nav_date"], float(round(h["units"], 3)),
+                      float(round(h["value"], 2)), float(round(h["cost"], 2)),
+                      float(round(h["value"] - h["cost"], 2)), h["kind"]]) for h in d["holdings"]]
+    return out
+
+
 def books_year(fy, owner):
     """This year's figures from the books, in the same shape as an ITR summary."""
     q = {"fy": [str(fy)]}
@@ -1189,6 +1525,11 @@ def books_year(fy, owner):
         (r["sale"] or 0) - (r["cost"] or 0) for r in sold if r["term"].startswith("Short"))
     lt = sum(r["ltcg"] or 0 for r in trade) + sum(
         (r["sale"] or 0) - (r["cost"] or 0) for r in sold if r["term"] == "Long term")
+    for r in api_mf(q)["gains"]:
+        if r["term"] == "Long term":
+            lt += r["gain"]
+        else:
+            st += r["gain"]
     cash = api_cash(q)["total"]
     return dict(receipts=rec, business=rec - exp, salary=inc("Salary income"),
                 other=inc("Interest received", "Other income"), stcg=st, ltcg=lt,
@@ -1451,6 +1792,16 @@ def itr_rows(q):
         for r in sold:
             rows.append(("", [f"{r['name']} ({r['type']}, sold {r['sold']})", r["term"],
                               round((r["sale"] or 0) - (r["cost"] or 0), 2)]))
+    mf = api_mf(q)
+    if mf["totals"]:
+        rows.append(("", []))
+        rows.append(("h", ["I. Mutual fund capital gains (" + (
+            "from capital gains statement" if mf["source"] == "statement" else
+            "capital gains statement and transactions" if mf["source"] == "both" else
+            "matched oldest units first") + ")", "", "Gain"]))
+        for k, v in mf["totals"]:
+            rows.append(("", [k, "", round(v, 2)]))
+        rows.append(("", ["Equity long-term gains up to 1.25 lakh a year are exempt."]))
     if "Uncategorised" in cats:
         u = cats["Uncategorised"]
         rows.append(("", []))
@@ -1723,6 +2074,9 @@ def export_xlsx(q):
     if len(trade) > 2:
         sheets.append(("Trading P&L", trade, [22, 10] + [16] * 11 + [30], True))
     assets = asset_sheet_rows(q)
+    mf = mf_sheet_rows(q)
+    if mf:
+        sheets.append(("Mutual funds", mf, [44, 10, 12, 12, 12, 14, 14, 14, 22], True))
     if len(assets) > 1:
         sheets.append(("Investments", assets,
                        [30, 22, 10, 12, 14, 14, 12, 14, 12, 14, 14, 26, 30], True))
@@ -1792,6 +2146,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(api_cash(q))
             elif u.path == "/api/itr":
                 self.send(api_itr(q))
+            elif u.path == "/api/mf":
+                self.send(api_mf(q))
             elif u.path == "/api/itr/figures":
                 con = db()
                 r = con.execute("SELECT flat FROM itr_returns WHERE id=?",
@@ -1840,6 +2196,10 @@ class Handler(BaseHTTPRequestHandler):
                 res = import_statement(int(q["account"][0]), q["name"][0],
                                        self.body(), (q.get("pw") or [""])[0])
                 return self.send(res)
+            if u.path == "/api/mf/upload":
+                parsed = parse_mf(qget(q, "name"), self.body(), qget(q, "pw"))
+                owner = qget(q, "owner") if qget(q, "owner") in OWNERS else "Self"
+                return self.send(store_mf(owner, qget(q, "name"), parsed))
             if u.path == "/api/itr/upload":
                 data = self.body()
                 info, flat = parse_itr(qget(q, "name"), data, qget(q, "pw"))
@@ -1983,6 +2343,10 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         con.execute("INSERT INTO assets(name,type,owner,bought,cost,value,"
                                     "valued,sold,sale,note) VALUES(?,?,?,?,?,?,?,?,?,?)", vals)
+                elif u.path == "/api/mf/upload/delete":
+                    for t in ("mf_txns", "mf_cg"):
+                        con.execute(f"DELETE FROM {t} WHERE upload_id=?", (int(d["id"]),))
+                    con.execute("DELETE FROM mf_uploads WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/itr/delete":
                     con.execute("DELETE FROM itr_returns WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/asset/delete":
@@ -2186,6 +2550,16 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="row" style="margin-bottom:10px"><h2 class="grow" style="margin:0">Investments and property</h2>
     <button class="pri" id="as_add">Add investment</button></div>
   <div class="stats" id="astats"></div>
+  <div class="card" id="mfcard">
+    <div class="row"><h3 class="grow" style="margin:0">Mutual fund statements</h3>
+      <select id="mf_owner" aria-label="Whose statement"></select>
+      <button class="pri" id="mf_up">Upload statement</button></div>
+    <p class="mute" style="margin:6px 0">CAMS or KFintech statement (CAS PDF, password usually your PAN in
+    capitals), a capital gains statement, or the transaction list from Groww, Zerodha Coin or Kuvera
+    (Excel or CSV). Sales are matched against the oldest units first to work out short and long term.</p>
+    <div id="mf_gains"></div><div id="mf_hold"></div><div id="mf_ups"></div>
+    <input type="file" id="mffile" hidden accept=".pdf,.xls,.xlsx,.csv">
+  </div>
   <div id="alist"></div>
   <p class="mute" id="abank"></p>
   <p class="mute">Short or long term is worked out from the type and how long it was held
@@ -2645,7 +3019,36 @@ async function loadAssets(){
       '</td><td class="num">'+inr(r.sale)+'</td><td>'+signed((r.sale||0)-(r.cost||0))+'</td><td>'+esc(r.term)+'</td></tr>').join('')+'</table></div>':'';
   h+=soldTable('Sold in '+fyLabel(+y).split(' (')[0]+' (for ITR)',soldNow)+soldTable('Sold in other years',A.rows.filter(r=>r.sold&&!(r.sold>=a&&r.sold<=b)));
   $('alist').innerHTML=h||'<div class="card mute">Nothing added yet. Use Add investment for each mutual fund, plot, gold, house, FD and so on.</div>';
+  await loadMf();
   $('abank').textContent=A.bank?'Bank payments sorted as Investments in '+fyLabel(+y)+': '+inr(A.bank)+'. Add those purchases here too so the totals are complete.':'';
+}
+async function loadMf(){
+  const y=$('fy').value,d=await api('/api/mf?'+qs({owner:$('who').value,fy:y}));
+  keepValue('mf_owner',S.owners.map(o=>'<option'+(o===($('who').value||'Self')?' selected':'')+'>'+esc(o)+'</option>').join(''));
+  const fyName=fyLabel(+y).split(' (')[0];
+  let g='';
+  if(d.gains.length){
+    g='<h3 style="margin-top:12px">Mutual fund sales in '+fyName+' <span class="mute" style="font-weight:400">('+
+      (d.source==='statement'?'from your capital gains statement':d.source==='both'?'capital gains statement, plus transactions for other funds':'worked out from transactions, oldest units first')+')</span></h3>'+
+      '<div class="stats" style="margin:8px 0">'+d.totals.map(t=>stat(esc(t[0]),t[1],1)).join('')+'</div>'+
+      '<div class="scroll"><table><tr><th>Scheme</th><th>Bought</th><th>Sold</th><th>Sale</th><th>Cost</th><th>Gain</th><th>Term</th></tr>'+
+      d.gains.map(r=>'<tr><td style="white-space:normal">'+esc(r.scheme)+(r.old?' <span class="chip none">bought before Feb 2018</span>':'')+
+        '</td><td>'+(r.bought||'-')+'</td><td>'+r.sold+'</td><td class="num">'+inr(r.sale)+'</td><td class="num">'+inr(r.cost)+
+        '</td><td>'+signed(r.gain)+'</td><td>'+esc(r.term)+'</td></tr>').join('')+'</table></div>'+
+      '<p class="mute">Equity long-term gains up to 1.25 lakh a year are exempt.'+
+      (d.gains.some(r=>r.old)?' Units bought before 1 Feb 2018 can use the 31 Jan 2018 value as cost; your CA will apply this.':'')+
+      (d.gains.some(r=>!r.bought&&d.source!=='statement')?' Some sales have no purchase in the uploaded statements: upload an older statement covering those purchases.':'')+'</p>';
+  }else if(d.uploads.length)g='<p class="mute">No mutual fund sales in '+fyName+'.</p>';
+  $('mf_gains').innerHTML=g;
+  const hv=d.holdings.reduce((a,h)=>a+h.value,0),hc=d.holdings.reduce((a,h)=>a+h.cost,0);
+  $('mf_hold').innerHTML=d.holdings.length?'<h3 style="margin-top:12px">Holdings from statements: value '+inr(hv)+', cost '+inr(hc)+', gain '+signed(hv-hc)+'</h3>'+
+    '<div class="scroll"><table><tr><th>Scheme</th><th>Owner</th><th>Units</th><th>Cost</th><th>Value</th><th>Gain</th><th>Held since</th></tr>'+
+    d.holdings.map(h=>'<tr><td style="white-space:normal">'+esc(h.scheme)+' <span class="chip">'+esc(h.kind)+'</span><div class="mute">NAV as on '+h.nav_date+'</div></td><td>'+esc(h.owner)+
+      '</td><td class="num">'+h.units.toFixed(3)+'</td><td class="num">'+inr(h.cost)+'</td><td class="num">'+inr(h.value)+'</td><td>'+signed(h.value-h.cost)+
+      '</td><td>'+h.since+'</td></tr>').join('')+'</table></div>':'';
+  $('mf_ups').innerHTML=d.uploads.length?'<h3 style="margin-top:12px">Uploaded statements</h3>'+d.uploads.map(u=>
+    '<div class="tx" style="cursor:default"><div class="grow">'+esc(u.filename)+' <span class="chip">'+esc(u.kind)+'</span> <span class="chip">'+esc(u.owner)+'</span>'+
+    '<div class="mute">uploaded '+u.uploaded+', '+u.added+' new entries</div></div><button class="link" data-mfdel="'+u.id+'">Delete</button></div>').join(''):'';
 }
 function openAsset(r){aCur=r||null;
   $('as_title').textContent=r?'Edit investment':'Add investment';$('as_del').style.visibility=r?'visible':'hidden';
@@ -2771,6 +3174,15 @@ $('td_save').onclick=run(async()=>{const body={account_id:tAcct.id,fy:$('fy').va
   for(const f of T.fields)body[f[0]]=$('tf_'+f[0]).value;
   await api('/api/trading',body);$('tdlg').close();await loadTrading();toast('Saved '+tAcct.name);});
 $('as_add').onclick=()=>openAsset(null);
+$('mf_up').onclick=()=>{$('mffile').value='';$('mffile').click();};
+$('mffile').onchange=run(async()=>{const f=$('mffile').files[0];if(!f)return;
+  let pw='';if(/\.pdf$/i.test(f.name))pw=prompt('PDF password. For CAMS and KFintech statements it is usually your PAN in capitals.')||'';
+  toast('Reading '+f.name+'...');
+  const r=await api('/api/mf/upload?'+qs({name:f.name,pw:pw,owner:$('mf_owner').value}),f);
+  toast('Read '+r.found+' '+(r.kind==='capital gains'?'sales':'transactions')+' in '+r.schemes+' schemes. '+r.added+' new, '+r.duplicates+' already there.');
+  await loadAssets();});
+$('mf_ups').onclick=run(async e=>{const id=e.target.dataset.mfdel;if(!id||!confirm('Delete this statement and its entries?'))return;
+  await api('/api/mf/upload/delete',{id:+id});await loadAssets();});
 $('alist').onclick=e=>{const tr=e.target.closest('tr[data-aid]');if(tr)openAsset(A.rows.find(r=>r.id==tr.dataset.aid));};
 $('as_cancel').onclick=()=>$('asdlg').close();
 $('as_save').onclick=run(async()=>{const body={id:aCur?aCur.id:0};
