@@ -48,10 +48,11 @@ CATS = [
     ("Utilities and phone", "expenses"), ("Equipment and repairs", "expenses"),
     ("Marketing", "expenses"), ("Fuel and travel", "expenses"),
     ("Professional fees and subscriptions", "expenses"),
-    ("Insurance", "expenses"), ("Bank charges", "expenses"),
+    ("Clinic insurance", "expenses"), ("Bank charges", "expenses"),
     ("Loan interest", "expenses"), ("Other expense", "expenses"),
     ("Salary income", "other_income"), ("Interest received", "other_income"),
     ("Other income", "other_income"),
+    ("Term insurance premium (80C)", "tax"),
     ("Life insurance premium (80C)", "tax"),
     ("Health insurance premium (80D)", "tax"),
     ("Tax-saving investment (80C)", "tax"),
@@ -63,6 +64,7 @@ CATS = [
     ("Other loan", "loans"), ("Credit card payment", "loans"),
     ("Own account transfer", "personal"),
     ("Cash deposit or withdrawal", "personal"),
+    ("Vehicle insurance", "personal"), ("Other insurance", "personal"),
     ("Family and friends", "personal"), ("Personal", "personal"),
 ]
 CONSULT = "Consultant fees"
@@ -116,6 +118,15 @@ SEED_RULES_3 = [
     ("BY CASH", "in", "Cash deposit or withdrawal"),
 ]
 
+# Added in database version 5.
+SEED_RULES_5 = [
+    ("STAR HEALTH", "out", "Health insurance premium (80D)"),
+    ("NIVA BUPA", "out", "Health insurance premium (80D)"),
+    ("CARE HEALTH", "out", "Health insurance premium (80D)"),
+    ("ADITYA BIRLA HEALTH", "out", "Health insurance premium (80D)"),
+    ("MANIPAL CIGNA", "out", "Health insurance premium (80D)"),
+]
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts(id INTEGER PRIMARY KEY, name TEXT UNIQUE);
 CREATE TABLE IF NOT EXISTS txns(
@@ -147,6 +158,12 @@ CREATE TABLE IF NOT EXISTS loans(
   closed TEXT DEFAULT '', note TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS loan_years(
   loan_id INTEGER, fy INTEGER, interest REAL, outstanding REAL, UNIQUE(loan_id, fy));
+CREATE TABLE IF NOT EXISTS policies(
+  id INTEGER PRIMARY KEY, name TEXT, type TEXT, insurer TEXT DEFAULT '',
+  policy_no TEXT DEFAULT '', owner TEXT DEFAULT 'Self', insured TEXT DEFAULT 'Self and family',
+  senior INTEGER DEFAULT 0, purpose TEXT DEFAULT 'Personal', cover REAL DEFAULT 0,
+  premium REAL DEFAULT 0, frequency TEXT DEFAULT 'Yearly', due TEXT DEFAULT '',
+  match TEXT DEFAULT '', closed TEXT DEFAULT '', note TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS mf_uploads(
   id INTEGER PRIMARY KEY, owner TEXT, filename TEXT, uploaded TEXT, kind TEXT,
   added INTEGER DEFAULT 0);
@@ -256,6 +273,15 @@ def init():
         con.execute("UPDATE txns SET category='Other loan' WHERE category=?", (old,))
         con.execute("UPDATE rules SET category='Other loan' WHERE category=?", (old,))
         con.execute("PRAGMA user_version=4")
+    if version < 5:  # clinic insurance gets its own name; common health insurers sorted
+        con.execute("UPDATE txns SET category='Clinic insurance' WHERE category='Insurance'")
+        con.execute("UPDATE rules SET category='Clinic insurance' WHERE category='Insurance'")
+        have = {r[0] for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany(
+            "INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+            [s for s in SEED_RULES_5 if s[0] not in have])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=5")
     con.commit()
     con.close()
 
@@ -650,11 +676,15 @@ def apply_rules(con):
               for table, head in PEOPLE.values()]
     loans = [(r["match"].lower(), r["type"]) for r in con.execute(
         "SELECT match, type FROM loans WHERE LENGTH(match) >= 3 ORDER BY LENGTH(match) DESC")]
+    policies = [(r["match"].lower(), policy_category(r["type"], r["purpose"])) for r in con.execute(
+        "SELECT match, type, purpose FROM policies WHERE LENGTH(match) >= 3"
+        " ORDER BY LENGTH(match) DESC")]
     n = 0
     for t in con.execute(
             "SELECT id,narration,payee,debit FROM txns WHERE category=''").fetchall():
         low = t["narration"].lower()
-        loan = next((typ for m, typ in loans if m in low), None)
+        loan = next((typ for m, typ in loans if m in low), None) or (
+            t["debit"] > 0 and next((c for m, c in policies if m in low), None))
         if loan:
             con.execute("UPDATE txns SET category=? WHERE id=?", (loan, t["id"]))
             n += 1
@@ -1642,6 +1672,133 @@ def loan_sheet_rows(q):
     return out
 
 
+# ---------- insurance ----------
+
+POLICY_TYPES = ["Term insurance", "Life insurance (LIC, endowment)", "Health insurance",
+                "Vehicle insurance", "Professional indemnity", "Clinic property or equipment",
+                "Other insurance"]
+POLICY_FREQ = {"Yearly": 12, "Half-yearly": 6, "Quarterly": 3, "Monthly": 1, "Single premium": 0}
+INSURED = ["Self and family", "Parents"]
+INSURANCE_CATS = ["Term insurance premium (80C)", "Life insurance premium (80C)",
+                  "Health insurance premium (80D)", "Vehicle insurance", "Other insurance",
+                  "Clinic insurance"]
+
+
+def policy_category(typ, purpose):
+    if typ == "Term insurance":
+        return "Term insurance premium (80C)"
+    if typ.startswith("Life insurance"):
+        return "Life insurance premium (80C)"
+    if typ == "Health insurance":
+        return "Health insurance premium (80D)"
+    if typ in ("Professional indemnity", "Clinic property or equipment") or purpose == "Clinic":
+        return "Clinic insurance"
+    return "Vehicle insurance" if typ == "Vehicle insurance" else "Other insurance"
+
+
+def policy_tax_note(p):
+    t = p["type"]
+    if t == "Term insurance":
+        return "80C, within the 1.5 lakh limit together with LIC, PPF, ELSS, school fees and home loan principal. Old tax regime only."
+    if t.startswith("Life insurance"):
+        return ("80C within the 1.5 lakh limit, if the premium is at most 10% of the sum assured "
+                "(policies from April 2012). Old tax regime only.")
+    if t == "Health insurance":
+        lim = 50000 if p["senior"] else 25000
+        who = "parents" if p["insured"] == "Parents" else "self, spouse and children"
+        return (f"80D for {who}: up to {inr_text(lim)} a year"
+                + (" (senior citizen)" if p["senior"] else "") + ". Old tax regime only.")
+    if policy_category(t, p["purpose"]) == "Clinic insurance":
+        return "Clinic expense if you keep books (not under 44ADA presumptive)."
+    return "No tax benefit for personal use."
+
+
+def next_due(due, freq, today):
+    months = POLICY_FREQ.get(freq, 12)
+    if not due or not months:
+        return due if due and due >= today else ""
+    d = due
+    for _ in range(600):
+        if d >= today:
+            return d
+        d = add_months(d, months)
+    return ""
+
+
+def api_insurance(q):
+    owner, fy = qget(q, "owner"), int(qget(q, "fy") or fy_of(datetime.now().strftime("%Y-%m-%d")))
+    a, b = fy_range(fy)
+    today = datetime.now().strftime("%Y-%m-%d")
+    soon = (Date.today() + timedelta(days=30)).isoformat()
+    con = db()
+    pols = [dict(r) for r in con.execute(
+        "SELECT * FROM policies" + (" WHERE owner=?" if owner else "") + " ORDER BY closed!='', type, name",
+        [owner] if owner else [])]
+    rows = []
+    for p in pols:
+        cat = policy_category(p["type"], p["purpose"])
+        paid = 0
+        if len(p["match"]) >= 3:
+            paid = con.execute("SELECT COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0) FROM txns"
+                               " WHERE category=? AND narration LIKE ? AND date BETWEEN ? AND ?",
+                               (cat, f"%{p['match']}%", a, b)).fetchone()[0]
+        nd = "" if p["closed"] else next_due(p["due"], p["frequency"], today)
+        rows.append(dict(p, category=cat, paid=paid, next_due=nd, due_soon=bool(nd and nd <= soon),
+                         note_tax=policy_tax_note(p)))
+    w, args = "category IN (%s) AND date BETWEEN ? AND ?" % ",".join("?" * len(INSURANCE_CATS)), INSURANCE_CATS + [a, b]
+    if owner:
+        w += " AND account_id IN (SELECT id FROM accounts WHERE owner=?)"
+        args.append(owner)
+    by_cat = {r["category"]: (r["d"] - r["c"], r["n"]) for r in con.execute(
+        f"SELECT category, SUM(debit) d, SUM(credit) c, COUNT(*) n FROM txns WHERE {w} GROUP BY 1", args)}
+    w80c = "category IN (?,?,?,?) AND date BETWEEN ? AND ?"
+    a80c = ["Term insurance premium (80C)", "Life insurance premium (80C)",
+            "Tax-saving investment (80C)", "School fees (80C)", a, b]
+    if owner:
+        w80c += " AND account_id IN (SELECT id FROM accounts WHERE owner=?)"
+        a80c.append(owner)
+    used80c = con.execute(f"SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM txns WHERE {w80c}",
+                          a80c).fetchone()[0]
+    con.close()
+    by_type = []
+    for c in INSURANCE_CATS:
+        amt, n = by_cat.get(c, (0, 0))
+        linked = sum(r["paid"] for r in rows if r["category"] == c)
+        if n or linked:
+            by_type.append(dict(category=c, paid=amt, entries=n, loose=max(amt - linked, 0)))
+    # 80D: the health premiums found, within the limits for each group
+    health = [r for r in rows if r["type"] == "Health insurance" and not r["closed"]]
+    d80 = []
+    for grp in INSURED:
+        mine = [r for r in health if r["insured"] == grp]
+        if not mine:
+            continue
+        paid = sum(r["paid"] or (r["premium"] if POLICY_FREQ.get(r["frequency"]) == 12 else 0) for r in mine)
+        limit = 50000 if any(r["senior"] for r in mine) else 25000
+        d80.append(dict(group=grp, paid=paid, limit=limit, claim=min(paid, limit)))
+    loose80d = by_cat.get("Health insurance premium (80D)", (0, 0))[0] - sum(r["paid"] for r in health)
+    return dict(rows=rows, by_type=by_type, d80=d80, loose80d=max(loose80d, 0),
+                used80c=used80c, types=POLICY_TYPES, freqs=list(POLICY_FREQ), insured=INSURED)
+
+
+def insurance_sheet_rows(q):
+    d = api_insurance(q)
+    if not d["rows"] and not d["by_type"]:
+        return []
+    f = lambda v: float(round(v, 2)) if v else ""
+    out = [("h", ["Policy", "Type", "Insurer", "Policy no.", "Owner", "Covers", "Cover",
+                  "Premium", "Paid this year", "Next due", "Tax note"])]
+    out += [("", [r["name"], r["type"], r["insurer"], r["policy_no"], r["owner"],
+                  r["insured"] + (" (senior)" if r["senior"] else ""), f(r["cover"]), f(r["premium"]),
+                  f(r["paid"]), r["next_due"], r["note_tax"]]) for r in d["rows"]]
+    if d["d80"]:
+        out += [("", []), ("h", ["80D", "", "", "", "", "Paid", "Limit", "Claimable"])]
+        out += [("", [x["group"], "", "", "", "", f(x["paid"]), f(x["limit"]), f(x["claim"])]) for x in d["d80"]]
+    out += [("", []), ("b", ["80C used this year (insurance, tax-saving, school fees)", "", "", "", "",
+                             "", f(d["used80c"]), f(min(d["used80c"], 150000))])]
+    return out
+
+
 def books_year(fy, owner):
     """This year's figures from the books, in the same shape as an ITR summary."""
     q = {"fy": [str(fy)]}
@@ -1925,6 +2082,19 @@ def itr_rows(q):
         for r in sold:
             rows.append(("", [f"{r['name']} ({r['type']}, sold {r['sold']})", r["term"],
                               round((r["sale"] or 0) - (r["cost"] or 0), 2)]))
+    ins = api_insurance(q) if qget(q, "fy") else None
+    if ins and (ins["rows"] or ins["used80c"]):
+        rows.append(("", []))
+        rows.append(("h", ["K. Insurance", "Paid this year", "Tax section"]))
+        for r in ins["rows"]:
+            rows.append(("", [f"{r['name']} ({r['type']})", round(r["paid"], 2),
+                              r["category"] if "(" in r["category"] else
+                              "Clinic expense" if r["category"] == "Clinic insurance" else "None"]))
+        for x in ins["d80"]:
+            rows.append(("", [f"80D claimable, {x['group'].lower()}", round(x["claim"], 2),
+                              f"limit {inr_text(x['limit'])}"]))
+        rows.append(("b", ["80C used (term, LIC, tax-saving, school fees)", round(ins["used80c"], 2),
+                           "limit 1.5 lakh in total"]))
     loans = api_loans(q)["rows"] if qget(q, "fy") else []
     if loans:
         rows.append(("", []))
@@ -2217,6 +2387,9 @@ def export_xlsx(q):
     if len(trade) > 2:
         sheets.append(("Trading P&L", trade, [22, 10] + [16] * 11 + [30], True))
     assets = asset_sheet_rows(q)
+    ins = insurance_sheet_rows(q)
+    if ins:
+        sheets.append(("Insurance", ins, [28, 22, 18, 16, 10, 18, 14, 14, 14, 12, 60], True))
     loans = loan_sheet_rows(q)
     if loans:
         sheets.append(("Loans", loans, [28, 14, 18, 10, 18, 14, 14, 14, 14, 14, 60], True))
@@ -2294,6 +2467,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(api_itr(q))
             elif u.path == "/api/mf":
                 self.send(api_mf(q))
+            elif u.path == "/api/insurance":
+                self.send(api_insurance(q))
             elif u.path == "/api/loans":
                 self.send(api_loans(q))
             elif u.path == "/api/itr/figures":
@@ -2526,6 +2701,41 @@ class Handler(BaseHTTPRequestHandler):
                         res["changed"] = con.execute(
                             f"UPDATE txns SET category=? WHERE narration LIKE ? AND (category=''"
                             f" OR category IN ({marks}))", [typ, f"%{match}%"] + LOAN_TYPES).rowcount
+                elif u.path == "/api/policy":
+                    name = " ".join(str(d.get("name") or "").split())
+                    if not name:
+                        raise ValueError("Enter a name for the policy, e.g. HDFC Life term plan.")
+                    typ = d.get("type") if d.get("type") in POLICY_TYPES else "Other insurance"
+                    purpose = "Clinic" if d.get("purpose") == "Clinic" else "Personal"
+                    match = " ".join(str(d.get("match") or "").split())
+                    if match and len(match) < 3:
+                        raise ValueError("The text in bank entries must be at least 3 letters.")
+                    vals = (name, typ, " ".join(str(d.get("insurer") or "").split()),
+                            str(d.get("policy_no") or "").strip(),
+                            d.get("owner") if d.get("owner") in OWNERS else "Self",
+                            d.get("insured") if d.get("insured") in INSURED else "Self and family",
+                            1 if d.get("senior") else 0, purpose, to_num(d.get("cover")),
+                            to_num(d.get("premium")),
+                            d.get("frequency") if d.get("frequency") in POLICY_FREQ else "Yearly",
+                            check_date(d.get("due")), match, check_date(d.get("closed")),
+                            str(d.get("note") or "").strip())
+                    if d.get("id"):
+                        con.execute("UPDATE policies SET name=?, type=?, insurer=?, policy_no=?, owner=?,"
+                                    " insured=?, senior=?, purpose=?, cover=?, premium=?, frequency=?,"
+                                    " due=?, match=?, closed=?, note=? WHERE id=?", vals + (int(d["id"]),))
+                    else:
+                        con.execute("INSERT INTO policies(name,type,insurer,policy_no,owner,insured,senior,"
+                                    "purpose,cover,premium,frequency,due,match,closed,note)"
+                                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals)
+                    res["changed"] = 0
+                    if match:  # file this policy's premiums under the right head
+                        marks = ",".join("?" * len(INSURANCE_CATS))
+                        res["changed"] = con.execute(
+                            f"UPDATE txns SET category=? WHERE debit>0 AND narration LIKE ? AND"
+                            f" (category='' OR category IN ({marks}))",
+                            [policy_category(typ, purpose), f"%{match}%"] + INSURANCE_CATS).rowcount
+                elif u.path == "/api/policy/delete":
+                    con.execute("DELETE FROM policies WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/loan/delete":
                     con.execute("DELETE FROM loan_years WHERE loan_id=?", (int(d["id"]),))
                     con.execute("DELETE FROM loans WHERE id=?", (int(d["id"]),))
@@ -2704,6 +2914,17 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div id="ln_list"></div>
   <div class="card scroll" id="ln_types" hidden></div>
 </section>
+<section id="insurance">
+  <div class="row" style="margin-bottom:10px"><h2 class="grow" style="margin:0">Insurance</h2>
+    <button class="pri" id="po_add">Add policy</button></div>
+  <p class="mute">Add each policy once (term, LIC, health, vehicle, clinic) with the text your bank uses for
+  its premium, such as the insurer's name or the policy number. Premiums are then filed under the right
+  head on every import, renewals are tracked, and 80C and 80D are worked out.</p>
+  <div id="po_due"></div>
+  <div class="stats" id="po_stats"></div>
+  <div id="po_list"></div>
+  <div class="card scroll" id="po_types" hidden></div>
+</section>
 <section id="staff">
   <h2>Staff salaries</h2>
   <p class="mute">Add each staff member once. Salary payments to them are filed under Staff salaries
@@ -2820,6 +3041,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <button data-tab="trading">Trading</button>
   <button data-tab="assets">Assets</button>
   <button data-tab="loans">Loans</button>
+  <button data-tab="insurance">Insurance</button>
   <button data-tab="staff">Salaries</button>
   <button data-tab="consult">Consultants</button>
   <button data-tab="rules">Rules</button>
@@ -2888,6 +3110,32 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="row" style="margin-top:14px">
     <button class="link" id="as_del">Delete</button><span class="grow"></span>
     <button id="as_cancel">Cancel</button><button class="pri" id="as_save">Save</button></div>
+</dialog>
+<dialog id="podlg">
+  <h3 id="po_title">Policy</h3>
+  <label for="po_name">Name</label><input type="text" id="po_name" placeholder="e.g. HDFC Life term plan, Star Health family floater">
+  <div class="two">
+    <div><label for="po_type">Type</label><select id="po_type"></select></div>
+    <div><label for="po_purpose">Used for</label><select id="po_purpose"><option>Personal</option><option>Clinic</option></select></div>
+    <div><label for="po_insurer">Insurer</label><input type="text" id="po_insurer"></div>
+    <div><label for="po_policy_no">Policy number</label><input type="text" id="po_policy_no"></div>
+    <div><label for="po_owner">Owner</label><select id="po_owner"></select></div>
+    <div><label for="po_insured">Covers (health)</label><select id="po_insured"></select></div>
+    <div><label for="po_cover">Cover or sum assured</label><input type="number" step="0.01" id="po_cover"></div>
+    <div><label for="po_premium">Premium</label><input type="number" step="0.01" id="po_premium"></div>
+    <div><label for="po_frequency">Paid</label><select id="po_frequency"></select></div>
+    <div><label for="po_due">Next due date</label><input type="date" id="po_due"></div>
+  </div>
+  <label><input type="checkbox" id="po_senior"> Senior citizen (60 or older) covered, for the higher 80D limit</label>
+  <label for="po_match">Text for this premium in bank entries</label>
+  <input type="text" id="po_match" placeholder="e.g. STAR HEALTH, HDFC LIFE, or the policy number">
+  <div class="two">
+    <div><label for="po_closed">Stopped on (if stopped)</label><input type="date" id="po_closed"></div>
+    <div><label for="po_note">Note</label><input type="text" id="po_note"></div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <button class="link" id="po_del">Delete</button><span class="grow"></span>
+    <button id="po_cancel">Cancel</button><button class="pri" id="po_save">Save</button></div>
 </dialog>
 <dialog id="lndlg">
   <h3 id="ln_title">Loan</h3>
@@ -3248,6 +3496,40 @@ async function loadAssets(){
   await loadMf();
   $('abank').textContent=A.bank?'Bank payments sorted as Investments in '+fyLabel(+y)+': '+inr(A.bank)+'. Add those purchases here too so the totals are complete.':'';
 }
+let P=null,pCur=null;
+async function loadInsurance(){
+  const y=$('fy').value,fyName=fyLabel(+y).split(' (')[0];P=await api('/api/insurance?'+qs({owner:$('who').value,fy:y}));
+  const due=P.rows.filter(r=>r.due_soon);
+  $('po_due').innerHTML=due.length?'<div class="card warn"><b>Due in the next 30 days</b><br>'+due.map(r=>esc(r.name)+': '+r.next_due+
+    (r.premium?', '+inr(r.premium):'')).join('<br>')+'</div>':'';
+  const paid=P.rows.reduce((a,r)=>a+r.paid,0),claim=P.d80.reduce((a,x)=>a+x.claim,0);
+  $('po_stats').innerHTML=(P.rows.length?stat('Premiums paid, '+fyName,paid):'')+
+    '<div class="card"><span class="mute">80C used, '+fyName+'</span><b class="num">'+inr(P.used80c)+'</b><span class="mute">of 1,50,000'+(P.used80c>150000?' (limit reached)':'')+'</span></div>'+
+    (P.d80.length?'<div class="card"><span class="mute">80D claimable</span><b class="num">'+inr(claim)+'</b><span class="mute">'+P.d80.map(x=>x.group.toLowerCase()+' '+inr(x.claim)+' of '+inr(x.limit)).join(', ')+'</span></div>':'');
+  $('po_list').innerHTML=P.rows.length?P.rows.map(r=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(r.name)+'</b> <span class="chip">'+esc(r.type)+'</span> <span class="chip">'+esc(r.owner)+'</span>'+
+    (r.type==='Health insurance'?' <span class="chip">'+esc(r.insured)+(r.senior?', senior':'')+'</span>':'')+(r.closed?' <span class="chip">stopped '+r.closed+'</span>':'')+
+    '<div class="mute">'+esc([r.insurer,r.policy_no?'policy '+r.policy_no:'',r.cover?'cover '+inr(r.cover):'',r.premium?'premium '+inr(r.premium)+' '+r.frequency.toLowerCase():''].filter(Boolean).join(', '))+'</div></div>'+
+    '<div style="text-align:right"><span class="mute">Paid '+fyName+'</span><br><b class="num">'+inr(r.paid)+'</b>'+(r.next_due?'<div class="mute">next due '+r.next_due+'</div>':'')+'</div></div>'+
+    '<p class="mute" style="margin:8px 0 0">Filed under '+esc(r.category)+'. '+esc(r.note_tax)+(r.match?'':' <b>Add the text for this premium in bank entries so payments are picked up.</b>')+'</p>'+
+    '<div class="row" style="margin-top:8px"><span class="grow"></span>'+(r.match?'<button class="link" data-pview="'+r.id+'">View entries</button>':'')+
+    '<button class="pri" data-pedit="'+r.id+'">Edit</button></div></div>').join('')
+    :'<div class="card mute">No policies added yet. Use Add policy for each term, LIC, health, vehicle or clinic policy.</div>';
+  const box=$('po_types');box.hidden=!P.by_type.length;
+  box.innerHTML='<h3>All insurance payments in '+fyName+'</h3><table><tr><th>Head</th><th>Entries</th><th>Paid</th><th>Not linked to a policy</th></tr>'+
+    P.by_type.map(t=>'<tr class="go" data-pcat="'+esc(t.category)+'"><td>'+esc(t.category)+'</td><td>'+t.entries+'</td><td class="num">'+inr(t.paid)+
+      '</td><td class="num">'+(t.loose>0.5?inr(t.loose):'')+'</td></tr>').join('')+'</table>';
+}
+function openPolicy(r){pCur=r||null;
+  keepValue('po_type',P.types.map(t=>'<option>'+esc(t)+'</option>').join(''));
+  keepValue('po_frequency',P.freqs.map(t=>'<option>'+esc(t)+'</option>').join(''));
+  keepValue('po_insured',P.insured.map(t=>'<option>'+esc(t)+'</option>').join(''));
+  keepValue('po_owner',S.owners.map(o=>'<option>'+esc(o)+'</option>').join(''));
+  $('po_title').textContent=r?'Edit policy':'Add policy';$('po_del').style.visibility=r?'visible':'hidden';
+  const v=r||{name:'',type:'Term insurance',purpose:'Personal',insurer:'',policy_no:'',owner:$('who').value||'Self',insured:'Self and family',
+    cover:'',premium:'',frequency:'Yearly',due:'',match:'',closed:'',note:'',senior:0};
+  for(const k of ['name','type','purpose','insurer','policy_no','owner','insured','frequency','due','match','closed','note'])$('po_'+k).value=v[k]||'';
+  for(const k of ['cover','premium'])$('po_'+k).value=v[k]||'';
+  $('po_senior').checked=!!v.senior;$('podlg').showModal();}
 let L=null,lCur=null;
 async function loadLoans(){
   const y=$('fy').value;L=await api('/api/loans?'+qs({owner:$('who').value,fy:y}));
@@ -3319,7 +3601,7 @@ function activeTab(){return document.querySelector('nav .on').dataset.tab;}
 function refresh(){const tab=activeTab();
   if(tab==='txns')return loadTxns(true);if(tab==='reports')return loadReport();if(tab==='sort')return loadSort();
   if(tab==='consult')return loadConsult();if(tab==='trading')return loadTrading();
-  if(tab==='staff')return loadStaff();if(tab==='loans')return loadLoans();if(tab==='banking')return loadCash();
+  if(tab==='staff')return loadStaff();if(tab==='loans')return loadLoans();if(tab==='insurance')return loadInsurance();if(tab==='banking')return loadCash();
   if(tab==='assets')return loadAssets();}
 const run=fn=>async(...a)=>{try{await fn(...a);}catch(e){toast(e.message);}};
 async function go(tab){
@@ -3432,6 +3714,21 @@ $('td_save').onclick=run(async()=>{const body={account_id:tAcct.id,fy:$('fy').va
   for(const f of T.fields)body[f[0]]=$('tf_'+f[0]).value;
   await api('/api/trading',body);$('tdlg').close();await loadTrading();toast('Saved '+tAcct.name);});
 $('as_add').onclick=()=>openAsset(null);
+$('po_add').onclick=()=>openPolicy(null);
+$('po_cancel').onclick=()=>$('podlg').close();
+$('po_save').onclick=run(async()=>{const body={id:pCur?pCur.id:0,senior:$('po_senior').checked};
+  for(const k of ['name','type','purpose','insurer','policy_no','owner','insured','cover','premium','frequency','due','match','closed','note'])body[k]=$('po_'+k).value;
+  const r=await api('/api/policy',body);$('podlg').close();
+  toast('Saved '+body.name+(r.changed?'. '+r.changed+' premium payments filed under it.':''));await loadState();await loadInsurance();});
+$('po_del').onclick=run(async()=>{if(!pCur||!confirm('Delete '+pCur.name+'? Its payments stay where they are.'))return;
+  await api('/api/policy/delete',{id:pCur.id});$('podlg').close();await loadInsurance();});
+$('po_list').onclick=run(async e=>{const d=e.target.dataset;
+  if(d.pedit)openPolicy(P.rows.find(r=>r.id==d.pedit));
+  if(d.pview){const r=P.rows.find(x=>x.id==d.pview);payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';
+    await go('txns');$('f_cat').value=r.category;$('f_q').value=r.match;await loadTxns(true);}});
+$('po_types').onclick=run(async e=>{const tr=e.target.closest('tr[data-pcat]');if(!tr)return;
+  payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';$('f_q').value='';
+  await go('txns');$('f_cat').value=tr.dataset.pcat;await loadTxns(true);});
 $('ln_add').onclick=()=>openLoan(null);
 $('ln_cancel').onclick=()=>$('lndlg').close();
 $('ln_save').onclick=run(async()=>{const body={id:lCur?lCur.id:0,fy:$('fy').value};
