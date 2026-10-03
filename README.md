@@ -46,7 +46,22 @@ To point it at a specific file: `... | sudo BOOKS_OLD_DB=/root/books.db bash`.
   droplet picks it up by itself. It backs up the database first, and if the new version
   fails to start it goes back to the previous one automatically.
 - Backs up the database every night to `/var/lib/handral-books/backups` (45 days kept).
-- Still listens on `127.0.0.1:3020`, so however you open it today keeps working.
+- Served at a secure `https://` address with a username and password (via Caddy, which
+  renews the certificate by itself). The setup prints the address and password at the
+  end; to see them again: `sudo cat /etc/handral-books/login.txt`.
+
+### Opening it on the Windows laptop
+Open the printed address in Chrome or Edge, log in, and let the browser save the
+password. To make it feel like an app: in Edge, menu, Apps, "Install this site as an
+app" (Chrome: menu, Cast save and share, "Install page as app"). It then has its own
+Start menu and taskbar icon.
+
+### Web address
+By default it uses `books.handraldentistry.com` if that name points at the droplet,
+otherwise a free `<droplet-ip>.sslip.io` address that needs no DNS changes. To use the
+nicer name, add a DNS **A** record `books` pointing at the droplet IP at your domain
+registrar, then run the setup command again. Re-running keeps the same password;
+add `BOOKS_NEW_PASSWORD=1` after `sudo` for a new one.
 
 If something ever looks wrong: `systemctl status handral-books` or
 `journalctl -u handral-books -u handral-books-update -n 50`.

@@ -12,6 +12,7 @@
 #   - runs the app as a systemd service that starts on boot and restarts on crash
 #   - checks GitHub every 5 minutes and installs new versions of _books/ by itself
 #   - backs up the database every night
+#   - serves it at a secure https:// address with a password (see web.sh)
 set -euo pipefail
 
 main() {
@@ -72,6 +73,10 @@ main() {
   step "Installing and starting the service"
   bash "$REPO/_books/deploy/update.sh" --install
 
+  step "Setting up the secure web address and password"
+  local web_ok=1
+  bash "$REPO/_books/deploy/web.sh" || web_ok=0
+
   cat <<EOF
 
 Done. Handral Books now:
@@ -85,6 +90,14 @@ You do not need to run anything else. Useful only if something looks wrong:
   journalctl -u handral-books -n 50     recent server messages
   journalctl -u handral-books-update -n 50   recent update messages
 EOF
+  if [ "$web_ok" = 1 ]; then
+    echo
+    echo "Open this on your laptop and let the browser save the password:"
+    echo "------------------------------------------------------------"
+    cat /etc/handral-books/login.txt
+    echo "------------------------------------------------------------"
+    echo "To see it again later: sudo cat /etc/handral-books/login.txt"
+  fi
 }
 
 step() { echo "==> $*"; }
