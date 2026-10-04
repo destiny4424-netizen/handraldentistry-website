@@ -3993,6 +3993,7 @@ h2{font-size:17px;margin:6px 0 10px}
 h3{font-size:15px;margin:0 0 6px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row>div.grow{min-width:min(100%,240px)}
 .grow{flex:1;min-width:0;overflow-wrap:anywhere}
 .mute{color:var(--mute);font-size:13px}
 .num{font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -4230,8 +4231,8 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <div class="filters" style="margin:8px 0 0">
       <label class="mute">Below ₹ <input type="number" id="sm_max" min="0" step="1" style="width:9em"></label>
       <span class="mute grow" id="sm_stat"></span></div></div>
-  <div class="card"><div class="row"><div class="grow"><b>Share rules</b><div class="mute">Save all rules, staff and
-    consultants to a file, or add the ones in a file you were given. Adding sorts matching unsorted entries
+  <div class="card"><div class="row"><div class="grow"><b>Share rules</b><div class="mute">Save all rules, staff,
+    consultants and loans to a file, or add the ones in a file you were given. Adding sorts matching unsorted entries
     straight away; nothing already sorted is changed.</div></div>
     <button id="r_export">Download rules</button><button class="pri" id="r_import">Upload rules file</button></div>
     <input type="file" id="rfile" hidden accept=".json"></div>
