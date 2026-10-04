@@ -76,6 +76,14 @@ portal, or the ITR / ITR-V PDF). It shows a year-by-year comparison with this ye
 books and checks for anything missed: deductions claimed before, income heads, bank
 accounts not added, the 44ADA scheme and advance tax.
 
+### For the CA (Tally terms)
+Heads are Tally ledgers under Tally groups (Direct/Indirect Incomes and Expenses, Purchase
+Accounts, Capital Account with Drawings, Secured/Unsecured Loans, Current Liabilities,
+Investments, Loans & Advances, Bank Accounts, Cash-in-Hand, Suspense A/c). Each entry is a
+Receipt, Payment or Contra voucher; clinics are cost centres. The ITR tab shows the Profit &
+Loss A/c and Trial Balance, the Excel download has them plus the Day Book, and **Download for
+Tally (XML)** gives masters and vouchers to import into TallyPrime.
+
 ### Web address
 By default it uses `books.handraldentistry.com` if that name points at the droplet,
 otherwise a free `<droplet-ip>.sslip.io` address that needs no DNS changes. To use the

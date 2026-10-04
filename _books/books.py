@@ -67,6 +67,62 @@ CATS = [
     ("Vehicle insurance", "personal"), ("Other insurance", "personal"),
     ("Family and friends", "personal"), ("Personal", "personal"),
 ]
+# Each head as a Tally ledger under a Tally group, for CAs: head -> (ledger, group).
+TALLY = {
+    "Patient receipts": ("Professional Fees Received", "Direct Incomes"),
+    "Other clinic income": ("Other Clinic Income", "Direct Incomes"),
+    "Dental materials": ("Purchase - Dental Materials", "Purchase Accounts"),
+    "Lab charges": ("Lab Charges", "Direct Expenses"),
+    "Consultant fees": ("Consultant Fees", "Direct Expenses"),
+    "Staff salaries": ("Salaries & Wages", "Indirect Expenses"),
+    "Rent": ("Rent", "Indirect Expenses"),
+    "Utilities and phone": ("Electricity & Telephone", "Indirect Expenses"),
+    "Equipment and repairs": ("Repairs & Maintenance", "Indirect Expenses"),
+    "Marketing": ("Advertisement & Marketing", "Indirect Expenses"),
+    "Fuel and travel": ("Conveyance & Travelling", "Indirect Expenses"),
+    "Professional fees and subscriptions": ("Professional Fees & Subscriptions", "Indirect Expenses"),
+    "Clinic insurance": ("Insurance - Clinic", "Indirect Expenses"),
+    "Bank charges": ("Bank Charges", "Indirect Expenses"),
+    "Loan interest": ("Interest on Loans", "Indirect Expenses"),
+    "Other expense": ("Miscellaneous Expenses", "Indirect Expenses"),
+    "Interest received": ("Interest Received", "Indirect Incomes"),
+    "Other income": ("Other Income", "Indirect Incomes"),
+    "Salary income": ("Salary Income (Proprietor)", "Capital Account"),
+    "Term insurance premium (80C)": ("Drawings - Term Insurance (80C)", "Capital Account"),
+    "Life insurance premium (80C)": ("Drawings - LIC Premium (80C)", "Capital Account"),
+    "Health insurance premium (80D)": ("Drawings - Mediclaim (80D)", "Capital Account"),
+    "Tax-saving investment (80C)": ("Drawings - PPF/ELSS/APY (80C)", "Capital Account"),
+    "Income tax and TDS paid": ("Drawings - Income Tax", "Capital Account"),
+    "Donations (80G)": ("Drawings - Donations (80G)", "Capital Account"),
+    "School fees (80C)": ("Drawings - Tuition Fees (80C)", "Capital Account"),
+    "Vehicle insurance": ("Drawings - Vehicle Insurance", "Capital Account"),
+    "Other insurance": ("Drawings - Other Insurance", "Capital Account"),
+    "Family and friends": ("Drawings - Family", "Capital Account"),
+    "Personal": ("Drawings - Personal", "Capital Account"),
+    "Trading transfer": ("Investment - Trading Account", "Investments"),
+    "Investments": ("Investments", "Investments"),
+    "Chit fund": ("Chit Fund", "Investments"),
+    "Car loan": ("Car Loan", "Secured Loans"),
+    "Jewel loan": ("Gold Loan", "Secured Loans"),
+    "Home loan": ("Housing Loan", "Secured Loans"),
+    "Personal loan": ("Personal Loan", "Unsecured Loans"),
+    "Education loan": ("Education Loan", "Unsecured Loans"),
+    "Business loan": ("Business Loan", "Unsecured Loans"),
+    "Other loan": ("Other Loans", "Unsecured Loans"),
+    "Credit card payment": ("Credit Card", "Current Liabilities"),
+    "Hand loans given": ("Loans & Advances - Friends", "Loans & Advances (Asset)"),
+    "Own account transfer": ("Inter-Bank Transfer", "Bank Accounts"),
+    "Cash deposit or withdrawal": ("Cash", "Cash-in-Hand"),
+    "": ("Suspense A/c", "Suspense A/c"),
+}
+TALLY_GROUPS = ["Direct Incomes", "Purchase Accounts", "Direct Expenses", "Indirect Incomes",
+                "Indirect Expenses", "Capital Account", "Secured Loans", "Unsecured Loans",
+                "Current Liabilities", "Investments", "Loans & Advances (Asset)",
+                "Bank Accounts", "Cash-in-Hand", "Suspense A/c"]
+PNL_GROUPS = ("Direct Incomes", "Purchase Accounts", "Direct Expenses", "Indirect Incomes",
+              "Indirect Expenses")
+KIND_GROUP = {"Bank": "Bank Accounts", "Credit card": "Current Liabilities",
+              "Trading": "Investments", "Cash": "Cash-in-Hand"}
 CONSULT = "Consultant fees"
 SALARY = "Staff salaries"
 # Named people whose bank payments are filed under a fixed head: kind -> (table, head).
@@ -910,6 +966,7 @@ def api_state():
         " ELSE CAST(substr(date,1,4) AS INT)-1 END FROM txns ORDER BY 1 DESC")]
     con.close()
     return dict(accounts=accounts, rules=rules, cats=CATS, groups=GROUPS, clinics=CLINICS,
+                tally=[[c, TALLY[c][0], TALLY[c][1]] for c, _ in CATS], tally_groups=TALLY_GROUPS,
                 owners=OWNERS, kinds=KINDS,
                 years=[int(y) for y in years])
 
@@ -2528,13 +2585,189 @@ def make_xlsx(sheets):
     return buf.getvalue()
 
 
+# ---------- Tally: ledgers, vouchers, Day Book, Trial Balance, P&L ----------
+
+def tally_ledger(category):
+    return TALLY.get(category, (category, "Suspense A/c"))
+
+
+def account_ledger(name, kind):
+    return ("Cash", "Cash-in-Hand") if kind == "Cash" else (name, KIND_GROUP.get(kind, "Bank Accounts"))
+
+
+def tally_vouchers(q):
+    """Every entry as a Tally voucher: (date, type, no, debit ledger, credit ledger,
+    amount, narration, cost centre, bank ledger, ledger, ledger group, bank group)."""
+    where, args = txn_filter(q)
+    con = db()
+    rows = con.execute(f"SELECT t.*, a.name acct, a.kind kind FROM txns t JOIN accounts a"
+                       f" ON a.id=t.account_id WHERE {where} ORDER BY date, seq", args).fetchall()
+    con.close()
+    out, numbers = [], {}
+    for r in rows:
+        bank, bgroup = account_ledger(r["acct"], r["kind"])
+        led, group = tally_ledger(r["category"])
+        amt = r["credit"] or r["debit"]
+        if not amt:
+            continue
+        money_in = r["credit"] > 0
+        vtype = ("Contra" if group in ("Bank Accounts", "Cash-in-Hand")
+                 else "Receipt" if money_in else "Payment")
+        numbers[vtype] = numbers.get(vtype, 0) + 1
+        dr, cr = (bank, led) if money_in else (led, bank)
+        out.append(dict(date=r["date"], type=vtype, no=numbers[vtype], dr=dr, cr=cr,
+                        amount=round(amt, 2), narration=r["narration"],
+                        centre=(r["clinic"] or "") if group in PNL_GROUPS else "",
+                        bank=bank, bgroup=bgroup, ledger=led, group=group, note=r["note"] or ""))
+    return out
+
+
+def trial_balance(q):
+    """Ledger balances for the period by Tally group. Opening balances are not
+    included, so bank ledgers show the movement in the period."""
+    bal, groups = {}, {}
+    for v in tally_vouchers(q):
+        for name, grp, sign in ((v["dr"], None, 1), (v["cr"], None, -1)):
+            bal[name] = bal.get(name, 0) + sign * v["amount"]
+        groups[v["ledger"]] = v["group"]
+        groups[v["bank"]] = v["bgroup"]
+    out = []
+    for g in TALLY_GROUPS + sorted(set(groups.values()) - set(TALLY_GROUPS)):
+        names = sorted(n for n in bal if groups.get(n) == g and abs(bal[n]) >= 0.005)
+        if names:
+            out.append((g, [(n, round(bal[n], 2)) for n in names]))
+    return out
+
+
+def tally_pnl(q):
+    """Profit & Loss A/c in Tally's layout, for the clinic ledgers."""
+    tb = dict(trial_balance(q))
+    side = lambda g, sign: [(n, round(sign * v, 2)) for n, v in tb.get(g, [])]
+    d = dict(direct_inc=side("Direct Incomes", -1), purchases=side("Purchase Accounts", 1),
+             direct_exp=side("Direct Expenses", 1), indirect_inc=side("Indirect Incomes", -1),
+             indirect_exp=side("Indirect Expenses", 1))
+    tot = lambda k: round(sum(v for _, v in d[k]), 2)
+    d["gross"] = round(tot("direct_inc") - tot("purchases") - tot("direct_exp"), 2)
+    d["net"] = round(d["gross"] + tot("indirect_inc") - tot("indirect_exp"), 2)
+    return d
+
+
+def tally_report_rows(q):
+    """Day Book, Trial Balance and P&L as sheets for the Excel workbook."""
+    vs = tally_vouchers(q)
+    day = [("h", ["Date", "Voucher type", "Vch no.", "Debit ledger", "Credit ledger", "Amount",
+                  "Narration", "Cost centre"])]
+    day += [("", [v["date"], v["type"], v["no"], v["dr"], v["cr"], float(v["amount"]),
+                  v["narration"], v["centre"]]) for v in vs]
+    tb = [("t", ["Trial Balance (movement for the period; opening balances not included)"]),
+          ("h", ["Particulars", "Debit", "Credit"])]
+    dr = cr = 0
+    for g, items in trial_balance(q):
+        gd = sum(v for _, v in items if v > 0)
+        gc = -sum(v for _, v in items if v < 0)
+        tb.append(("b", [g, float(round(gd, 2)) if gd else "", float(round(gc, 2)) if gc else ""]))
+        for n, v in items:
+            tb.append(("", ["    " + n, float(v) if v > 0 else "", float(-v) if v < 0 else ""]))
+        dr += gd
+        cr += gc
+    tb.append(("b", ["Grand Total", float(round(dr, 2)), float(round(cr, 2))]))
+    p = tally_pnl(q)
+    pl = [("t", ["Profit & Loss A/c"]), ("h", ["Particulars (Dr)", "Amount", "Particulars (Cr)", "Amount"])]
+    left = ([("Purchase Accounts", None)] + p["purchases"] + [("Direct Expenses", None)] + p["direct_exp"]
+            + ([("Gross Profit c/o", p["gross"])] if p["gross"] >= 0 else []))
+    right = ([("Direct Incomes", None)] + p["direct_inc"]
+             + ([("Gross Loss c/o", -p["gross"])] if p["gross"] < 0 else []))
+    left2 = ([("Gross Loss b/f", -p["gross"])] if p["gross"] < 0 else []) + [("Indirect Expenses", None)] \
+        + p["indirect_exp"] + ([("Net Profit", p["net"])] if p["net"] >= 0 else [])
+    right2 = ([("Gross Profit b/f", p["gross"])] if p["gross"] >= 0 else []) + [("Indirect Incomes", None)] \
+        + p["indirect_inc"] + ([("Net Loss", -p["net"])] if p["net"] < 0 else [])
+    for a, b in ((left, right), (left2, right2)):
+        for i in range(max(len(a), len(b))):
+            l = a[i] if i < len(a) else ("", None)
+            r = b[i] if i < len(b) else ("", None)
+            bold = l[1] is None and l[0] or r[1] is None and r[0]
+            pl.append(("b" if bold else "", [l[0], float(l[1]) if l[1] is not None else "",
+                                             r[0], float(r[1]) if r[1] is not None else ""]))
+        pl.append(("", []))
+    return pl, tb, day
+
+
+def tally_xml(q):
+    """A zip with ledgers and vouchers in TallyPrime's XML import format."""
+    vs = tally_vouchers(q)
+    ledgers = {}
+    for v in vs:
+        ledgers[v["ledger"]] = v["group"]
+        ledgers[v["bank"]] = v["bgroup"]
+    env = lambda report, body: (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE><HEADER><TALLYREQUEST>Import Data'
+        '</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>' + report +
+        '</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>##SVCURRENTCOMPANY</SVCURRENTCOMPANY>'
+        '</STATICVARIABLES></REQUESTDESC><REQUESTDATA>' + body + '</REQUESTDATA></IMPORTDATA>'
+        '</BODY></ENVELOPE>\n')
+    x = lambda t: _clean(t)
+    masters = "".join(
+        f'<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="{x(n)}" ACTION="Create">'
+        f'<NAME.LIST><NAME>{x(n)}</NAME></NAME.LIST><PARENT>{x(g)}</PARENT>'
+        f'<ISBILLWISEON>No</ISBILLWISEON><ISCOSTCENTRESON>'
+        f'{"Yes" if g in PNL_GROUPS else "No"}'
+        f'</ISCOSTCENTRESON></LEDGER></TALLYMESSAGE>' for n, g in sorted(ledgers.items()))
+    centres = "".join(
+        f'<TALLYMESSAGE xmlns:UDF="TallyUDF"><COSTCENTRE NAME="{x(c)}" ACTION="Create">'
+        f'<NAME.LIST><NAME>{x(c)}</NAME></NAME.LIST><PARENT/></COSTCENTRE></TALLYMESSAGE>'
+        for c in sorted({v["centre"] for v in vs if v["centre"]}))
+
+    def entry(name, amount, debit, centre=""):
+        cc = (f'<CATEGORYALLOCATIONS.LIST><CATEGORY>Primary Cost Category</CATEGORY>'
+              f'<COSTCENTREALLOCATIONS.LIST><NAME>{x(centre)}</NAME><AMOUNT>'
+              f'{-amount if debit else amount:.2f}</AMOUNT></COSTCENTREALLOCATIONS.LIST>'
+              f'</CATEGORYALLOCATIONS.LIST>') if centre else ""
+        return (f'<ALLLEDGERENTRIES.LIST><LEDGERNAME>{x(name)}</LEDGERNAME><ISDEEMEDPOSITIVE>'
+                f'{"Yes" if debit else "No"}</ISDEEMEDPOSITIVE><AMOUNT>'
+                f'{-amount if debit else amount:.2f}</AMOUNT>{cc}</ALLLEDGERENTRIES.LIST>')
+    vouchers = "".join(
+        f'<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="{v["type"]}" ACTION="Create">'
+        f'<DATE>{v["date"].replace("-", "")}</DATE><EFFECTIVEDATE>{v["date"].replace("-", "")}'
+        f'</EFFECTIVEDATE><VOUCHERTYPENAME>{v["type"]}</VOUCHERTYPENAME><VOUCHERNUMBER>{v["no"]}'
+        f'</VOUCHERNUMBER><NARRATION>{x((v["narration"] + (" | " + v["note"] if v["note"] else ""))[:500])}'
+        f'</NARRATION>'
+        + entry(v["dr"], v["amount"], True, v["centre"] if v["dr"] == v["ledger"] else "")
+        + entry(v["cr"], v["amount"], False, v["centre"] if v["cr"] == v["ledger"] else "")
+        + '</VOUCHER></TALLYMESSAGE>' for v in vs)
+    readme = ("Handral Books export for TallyPrime\r\n\r\n"
+              "1. Create or open the company in TallyPrime (try a test company first).\r\n"
+              "2. Import > Masters > choose 1-masters.xml (ledgers and cost centres).\r\n"
+              "3. Import > Transactions > choose 2-vouchers.xml.\r\n\r\n"
+              "Receipt/Payment vouchers are against each bank ledger. Transfers between the\r\n"
+              "proprietor's own accounts go through 'Inter-Bank Transfer' (Contra); its balance\r\n"
+              "should be near zero once all accounts are imported. 'Suspense A/c' holds entries\r\n"
+              "not yet sorted. Opening balances are not included.\r\n")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("1-masters.xml", env("All Masters", masters + centres))
+        z.writestr("2-vouchers.xml", env("Vouchers", vouchers))
+        z.writestr("README.txt", readme)
+    return buf.getvalue()
+
+
+def api_tally(q):
+    p = tally_pnl(q)
+    tb = trial_balance(q)
+    return dict(pnl=p, tb=[[g, items] for g, items in tb],
+                suspense=sum(-v for g, items in tb if g == "Suspense A/c" for _, v in items))
+
+
 def export_xlsx(q):
     ew = [12, 10, 16, 60, 18, 14, 14, 14, 12, 26, 30, 12, 24, 10, 12]
     ent = entry_rows(q)
     money = lambda rows: [("", [float(v) if i in (5, 6) or (i == 7 and v is not None)
                                 else v for i, v in enumerate(r)]) for r in rows]
+    pl, tb, day = tally_report_rows(q)
     sheets = [
         ("ITR summary", itr_rows(q), [46, 10, 16, 16], False),
+        ("Profit & Loss A-c", pl, [36, 16, 36, 16], False),
+        ("Trial Balance", tb, [44, 16, 16], False),
+        ("Day Book", day, [12, 10, 8, 34, 34, 14, 70, 12], True),
         ("Income and expense", head_rows(q), [28, 36, 9, 16, 16, 16], True),
         ("Clinic vs personal", split_rows(q), [16, 9, 16, 16, 16], True),
         ("By month", month_rows(q), [12, 16, 16, 16], True),
@@ -2679,6 +2912,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(export_csv(q), "text/csv", extra={
                     "Content-Disposition":
                     f"attachment; filename=handral-entries-{scope_label(q)[1]}.csv"})
+            elif u.path == "/api/tally":
+                self.send(api_tally(q))
+            elif u.path == "/export-tally.zip":
+                self.send(tally_xml(q), "application/zip", extra={
+                    "Content-Disposition":
+                    f"attachment; filename=handral-tally-{scope_label(q)[1]}.zip"})
             elif u.path == "/export.xlsx":
                 self.send(export_xlsx(q), "application/vnd.openxmlformats-officedocument"
                           ".spreadsheetml.sheet", extra={
@@ -3195,6 +3434,15 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <div id="itr_files"></div>
     <input type="file" id="itrfile" hidden accept=".json,.pdf,.zip">
   </div>
+  <div class="card" id="tallycard">
+    <div class="row"><h3 class="grow" style="margin:0">Tally view for your CA</h3>
+      <button class="pri" id="exp_tally">Download for Tally (XML)</button></div>
+    <p class="mute" style="margin:6px 0">Every entry is a Receipt, Payment or Contra voucher against its bank
+    ledger; heads are Tally ledgers under Tally groups, and clinics are cost centres. The XML imports
+    into TallyPrime (Import, Masters, then Import, Transactions). Uses the year and account chosen under
+    Download below.</p>
+    <div id="tally_pl"></div><div id="tally_tb"></div>
+  </div>
   <div class="card" id="dl">
     <h3>Download</h3>
     <div class="filters" style="margin:8px 0">
@@ -3204,7 +3452,8 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
       <button class="pri" id="exp_xlsx">Excel workbook</button>
       <button id="exp_sum">ITR summary CSV</button>
       <button id="export">All entries CSV</button></div>
-    <p class="mute" style="margin:8px 0 0">The Excel workbook has the ITR summary, income and
+    <p class="mute" style="margin:8px 0 0">The Excel workbook has the Tally Profit &amp; Loss A/c, Trial Balance and
+    Day Book, the ITR summary, income and
     expense by head, clinic vs personal, month-wise profit, consultants, and every entry.
     Pick one account for a separate file. The person chosen at the top applies to downloads too.</p></div>
   <h2>Clinic profit by month</h2>
@@ -3230,7 +3479,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
 <dialog id="dlg">
   <div class="row"><b class="grow" id="d_amt"></b><span class="mute" id="d_date"></span></div>
   <p id="d_narr" style="word-break:break-word;margin:8px 0"></p>
-  <label for="d_cat">Category</label><select id="d_cat"></select>
+  <label for="d_cat">Ledger</label><select id="d_cat"></select>
   <label for="d_clinic">Clinic</label><select id="d_clinic"></select>
   <label for="d_note">Note</label><input id="d_note" type="text">
   <label><input type="checkbox" id="d_mk"> Also make a rule for narrations containing</label>
@@ -3248,7 +3497,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
 </dialog>
 <dialog id="bdlg">
   <b id="b_title"></b>
-  <label for="b_cat">Category</label><select id="b_cat"></select>
+  <label for="b_cat">Ledger</label><select id="b_cat"></select>
   <label for="b_clinic">Clinic</label><select id="b_clinic"></select>
   <label id="b_rulewrap"><input type="checkbox" id="b_rule" checked> Remember these names for future imports</label>
   <div class="row" style="margin-top:14px;justify-content:flex-end">
@@ -3257,7 +3506,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
 <dialog id="gdlg">
   <div class="row"><b class="grow" id="g_title"></b><span class="num" id="g_amt"></span></div>
   <p class="mute" id="g_sample" style="word-break:break-word;margin:8px 0"></p>
-  <label for="g_cat">Category</label><select id="g_cat"></select>
+  <label for="g_cat">Ledger</label><select id="g_cat"></select>
   <label for="g_clinic">Clinic</label><select id="g_clinic"></select>
   <label><input type="checkbox" id="g_rule" checked> Remember this for future imports</label>
   <div class="row" style="margin-top:14px;justify-content:flex-end">
@@ -3381,11 +3630,13 @@ async function api(path,body){
   const o=body===undefined?{}:{method:'POST',body:body instanceof Blob?body:JSON.stringify(body)};
   const r=await fetch(path,o);const j=await r.json();
   if(j.error)throw new Error(j.error);return j;}
+const LED=c=>{const t=(S.tally||[]).find(x=>x[0]===c);return t?t[1]:(c||'Suspense A/c');};
+const VCH=t=>{const g=((S.tally||[]).find(x=>x[0]===t.category)||[])[2];
+  return g==='Bank Accounts'||g==='Cash-in-Hand'?'Contra':t.credit>0?'Receipt':'Payment';};
 function catOptions(first){
   let h=first||'';
-  for(const [key,label] of S.groups){
-    h+='<optgroup label="'+esc(label)+'">'+S.cats.filter(c=>c[1]===key)
-      .map(c=>'<option>'+esc(c[0])+'</option>').join('')+'</optgroup>';}
+  for(const g of S.tally_groups||[]){const items=S.tally.filter(t=>t[2]===g);if(!items.length)continue;
+    h+='<optgroup label="'+esc(g)+'">'+items.map(t=>'<option value="'+esc(t[0])+'">'+esc(t[1])+'</option>').join('')+'</optgroup>';}
   return h;}
 function clinicOptions(first){return (first||'')+S.clinics.map(c=>'<option>'+esc(c)+'</option>').join('');}
 function fyMonths(){const y=+$('fy').value,o=[];
@@ -3425,17 +3676,17 @@ async function loadState(){
     S.accounts.filter(a=>!$('who').value||a.owner===$('who').value).map(a=>'<option value="'+a.id+'">'+esc(a.name)+'</option>').join('');
   keepValue('f_account',acctOpts);keepValue('s_account',acctOpts);
   for(const id of ['d_cat','b_cat','r_cat','g_cat'])
-    keepValue(id,catOptions(id==='d_cat'?'<option value="">Unsorted</option>':''));
+    keepValue(id,catOptions(id==='d_cat'?'<option value="">Suspense A/c (not sorted)</option>':''));
   for(const id of ['d_clinic','b_clinic','r_clinic','g_clinic'])
     keepValue(id,clinicOptions('<option value="">No clinic</option>'));
-  keepValue('f_cat',catOptions('<option value="">All categories</option><option value="__none__">Unsorted</option>'));
+  keepValue('f_cat',catOptions('<option value="">All ledgers</option><option value="__none__">Suspense A/c (not sorted)</option>'));
   keepValue('rp_clinic',clinicOptions('<option value="">All clinics</option>'));
   keepValue('f_month','<option value="">Whole year</option>'+
     fyMonths().map(m=>'<option value="'+m[0]+'">'+m[1]+'</option>').join(''));
   $('rlist').innerHTML=S.rules.length?S.rules.map(r=>
     '<div class="tx" style="cursor:default"><div class="grow"><b>'+esc(r.pattern)+'</b> <span class="mute">'+
     (r.field==='payee'?'name is exactly this, ':'narration contains this, ')+
-    ({any:'in or out',in:'money in',out:'money out'}[r.dir]||'')+'</span><div class="mute">'+esc(r.category)+
+    ({any:'in or out',in:'money in',out:'money out'}[r.dir]||'')+'</span><div class="mute">'+esc(LED(r.category))+
     (r.clinic?', '+esc(r.clinic):'')+'</div></div><button class="link" data-rdel="'+r.id+'">Delete</button></div>').join('')
     :'<span class="mute">No rules yet.</span>';
 }
@@ -3487,7 +3738,7 @@ async function loadTxns(reset){
   for(const t of d.rows){
     const el=document.createElement('div');el.className='tx';
     el.innerHTML='<div class="grow"><div class="n">'+esc(t.narration)+'</div><div class="mute">'+t.date+', '+esc(t.account)+
-      ' <span class="chip '+(t.category?'':'none')+'">'+esc(t.category||'Unsorted')+
+      ' <span class="chip">'+VCH(t)+'</span> <span class="chip '+(t.category?'':'none')+'">'+esc(LED(t.category))+
       (t.clinic?', '+esc(t.clinic):'')+'</span></div></div>'+
       '<div class="num '+(t.credit>0?'in':'out')+'">'+(t.credit>0?'+':'-')+inr(t.credit>0?t.credit:t.debit)+'</div>';
     el.appendChild(pickBox('txn',t.id,t));
@@ -3527,11 +3778,11 @@ async function loadReport(){
   for(const [g,label] of S.groups){
     const names=inGroup(g);if(!names.length)continue;
     const one=g==='receipts'||g==='other_income'?1:(g==='expenses'||g==='tax'?-1:0);
-    h+='<div class="card scroll"><h3>'+esc(label)+'</h3><table><tr><th>Category</th><th>Entries</th>'+
+    h+='<div class="card scroll"><h3>'+esc(label)+'</h3><table><tr><th>Ledger</th><th>Entries</th>'+
       (one?'<th>Amount</th>':'<th>Money in</th><th>Money out</th>')+'</tr>';
     let tn=0,ta=0,tc=0,td=0;
     for(const c of names){const k=cat[c];tn+=k.n;ta+=one*(k.c-k.d);tc+=k.c;td+=k.d;
-      h+='<tr class="go" data-cat="'+esc(c)+'"><td>'+esc(c)+'</td><td>'+k.n+'</td>'+
+      h+='<tr class="go" data-cat="'+esc(c)+'"><td>'+esc(LED(c))+'</td><td>'+k.n+'</td>'+
         (one?'<td class="num">'+inr(one*(k.c-k.d))+'</td>':'<td class="num">'+inr(k.c)+'</td><td class="num">'+inr(k.d)+'</td>')+'</tr>';}
     h+='<tr class="tot"><td>Total</td><td>'+tn+'</td>'+(one?'<td class="num">'+inr(ta)+'</td>'
       :'<td class="num">'+inr(tc)+'</td><td class="num">'+inr(td)+'</td>')+'</tr></table></div>';}
@@ -3542,17 +3793,39 @@ async function loadReport(){
   $('heads').innerHTML=h||'<div class="card mute">Nothing sorted yet for this year. Use the Sort tab to put entries under heads.</div>';
   const sum=(c,m)=>(cell[c]||{})[m]||0,tot=(g,m)=>inGroup(g).reduce((a,c)=>a+sum(c,m),0);
   const all=fn=>months.reduce((a,m)=>a+fn(m[0]),0);
-  let t='<tr><th>Category</th>'+months.map(m=>'<th>'+m[1].slice(0,3)+'</th>').join('')+'<th>Total</th></tr>';
+  let t='<tr><th>Ledger</th>'+months.map(m=>'<th>'+m[1].slice(0,3)+'</th>').join('')+'<th>Total</th></tr>';
   const line=(name,fn,cls)=>'<tr class="'+(cls||'')+'"><td>'+esc(name)+'</td>'+
     months.map(m=>'<td class="num">'+(fn(m[0])?r0(fn(m[0])):'')+'</td>').join('')+
     '<td class="num"><b>'+r0(all(fn))+'</b></td></tr>';
   for(const [g,label] of [['receipts','Clinic receipts'],['expenses','Clinic expenses']]){
     t+='<tr class="grp"><td colspan="14">'+label+'</td></tr>';
-    for(const c of inGroup(g))t+=line(c,m=>sum(c,m));
+    for(const c of inGroup(g))t+=line(LED(c),m=>sum(c,m));
     t+=line('Total',m=>tot(g,m),'tot');}
   t+=line('Clinic profit',m=>tot('receipts',m)-tot('expenses',m),'tot');
   $('rtable').innerHTML=t;
   await loadItr();
+  await loadTally();
+}
+async function loadTally(){
+  const d=await api('/api/tally?'+qs({owner:$('who').value,fy:$('fy').value})),p=d.pnl;
+  const rows=(title,items)=>items.length?'<tr class="grp"><td colspan="2">'+esc(title)+'</td></tr>'+
+    items.map(i=>'<tr><td>&nbsp;&nbsp;'+esc(i[0])+'</td><td class="num">'+inr(i[1])+'</td></tr>').join(''):'';
+  const line=(t,v)=>'<tr class="tot"><td>'+t+'</td><td class="num">'+inr(v)+'</td></tr>';
+  const col=html=>'<div style="flex:1;min-width:280px"><table>'+html+'</table></div>';
+  $('tally_pl').innerHTML='<h3 style="margin-top:12px">Profit &amp; Loss A/c, '+fyLabel(+$('fy').value).split(' (')[0]+'</h3>'+
+    '<div class="row" style="align-items:flex-start;gap:16px">'+
+    col('<tr><th>Particulars (Dr)</th><th>Amount</th></tr>'+rows('Purchase Accounts',p.purchases)+rows('Direct Expenses',p.direct_exp)+
+      (p.gross>=0?line('Gross Profit c/o',p.gross):'')+(p.gross<0?line('Gross Loss b/f',-p.gross):'')+rows('Indirect Expenses',p.indirect_exp)+
+      (p.net>=0?line('Net Profit',p.net):''))+
+    col('<tr><th>Particulars (Cr)</th><th>Amount</th></tr>'+rows('Direct Incomes',p.direct_inc)+(p.gross<0?line('Gross Loss c/o',-p.gross):'')+
+      (p.gross>=0?line('Gross Profit b/f',p.gross):'')+rows('Indirect Incomes',p.indirect_inc)+(p.net<0?line('Net Loss',-p.net):''))+'</div>';
+  let dr=0,cr=0,t='<tr><th>Particulars</th><th>Debit</th><th>Credit</th></tr>';
+  for(const [g,items] of d.tb){const gd=items.filter(i=>i[1]>0).reduce((a,i)=>a+i[1],0),gc=-items.filter(i=>i[1]<0).reduce((a,i)=>a+i[1],0);dr+=gd;cr+=gc;
+    t+='<tr class="grp"><td>'+esc(g)+'</td><td class="num">'+(gd?inr(gd):'')+'</td><td class="num">'+(gc?inr(gc):'')+'</td></tr>'+
+      items.map(i=>'<tr><td>&nbsp;&nbsp;'+esc(i[0])+'</td><td class="num">'+(i[1]>0?inr(i[1]):'')+'</td><td class="num">'+(i[1]<0?inr(-i[1]):'')+'</td></tr>').join('');}
+  t+='<tr class="tot"><td>Grand Total</td><td class="num">'+inr(dr)+'</td><td class="num">'+inr(cr)+'</td></tr>';
+  $('tally_tb').innerHTML=d.tb.length?'<details style="margin-top:12px"><summary><b>Trial Balance</b> <span class="mute">(movement for the year; opening balances not included)</span></summary>'+
+    '<div class="scroll"><table>'+t+'</table></div></details>'+(d.suspense?'<p class="mute">Suspense A/c has entries not yet sorted; post them in the Sort tab.</p>':''):'';
 }
 let IF=[];
 async function loadItr(){
@@ -3690,7 +3963,7 @@ async function loadInsurance(){
     (r.type==='Health insurance'?' <span class="chip">'+esc(r.insured)+(r.senior?', senior':'')+'</span>':'')+(r.closed?' <span class="chip">stopped '+r.closed+'</span>':'')+
     '<div class="mute">'+esc([r.insurer,r.policy_no?'policy '+r.policy_no:'',r.cover?'cover '+inr(r.cover):'',r.premium?'premium '+inr(r.premium)+' '+r.frequency.toLowerCase():''].filter(Boolean).join(', '))+'</div></div>'+
     '<div style="text-align:right"><span class="mute">Paid '+fyName+'</span><br><b class="num">'+inr(r.paid)+'</b>'+(r.next_due?'<div class="mute">next due '+r.next_due+'</div>':'')+'</div></div>'+
-    '<p class="mute" style="margin:8px 0 0">Filed under '+esc(r.category)+'. '+esc(r.note_tax)+(r.match?'':' <b>Add the text for this premium in bank entries so payments are picked up.</b>')+'</p>'+
+    '<p class="mute" style="margin:8px 0 0">Ledger: '+esc(LED(r.category))+'. '+esc(r.note_tax)+(r.match?'':' <b>Add the text for this premium in bank entries so payments are picked up.</b>')+'</p>'+
     '<div class="row" style="margin-top:8px"><span class="grow"></span>'+(r.match?'<button class="link" data-pview="'+r.id+'">View entries</button>':'')+
     '<button class="pri" data-pedit="'+r.id+'">Edit</button></div></div>').join('')
     :'<div class="card mute">No policies added yet. Use Add policy for each term, LIC, health, vehicle or clinic policy.</div>';
@@ -3807,6 +4080,7 @@ const dlq=()=>qs({owner:$('who').value,fy:$('dl_fy').value,account:$('dl_bank').
 $('export').onclick=()=>{location.href='/export.csv?'+dlq();};
 $('exp_xlsx').onclick=()=>{location.href='/export.xlsx?'+dlq();};
 $('exp_sum').onclick=()=>{location.href='/export-summary.csv?'+dlq();};
+$('exp_tally').onclick=()=>{location.href='/export-tally.zip?'+dlq();};
 $('heads').onclick=run(async e=>{const tr=e.target.closest('tr.go');if(!tr)return;
   payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';$('f_q').value='';
   await go('txns');$('f_cat').value=tr.dataset.cat;await loadTxns(true);});
@@ -3843,7 +4117,7 @@ $('b_save').onclick=run(async()=>{
   else if(selKind==='group')r=await api('/api/groups-bulk',{items:[...sel.values()].map(g=>({payee:g.payee,dir:g.dir})),
     category:cat,clinic:clinic,rule:$('b_rule').checked});
   else r=await api('/api/txns-bulk',{ids:[...sel.keys()],category:cat,clinic:clinic});
-  $('bdlg').close();toast('Sorted '+r.changed+' entries as '+cat);await loadState();await refresh();});
+  $('bdlg').close();toast('Posted '+r.changed+' entries to '+LED(cat));await loadState();await refresh();});
 $('selclear').onclick=clearSel;
 $('selgo').onclick=()=>{bulkMode='sel';$('b_save').textContent='Apply to selected';
   $('b_rulewrap').style.display=selKind==='group'?'block':'none';
@@ -3872,7 +4146,7 @@ $('g_view').onclick=run(async()=>{$('gdlg').close();
 $('g_save').onclick=run(async()=>{
   const r=await api('/api/group',{payee:grp.payee,dir:grp.dir,category:$('g_cat').value,
     clinic:$('g_clinic').value,rule:$('g_rule').checked});
-  $('gdlg').close();toast('Sorted '+r.changed+' entries as '+$('g_cat').value);await loadState();await loadSort();});
+  $('gdlg').close();toast('Posted '+r.changed+' entries to '+LED($('g_cat').value));await loadState();await loadSort();});
 $('r_add').onclick=run(async()=>{
   const r=await api('/api/rule',{pattern:$('r_pat').value,dir:$('r_dir').value,category:$('r_cat').value,clinic:$('r_clinic').value});
   $('r_pat').value='';toast('Rule added and applied to '+r.changed+' entries');await loadState();});
