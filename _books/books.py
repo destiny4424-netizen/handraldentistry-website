@@ -195,6 +195,45 @@ CARD_RULES = [
     ("AUTOPAY SI", "any", "Credit card payment"),
     ("AUTOPAY RETURNED", "any", "Credit card payment"),
 ]
+# Everyday merchants (added in database version 13). Money out only.
+_M = lambda cat, *pats: [(p, "out", cat) for p in pats]
+MERCHANT_RULES = (
+    _M("Life insurance premium (80C)", "LICBILLDESK", "LIC BILLDESK", "LIC OF INDIA",
+       "LIFE INSURANCE CORP", "LICI PREMIUM", "LICPREMIUM")
+    + _M("Fuel and travel", "PETROL", "FUEL", "HPCL", "BPCL", "IOCL", "INDIAN OIL",
+         "BHARAT PETROLEUM", "HINDUSTAN PETROLEUM", "NAYARA", "RELIANCE BP", "JIO-BP", "JIOBP",
+         "SHELL INDIA", "FILLING STATION", "SERVICE STATION", "FASTAG", "PARKING")
+    + _M("Utilities and phone", "AIRTEL", "JIO RECHARGE", "RELIANCE JIO", "JIO PREPAID",
+         "JIO POSTPAID", "BSNL", "VODAFONE", "VI PREPAID", "ACT FIBERNET", "HATHWAY", "TATA PLAY",
+         "TATASKY", "DISH TV", "BESCOM", "HESCOM", "GESCOM", "MESCOM", "CESC", "ELECTRICITY",
+         "WATER BILL", "BBPS")
+    + _M("Dental materials", "PINKBLUE", "PINK BLUE", "DENTSPLY", "IVOCLAR", "GC INDIA",
+         "DENTAL SUPPL", "DENTAL DEPOT", "DENTAL STORE")
+    + _M("Personal",
+         # travel and stays
+         "HOTEL", "RESORT", "OYO ROOMS", "ORAVEL", "ZOSTEL", "AIRBNB", "MAKEMYTRIP", "GOIBIBO",
+         "BOOKING.COM", "AGODA", "CLEARTRIP", "IXIGO", "YATRA", "IRCTC", "REDBUS", "ABHIBUS",
+         "INDIGO", "AIR INDIA", "AKASA", "SPICEJET", "UBER", "OLA CABS", "ANI TECHNOLOGIES",
+         "RAPIDO", "KSRTC",
+         # shopping
+         "DECATHLON", "DAILYOBJECTS", "DAILY OBJECTS", "APPLE MEDIA", "APPLE SERVICES",
+         "APPLE.COM", "ITUNES", "MYNTRA", "AJIO", "NYKAA", "TATA CLIQ", "MEESHO", "FLIPKART",
+         "CROMA", "RELIANCE DIGITAL", "LIFESTYLE", "PANTALOONS", "MAX FASHION", "TRENDS",
+         "WESTSIDE", "ZARA", "H&M", "IKEA", "PEPPERFRY", "URBAN LADDER", "LENSKART", "TANISHQ",
+         "CARATLANE",
+         # groceries and food
+         "BIGBASKET", "BLINKIT", "ZEPTO", "INSTAMART", "DMART", "AVENUE SUPERMARTS", "JIOMART",
+         "RELIANCE RETAIL", "RELIANCE FRESH", "MORE RETAIL", "SPENCER", "DOMINOS", "MCDONALD",
+         "KFC", "PIZZA HUT", "STARBUCKS", "BURGER KING", "SUBWAY", "RESTAURANT", "CAFE", "BAKERY",
+         "EATCLUB", "BARBEQUE",
+         # entertainment and subscriptions
+         "SPOTIFY", "YOUTUBE", "GOOGLE PLAY", "PRIME VIDEO", "AMAZON PRIME", "JIOCINEMA",
+         "JIOHOTSTAR", "SONYLIV", "ZEE5", "PVR", "INOX", "CINEPOLIS",
+         # health
+         "APOLLO PHARMACY", "MEDPLUS", "PHARMEASY", "NETMEDS", "TATA 1MG", "1MG", "CULT.FIT",
+         "CULTFIT", "GYM")
+)
+
 # Stock brokers: money sent to or received from them (added in database version 12).
 BROKERS = ["KOTAK SEC", "KOTAKSEC", "KOTAK SECURITIES", "ZERODHA", "RAISE SECURITIES",
            "RAISESECURITIES", "ANGEL ONE", "ANGELONE", "ANGEL BROKING", "UPSTOX", "RKSV",
@@ -507,6 +546,18 @@ def init():
                         " ('Patient receipts','Personal') AND narration LIKE ?", (f"%{pat}%",))
         apply_rules(con)
         con.execute("PRAGMA user_version=12")
+    if version < 13:  # everyday merchants: insurance, travel, fuel, shopping, food, bills
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+                        [r for r in MERCHANT_RULES if r[0].lower() not in have])
+        # Small payments the "below 2,000" rule filed as Personal that have a better head now
+        limit = small_rule(con) or 2000
+        for pat, way, cat in MERCHANT_RULES:
+            if cat != "Personal":
+                con.execute("UPDATE txns SET category=? WHERE category='Personal' AND debit>0"
+                            " AND debit<? AND narration LIKE ?", (cat, limit, f"%{pat}%"))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=13")
     con.commit()
     con.close()
 
