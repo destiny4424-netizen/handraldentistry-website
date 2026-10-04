@@ -740,6 +740,16 @@ def init():
                         [(x,) for x in LENDER_CREDITS if x.lower() not in have])
         apply_rules(con)
         con.execute("PRAGMA user_version=17")
+    if version < 18:  # salary credits, on databases that started before these rules existed
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,'in','Salary income','')",
+                        [(x,) for x in ("SALARY", "SAL CR", "SAL FOR", "SALARY CREDIT", "PAYROLL")
+                         if x.lower() not in have])
+        for x in ("SALARY", "PAYROLL"):
+            con.execute("UPDATE txns SET category='Salary income' WHERE credit>0 AND"
+                        " category IN ('', 'Patient receipts') AND narration LIKE ?", (f"%{x}%",))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=18")
     con.commit()
     con.close()
 
