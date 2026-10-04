@@ -195,6 +195,24 @@ CARD_RULES = [
     ("AUTOPAY SI", "any", "Credit card payment"),
     ("AUTOPAY RETURNED", "any", "Credit card payment"),
 ]
+# What an accountant files the same way every time (added in database version 14).
+CA_RULES = (
+    [(p, "out", "Cash deposit or withdrawal") for p in
+     ("ATM WDL", "ATM CASH", "ATW-", "NWD-", "CASH WDL", "CASH WITHDRAWAL", "CASH-ATM", "SELF CHQ",
+      "CHQ PAID-SELF", "TO SELF")]
+    + [(p, "in", "Patient receipts") for p in
+       ("BHARATPE", "PINE LABS", "PINELABS", "MSWIPE", "EZETAP", "MERCHANT SETTLEMENT",
+        "POS SETTL", "MPOS SETTL", "CARD SETTLEMENT", "UPI SETTLEMENT")]
+    + [(p, "in", "Income tax and TDS paid") for p in
+       ("TAX REFUND", "ITDTAX REFUND", "IT REFUND", "CBDT REFUND", "INCOME TAX REFUND")]
+    + [(p, "any", "Own account transfer") for p in
+       ("RAVICHANDRA K", "RAVICHANDRA KIRAN", "HANDRAL RAVICH", "R K HANDRAL", "RK HANDRAL")]
+    + [(p, "any", "Family and friends") for p in
+       ("HANDRAL", "SUPRIYA ENTERPRISES", "SUPRIYA ENT")]
+    + [("CASHBACK", "in", "Personal"), ("FD INT", "in", "Interest received"),
+       ("TD INT", "in", "Interest received"), ("RD INT", "in", "Interest received")]
+)
+
 # Everyday merchants (added in database version 13). Money out only.
 _M = lambda cat, *pats: [(p, "out", cat) for p in pats]
 MERCHANT_RULES = (
@@ -558,6 +576,12 @@ def init():
                             " AND debit<? AND narration LIKE ?", (cat, limit, f"%{pat}%"))
         apply_rules(con)
         con.execute("PRAGMA user_version=13")
+    if version < 14:  # accountant's rules: cash withdrawals, card settlements, refunds, family
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+                        [r for r in CA_RULES if r[0].lower() not in have])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=14")
     con.commit()
     con.close()
 
@@ -1068,7 +1092,7 @@ def apply_rules(con):
         " ORDER BY LENGTH(match) DESC")]
     pay = patient_rule(con)
     small = small_rule(con)
-    n = 0
+    n = match_contras(con)
     acols = [c[1] for c in con.execute("PRAGMA table_info(accounts)")]
     kind = "a.kind" if "kind" in acols else "NULL"
     owner = "a.owner" if "owner" in acols else "'Self'"
@@ -1109,10 +1133,70 @@ def apply_rules(con):
             if pay and is_patient_payment(t, low, pay):
                 con.execute("UPDATE txns SET category=? WHERE id=?", ("Patient receipts", t["id"]))
                 n += 1
+            elif reversal_of(con, t):
+                n += 1
             elif small and t["kind"] in (None, "Bank", "Credit card") and \
                     0 < (t["debit"] or 0) < small and not (t["credit"] or 0):
                 con.execute("UPDATE txns SET category='Personal' WHERE id=?", (t["id"],))
                 n += 1
+    return n
+
+
+REVERSAL = r"\brev\b|revers|refund|chargeback|\breturn|\brtn\b|cancel|failed|declined"
+
+
+def reversal_of(con, t):
+    """A refund or reversal goes under the same head as the entry it undoes: the one in the
+    other direction, for the same amount, in the same account, up to 60 days before."""
+    low = (t["narration"] or "").lower()
+    if not re.search(REVERSAL, low):
+        return False
+    amt = t["credit"] if (t["credit"] or 0) > 0 else t["debit"]
+    if not amt:
+        return False
+    side = "debit" if (t["credit"] or 0) > 0 else "credit"
+    r = con.execute(
+        f"SELECT o.category, o.clinic FROM txns o JOIN txns x ON x.id=? WHERE o.account_id=x.account_id"
+        f" AND o.id!=x.id AND ABS(o.{side}-?)<0.01 AND o.category NOT IN ('', 'Personal')"
+        f" AND o.date BETWEEN date(x.date,'-60 day') AND x.date ORDER BY o.date DESC LIMIT 1",
+        (t["id"], amt)).fetchone() or con.execute(
+        f"SELECT o.category, o.clinic FROM txns o JOIN txns x ON x.id=? WHERE o.account_id=x.account_id"
+        f" AND o.id!=x.id AND ABS(o.{side}-?)<0.01 AND o.category!=''"
+        f" AND o.date BETWEEN date(x.date,'-60 day') AND x.date ORDER BY o.date DESC LIMIT 1",
+        (t["id"], amt)).fetchone()
+    if not r:
+        return False
+    con.execute("UPDATE txns SET category=?, clinic=? WHERE id=?", (r[0], r[1] or "", t["id"]))
+    return True
+
+
+def match_contras(con):
+    """Money out of one of the owner's accounts and the same amount into another of theirs
+    within two days is a transfer between their own accounts (a Contra in Tally)."""
+    try:
+        rows = con.execute(
+            "SELECT t.id, t.account_id, t.date, t.debit, t.credit, a.owner FROM txns t JOIN accounts a"
+            " ON a.id=t.account_id WHERE t.category='' AND a.kind IN ('Bank','Cash')"
+            " AND (t.debit>=1000 OR t.credit>=1000) ORDER BY t.date").fetchall()
+    except sqlite3.OperationalError:  # an old database still being upgraded
+        return 0
+    ins = {}
+    for r in rows:
+        if r["credit"] >= 1000:
+            ins.setdefault((r["owner"], round(r["credit"], 2)), []).append(r)
+    used, n = set(), 0
+    for r in rows:
+        if r["debit"] < 1000 or r["id"] in used:
+            continue
+        for c in ins.get((r["owner"], round(r["debit"], 2)), []):
+            if c["id"] in used or c["account_id"] == r["account_id"]:
+                continue
+            if abs((Date.fromisoformat(c["date"]) - Date.fromisoformat(r["date"])).days) <= 2:
+                con.execute("UPDATE txns SET category='Own account transfer' WHERE id IN (?,?)",
+                            (r["id"], c["id"]))
+                used.update((r["id"], c["id"]))
+                n += 2
+                break
     return n
 
 
