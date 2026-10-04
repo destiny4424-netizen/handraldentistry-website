@@ -47,6 +47,7 @@ GROUPS = [
     ("other_income", "Other income"),
     ("tax", "Tax and deduction payments"),
     ("invest", "Trading and investments"),
+    ("assets", "Assets, deposits, taxes and parties"),
     ("loans", "Loans and cards"),
     ("personal", "Transfers and personal"),
 ]
@@ -69,6 +70,10 @@ CATS = [
     ("Income tax and TDS paid", "tax"), ("Donations (80G)", "tax"),
     ("School fees (80C)", "tax"),
     ("Trading transfer", "invest"), ("Investments", "invest"), ("Chit fund", "invest"),
+    ("Fixed assets (equipment, furniture)", "assets"), ("Deposits paid (rent, electricity)", "assets"),
+    ("Sundry creditors (suppliers, labs)", "assets"), ("Sundry debtors (insurance, corporates)", "assets"),
+    ("GST, TDS and professional tax", "assets"), ("Capital introduced", "assets"),
+    ("Bank overdraft", "assets"),
     ("Car loan", "loans"), ("Jewel loan", "loans"), ("Personal loan", "loans"),
     ("Home loan", "loans"), ("Education loan", "loans"), ("Business loan", "loans"),
     ("Other loan", "loans"), ("Hand loans given", "loans"), ("Credit card payment", "loans"),
@@ -121,14 +126,36 @@ TALLY = {
     "Other loan": ("Other Loans", "Unsecured Loans"),
     "Credit card payment": ("Credit Card", "Current Liabilities"),
     "Hand loans given": ("Loans & Advances - Friends", "Loans & Advances (Asset)"),
+    "Fixed assets (equipment, furniture)": ("Dental Equipment & Furniture", "Fixed Assets"),
+    "Deposits paid (rent, electricity)": ("Security Deposits", "Deposits (Asset)"),
+    "Sundry creditors (suppliers, labs)": ("Sundry Creditors", "Sundry Creditors"),
+    "Sundry debtors (insurance, corporates)": ("Sundry Debtors", "Sundry Debtors"),
+    "GST, TDS and professional tax": ("Duties & Taxes", "Duties & Taxes"),
+    "Capital introduced": ("Capital Introduced", "Capital Account"),
+    "Bank overdraft": ("Bank OD A/c", "Bank OD A/c"),
     "Own account transfer": ("Inter-Bank Transfer", "Bank Accounts"),
     "Cash deposit or withdrawal": ("Cash", "Cash-in-Hand"),
     "": ("Suspense A/c", "Suspense A/c"),
 }
-TALLY_GROUPS = ["Direct Incomes", "Purchase Accounts", "Direct Expenses", "Indirect Incomes",
-                "Indirect Expenses", "Capital Account", "Secured Loans", "Unsecured Loans",
-                "Current Liabilities", "Investments", "Loans & Advances (Asset)",
-                "Bank Accounts", "Cash-in-Hand", "Suspense A/c"]
+# Tally's predefined groups in its own order (P&L, then Balance Sheet), with their parents.
+TALLY_PARENT = {
+    "Sales Accounts": "", "Direct Incomes": "", "Purchase Accounts": "", "Direct Expenses": "",
+    "Indirect Incomes": "", "Indirect Expenses": "",
+    "Capital Account": "", "Reserves & Surplus": "Capital Account",
+    "Loans (Liability)": "", "Secured Loans": "Loans (Liability)",
+    "Unsecured Loans": "Loans (Liability)", "Bank OD A/c": "Loans (Liability)",
+    "Current Liabilities": "", "Duties & Taxes": "Current Liabilities",
+    "Provisions": "Current Liabilities", "Sundry Creditors": "Current Liabilities",
+    "Fixed Assets": "", "Investments": "",
+    "Current Assets": "", "Stock-in-Hand": "Current Assets", "Deposits (Asset)": "Current Assets",
+    "Loans & Advances (Asset)": "Current Assets", "Sundry Debtors": "Current Assets",
+    "Bank Accounts": "Current Assets", "Cash-in-Hand": "Current Assets",
+    "Misc. Expenses (ASSET)": "", "Branch / Divisions": "", "Suspense A/c": "",
+}
+TALLY_GROUPS = list(TALLY_PARENT)
+BOOK_LEDGERS = {v[0] for v in TALLY.values()} | {"Cash"}
+# Heads whose entries are posted to a party ledger named after the payer or payee.
+PARTY_GROUPS = ("Sundry Creditors", "Sundry Debtors")
 PNL_GROUPS = ("Direct Incomes", "Purchase Accounts", "Direct Expenses", "Indirect Incomes",
               "Indirect Expenses")
 KIND_GROUP = {"Bank": "Bank Accounts", "Credit card": "Current Liabilities",
@@ -2974,7 +3001,7 @@ def itr_rows(q):
     rows.append(("", []))
     rows.append(("h", ["F. Not income or expense (for reference)", "Entries",
                        "Money in", "Money out"]))
-    for g in ("invest", "loans", "personal"):
+    for g in ("invest", "assets", "loans", "personal"):
         for n in names(g):
             rows.append(("", [n, cats[n][2], val(n, 3), val(n, 4)]))
     trade = api_trading(q)["rows"]
@@ -3287,6 +3314,10 @@ def tally_vouchers(q):
     for r in rows:
         bank, bgroup = account_ledger(r["acct"], r["kind"])
         led, group = tally_ledger(r["category"])
+        if group in PARTY_GROUPS and (r["payee"] or "").strip():
+            party = r["payee"].strip().title()
+            if party not in BOOK_LEDGERS:  # never merge a party into one of the fixed ledgers
+                led = party
         amt = r["credit"] or r["debit"]
         if not amt:
             continue

@@ -89,7 +89,9 @@ with the reason and the PDF, and are tried again on every check.
 ### For the CA (Tally terms)
 Heads are Tally ledgers under Tally groups (Direct/Indirect Incomes and Expenses, Purchase
 Accounts, Capital Account with Drawings, Secured/Unsecured Loans, Current Liabilities,
-Investments, Loans & Advances, Bank Accounts, Cash-in-Hand, Suspense A/c). Each entry is a
+Investments, Loans & Advances, Bank Accounts, Cash-in-Hand, Suspense A/c, and the rest of Tally's
+predefined groups: Fixed Assets, Deposits, Duties & Taxes, Bank OD A/c, Sundry Creditors and Sundry
+Debtors, where each supplier or debtor gets its own party ledger). Each entry is a
 Receipt, Payment or Contra voucher; clinics are cost centres. The ITR tab shows the Profit &
 Loss A/c and Trial Balance, the Excel download has them plus the Day Book, and **Download for
 Tally (XML)** gives masters and vouchers to import into TallyPrime.
