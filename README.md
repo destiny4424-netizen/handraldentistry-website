@@ -95,6 +95,16 @@ rates, interest and dividends, 80C/80D/80G/80TTA in the old regime, 87A rebate, 
 cess, less tax already paid from the bank. It shows the cheapest legal option, the full working,
 losses to carry forward and audit or ITR-form notes. It is an estimate for the CA to confirm.
 
+### File on the income-tax portal
+The ITR tab names the form (ITR-4 or ITR-3, and why), the regime (with the Form 10-IEA note for the
+old regime) and the due date, gives the steps on incometax.gov.in, and lists every figure to enter
+schedule by schedule (S, BP / 44ADA with bank and cash receipts, financial particulars, OS, CG,
+VI-A, CFL, TDS, IT challans, tax computation, bank accounts). **Upload Form 26AS / AIS** reads the
+TRACES text (zip) or PDF, or the AIS JSON or PDF, and counts the TDS and TCS in the tax; lines can
+also be added by hand. **Download filing sheet (Excel)** has the sheet, the tax working, the TDS
+list and the steps. The portal's own JSON is not generated: the return is filled online (mostly
+prefilled) or by the CA.
+
 ### Clinic equipment and depreciation
 Payments to dental suppliers of Rs 50,000 or more (changeable in Assets) are filed as fixed assets,
 not expenses. In Assets, Clinic equipment and depreciation lists each one; pick what it is from a list

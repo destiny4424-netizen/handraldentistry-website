@@ -534,6 +534,10 @@ CREATE TABLE IF NOT EXISTS mail_log(
   id INTEGER PRIMARY KEY, msgid TEXT UNIQUE, date TEXT, subject TEXT, account TEXT DEFAULT '',
   status TEXT, found INTEGER DEFAULT 0, added INTEGER DEFAULT 0, detail TEXT DEFAULT '',
   checked TEXT, file BLOB, filename TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS tds(
+  id INTEGER PRIMARY KEY, owner TEXT DEFAULT 'Self', fy INTEGER, deductor TEXT DEFAULT '',
+  tan TEXT DEFAULT '', section TEXT DEFAULT '', paid REAL DEFAULT 0, tds REAL DEFAULT 0,
+  source TEXT DEFAULT '', uploaded TEXT DEFAULT '');
 """
 
 
@@ -2391,6 +2395,7 @@ def tax_figures(fy, owner):
     cash = con.execute("SELECT COALESCE(SUM(t.credit),0) FROM txns t JOIN accounts x ON x.id=t.account_id"
                        " WHERE x.kind='Cash' AND x.owner=? AND t.date BETWEEN ? AND ?",
                        (owner, a, b)).fetchone()[0]
+    tds = con.execute("SELECT COALESCE(SUM(tds),0) FROM tds WHERE fy=? AND owner=?", (fy, owner)).fetchone()[0]
     con.close()
     tr = {k: 0.0 for k, _ in TRADE_FIELDS}
     for r in api_trading({"fy": [str(fy)], "owner": [owner]})["rows"]:
@@ -2405,7 +2410,7 @@ def tax_figures(fy, owner):
                                    "Tax-saving investment (80C)", "School fees (80C)")),
         d80d=cout("Health insurance premium (80D)"), d80g=cout("Donations (80G)"),
         ptax=cout("GST, TDS and professional tax"),
-        paid=cout("Income tax and TDS paid"))
+        paid=cout("Income tax and TDS paid"), tds=round(tds, 2))
 
 
 def compute_tax(f, fy, regime, method):
@@ -2483,10 +2488,17 @@ def compute_tax(f, fy, regime, method):
         add("Surcharge", sc)
     add("Health and education cess (4%)", cess)
     add("Tax for the year", due, True)
+    paid = f["paid"] + f.get("tds", 0)
+    if f.get("tds"):
+        add("Less: TDS / TCS deducted by others (Form 26AS)", -f["tds"])
     add("Less: tax already paid from the bank (advance / self-assessment)", -f["paid"])
-    add("Balance to pay" if due - f["paid"] >= 0 else "Refund due", due - f["paid"], True)
-    return dict(lines=lines, due=due, balance=round(due - f["paid"]), total=round(total),
-                carried=carried)
+    add("Balance to pay" if due - paid >= 0 else "Refund due", due - paid, True)
+    return dict(lines=lines, due=due, balance=round(due - paid), total=round(total),
+                carried=carried, gross=round(gross, 2), ded=round(ded, 2), sal=round(sal, 2),
+                prof=prof, business=round(business, 2), spec=spec, other=round(other, 2),
+                stcg=round(stcg, 2), ltcg=round(ltcg, 2), tax_normal=round(tax_normal, 2),
+                rebate=round(rebate, 2), cg_tax=round(stcg_tax + ltcg_tax, 2), sc=round(sc, 2),
+                cess=round(cess, 2))
 
 
 def api_tax(q):
@@ -2521,6 +2533,187 @@ def api_tax(q):
         notes.append("With F&O or intraday income the return is ITR-3, not ITR-4.")
     return dict(fy=fy, owner=owner, figures=f, options=options, best=best, notes=notes,
                 can_44ada=can_44ada, cash_share=round(cash_share, 4))
+
+
+def itr_guide(q):
+    """What to enter on the income-tax portal, schedule by schedule, for the cheapest legal option."""
+    t = api_tax(q)
+    fy, owner, f, best = t["fy"], t["owner"], t["figures"], t["best"]
+    ay = f"{fy + 1}-{str(fy + 2)[2:]}"
+    books = best["method"] == "books"
+    con = db()
+    tds = tds_rows(con, fy, owner)
+    a, b = fy_range(fy)
+    challans = [dict(r) for r in con.execute(
+        "SELECT t.date, t.debit amount, t.narration, x.name acct FROM txns t JOIN accounts x ON x.id=t.account_id"
+        " WHERE t.category='Income tax and TDS paid' AND x.owner=? AND t.date BETWEEN ? AND ?"
+        " AND t.debit>0 ORDER BY t.date", (owner, a, f"{fy + 1}-12-31"))]
+    banks = [r[0] for r in con.execute("SELECT name FROM accounts WHERE owner=? AND kind='Bank' ORDER BY name",
+                                       (owner,))]
+    con.close()
+    for c in challans:
+        c["kind"] = "Advance tax (this year)" if c["date"] <= b else \
+            "After the year: self-assessment for this year, or advance tax for next (check the challan's AY)"
+    total = best["total"]
+    why = []
+    if f["fno"] or f["intraday"]:
+        why.append("F&O or intraday trading")
+    if f["stcg"]:
+        why.append("short-term capital gains")
+    if f["ltcg"] and (fy < 2024 or f["ltcg"] > 125000):
+        why.append("long-term gains" + ("" if fy < 2024 else " above Rs 1.25 lakh"))
+    if books:
+        why.append("clinic income from the books, not 44ADA")
+    if best["carried"]:
+        why.append("losses to carry forward")
+    if total > 5000000:
+        why.append("income above Rs 50 lakh")
+    if not f["receipts"] and not f["fno"] and not f["intraday"]:
+        form = "ITR-2" if (f["stcg"] or f["ltcg"]) else "ITR-1"
+        form_why = "No business or professional income this year."
+    elif why:
+        form, form_why = "ITR-3", "Because of " + ", ".join(why) + "."
+    else:
+        form, form_why = "ITR-4 (Sugam)", "Clinic income under 44ADA with only salary, interest and dividends."
+    audit = f["turnover"] > 1e8 or (books and (not t["can_44ada"] or best["prof"] < f["receipts"] * 0.5))
+    due = f"31 October {fy + 1}" if audit else f"31 July {fy + 1}"
+    regime = "New regime" if best["regime"] == "new" else "Old regime"
+    regime_note = ("New regime is the default; nothing to file for it." if best["regime"] == "new" else
+                   f"Old regime is cheaper. With clinic income, file Form 10-IEA on the portal "
+                   f"(e-File, Income Tax Forms) before {due}, then file the return. Once you leave the "
+                   f"new regime with business income, you can come back to it only once.")
+    rows = []  # (schedule, field, value, note)
+    add = lambda s, k, v, n="": rows.append(dict(schedule=s, field=k, value=None if v is None else round(v, 2), note=n))
+    add("General", "Assessment year", None, f"AY {ay} (FY {fy}-{str(fy + 1)[2:]})")
+    add("General", "Form", None, form)
+    add("General", "Tax regime", None, regime + (" (Form 10-IEA first)" if best["regime"] == "old" else ""))
+    add("General", "Nature of profession", None, "Search 'Medical' in the code list and pick the doctor / "
+        "medical professional entry")
+    if f["salary"]:
+        add("Schedule S (Salary)", "Gross salary (17(1))", f["salary"], "Match Form 16 / 26AS section 192")
+        add("Schedule S (Salary)", "Standard deduction 16(ia)", min(tax_rules(fy, best["regime"])["std"], f["salary"]))
+        if best["regime"] == "old" and f["ptax"]:
+            add("Schedule S (Salary)", "Professional tax 16(iii)", min(f["ptax"], 2500))
+    if not f["receipts"]:
+        pass
+    elif not books:
+        bank = f["receipts"] - f["cash"]
+        s = "Schedule BP: 44ADA" if form.startswith("ITR-4") else "Part A-P&L: No account case, 44ADA"
+        add(s, "Gross receipts by bank / UPI / cheque", bank)
+        add(s, "Gross receipts in cash", f["cash"])
+        add(s, "Total gross receipts", f["receipts"])
+        add(s, "Presumptive income (50%)", best["prof"], "You may declare more, never less without books and audit")
+    else:
+        add("Part A-P&L (books)", "Receipts from profession", f["receipts"])
+        add("Part A-P&L (books)", "Expenses", f["expenses"], "Head by head from the Profit & Loss A/c below")
+        add("Part A-P&L (books)", "Depreciation (Schedule DEP)", f["dep"])
+        add("Part A-P&L (books)", "Net profit", best["prof"])
+    if f["fno"] or f["turnover"]:
+        s = "Part A-P&L: No account case, other business (F&O)"
+        add(s, "Turnover (absolute sum of profits and losses)", f["turnover"])
+        add(s, "Net profit / loss after charges", f["fno"], "From each broker's tax P&L, in the Trading tab")
+    if f["intraday"]:
+        add("Schedule BP: Speculative", "Intraday profit / loss", f["intraday"])
+    try:
+        lb = dict(ledger_balances({"fy": [str(fy)], "owner": [owner]}))
+    except Exception:
+        lb = {}
+    bal = lambda *gs: sum(i["closing"] for g in gs for i in lb.get(g, []))
+    fp = "Financial particulars at 31 March " + str(fy + 1)
+    for label, v in (("Sundry debtors", bal("Sundry Debtors")), ("Sundry creditors", -bal("Sundry Creditors")),
+                     ("Cash in hand", bal("Cash-in-Hand")), ("Balance with banks", bal("Bank Accounts")),
+                     ("Loans and advances given", bal("Loans & Advances (Asset)")),
+                     ("Secured loans", -bal("Secured Loans")), ("Unsecured loans", -bal("Unsecured Loans")),
+                     ("Fixed assets", bal("Fixed Assets") - f["dep"]),
+                     ("Other current liabilities", -bal("Current Liabilities", "Duties & Taxes", "Provisions")),
+                     ("Stock in trade", 0.0)):
+        if not f["receipts"] or books:  # with full books, Part A-BS takes the balance sheet instead
+            break
+        add(fp, label, round(v, 2), "Required for 44ADA (no account case)" if label == "Sundry debtors" else "")
+    if books:
+        add("Part A-BS", "Balance sheet", None, "Copy from the Balance Sheet in the Tally view below")
+    if f["interest"] or f["dividends"] or f["other"]:
+        add("Schedule OS", "Savings and FD interest", f["interest"], "Check AIS for interest the bank reported")
+        add("Schedule OS", "Dividends", f["dividends"], "Quarter-wise split is asked; see AIS")
+        add("Schedule OS", "Other income", f["other"])
+    if f["stcg"] or f["ltcg"]:
+        add("Schedule CG", "Short-term gains on shares / equity funds (111A)", f["stcg"])
+        add("Schedule CG / 112A", "Long-term gains on shares / equity funds (112A)", f["ltcg"],
+            "Schedule 112A: scrip-wise only for shares bought before 1 Feb 2018")
+    if best["regime"] == "old":
+        add("Schedule VI-A", "80C", min(f["d80c"], 150000), "LIC, term insurance, ELSS, PPF, school fees")
+        add("Schedule VI-A", "80D", min(f["d80d"], 25000), "Health insurance")
+        add("Schedule VI-A", "80G", f["d80g"], "Needs the trust's PAN and receipt")
+        add("Schedule VI-A", "80TTA", min(f["interest"], 10000), "Savings bank interest only")
+    for label, v in best["carried"]:
+        add("Schedule CFL", label + " to carry forward", v, "Only if filed by " + due)
+    for r in sorted(tds, key=lambda r: (not r["section"].startswith("192"), r["source"], -r["tds"])):
+        add("Schedule TDS1 (salary)" if r["section"].startswith("192") else
+            ("Schedule TCS" if r["source"] == "TCS" else "Schedule TDS2"),
+            f"{r['deductor'] or r['tan']} ({r['tan']}{', ' + r['section'] if r['section'] else ''})", r["tds"],
+            f"Amount paid {r['paid']:,.0f}; claim in this year")
+    for c in challans:
+        add("Schedule IT", f"Challan {c['date']}", c["amount"], c["kind"] + ". BSR code and serial from the challan")
+    s = "Part B-TTI (tax)"
+    add(s, "Gross total income", best["gross"] + best["stcg"] + best["ltcg"])
+    add(s, "Deductions", best["ded"])
+    add(s, "Total income", best["total"], "Rounded to the nearest 10 on the portal")
+    add(s, "Tax at slab rates", best["tax_normal"])
+    if best["rebate"]:
+        add(s, "Rebate 87A", best["rebate"])
+    if best["cg_tax"]:
+        add(s, "Tax on capital gains", best["cg_tax"])
+    if best["sc"]:
+        add(s, "Surcharge", best["sc"])
+    add(s, "Cess 4%", best["cess"])
+    add(s, "Tax for the year", best["due"], "The portal adds 234A/B/C interest if advance tax fell short")
+    add(s, "TDS / TCS (26AS)", f["tds"])
+    add(s, "Advance / self-assessment tax", f["paid"])
+    add(s, "Balance to pay" if best["balance"] >= 0 else "Refund", abs(best["balance"]),
+        "Pay by Challan 280 (e-Pay Tax, Self-assessment 300) before submitting" if best["balance"] > 0 else "")
+    for n in banks:
+        add("Bank accounts", n, None, "List every account; pre-validate one for the refund")
+    if total > 5000000:
+        add("Schedule AL", "Assets and liabilities", None, "Needed as income is above Rs 50 lakh")
+    steps = [
+        "Log in at incometax.gov.in with PAN and password (or Aadhaar OTP).",
+        f"Download Form 26AS (e-File, Income Tax Returns, View Form 26AS, TRACES, export as Text) and the AIS "
+        f"(Services, AIS, download JSON). Upload either one here so TDS is counted.",
+        "Check AIS for income the books missed: interest, dividends, share sales, large cash deposits.",
+        "Profile: confirm address, and that each bank account is pre-validated (needed for a refund).",
+        regime_note,
+        f"e-File, Income Tax Returns, File Income Tax Return: AY {ay}, Online, Individual, {form}.",
+        "Fill each schedule with the figures below; most of General, TDS and OS are prefilled, so compare.",
+        "Pay any balance first (e-Pay Tax, Challan 280, Self-assessment tax 300) and add it in Schedule IT.",
+        "Preview, submit, and e-verify with Aadhaar OTP within 30 days.",
+        f"Due date {due}. A late return (up to 31 December {fy + 1}) costs Rs 5,000 (Rs 1,000 if income is "
+        f"under 5 lakh) and losses can no longer be carried forward.",
+    ]
+    return dict(fy=fy, owner=owner, ay=ay, form=form, form_why=form_why, due=due, regime=regime,
+                regime_note=regime_note, best=best, rows=rows, tds=tds, challans=challans, steps=steps,
+                notes=t["notes"])
+
+
+def itr_filing_xlsx(q):
+    g = itr_guide(q)
+    sheet = [("t", [f"ITR filing sheet: {g['owner']}, AY {g['ay']}"]), ("r", []),
+             ("b", ["Form", g["form"]]), ("r", ["Why", g["form_why"]]),
+             ("b", ["Regime", g["regime"]]), ("r", ["", g["regime_note"]]),
+             ("b", ["Due date", g["due"]]), ("r", []),
+             ("h", ["Schedule", "Field", "Amount", "Note"])]
+    sheet += [("r", [r["schedule"], r["field"], r["value"] if r["value"] is not None else "", r["note"]])
+              for r in g["rows"]]
+    tds = [("h", ["Deductor", "TAN", "Section", "Type", "Amount paid", "Tax deducted"])]
+    tds += [("r", [r["deductor"], r["tan"], r["section"], r["source"], float(r["paid"]), float(r["tds"])])
+            for r in g["tds"]]
+    tds.append(("b", ["Total", "", "", "", float(sum(r["paid"] for r in g["tds"])),
+                      float(sum(r["tds"] for r in g["tds"]))]))
+    steps = [("h", ["#", "Step"])] + [("r", [str(i), s]) for i, s in enumerate(g["steps"], 1)]
+    steps += [("r", []), ("b", ["", "Notes"])] + [("r", ["", n]) for n in g["notes"]]
+    work = [("h", ["Tax working (" + g["regime"] + ", " + g["best"]["method"] + ")", "Amount"])]
+    work += [("b" if l["bold"] else "r", [l["label"], float(l["value"])]) for l in g["best"]["lines"]]
+    return make_xlsx([("Filing sheet", sheet, [34, 52, 16, 70], False), ("Tax working", work, [70, 16], True),
+                      ("TDS 26AS", tds, [40, 14, 10, 8, 16, 16], True), ("Steps", steps, [5, 120], True)])
 
 
 
@@ -2980,6 +3173,116 @@ def parse_itr(name, data, password):
     if not info["figures"]:
         raise ValueError("This JSON does not look like an income tax return.")
     return info, flat
+
+
+# ---------- Form 26AS / AIS: tax deducted by others (TDS) ----------
+
+TAN_RE = re.compile(r"\b[A-Z]{4}\d{5}[A-Z]\b")
+TDS_SECTION = re.compile(r"\b(19[2-6][A-Z]{0,3}|206C[A-Z]{0,2})\b")
+
+
+def _tds_line(fields, part, out):
+    """One deductor's summary line: name, TAN and its amounts (paid, deducted, deposited)."""
+    i = next((k for k, f in enumerate(fields) if TAN_RE.fullmatch(f.strip())), None)
+    if i is None:
+        sec = next((m.group(1) for f in fields for m in [TDS_SECTION.fullmatch(f.strip())] if m), "")
+        if sec and out and not out[-1]["section"]:
+            out[-1]["section"] = sec      # the first detail line names the section
+        return
+    nums = [n for n in (num_cell(f) for f in fields[i + 1:] if f.strip()) if n is not None]
+    if len(nums) < 2:
+        return
+    paid, tds = (nums[-3], nums[-2]) if len(nums) >= 3 else (nums[-2], nums[-1])
+    name = next((f.strip() for f in reversed(fields[:i]) if f.strip() and num_cell(f) is None), "")
+    name = re.sub(r"^\d+\s+", "", " ".join(name.split()))  # the serial number on a PDF line
+    out.append(dict(deductor=name.title()[:80], tan=fields[i].strip(), section="",
+                    paid=round(paid, 2), tds=round(tds, 2), source="TCS" if part == "B" else "TDS"))
+
+
+def parse_26as_lines(lines, sep):
+    out, part = [], "A"
+    for raw in lines:
+        s = raw.strip()
+        m = re.match(r"(?i)^\^?\s*PART\s*-?\s*([A-H]\d?|[IVX]+)\b", s)
+        if m:  # old 26AS: Part A TDS, B TCS; new 26AS: Part I TDS, VI TCS
+            p = m.group(1).upper()
+            part = {"I": "A", "VI": "B"}.get(p, p)
+            continue
+        if part not in ("A", "B"):        # 15G/H, property, tax paid, refunds: not TDS credits
+            continue
+        if sep:
+            fields = s.split(sep)
+        else:  # a PDF line: name words, then the TAN, then the amounts
+            t = TAN_RE.search(s)
+            fields = ([s[:t.start()], t.group()] + s[t.end():].split()) if t else s.split()
+        _tds_line(fields, part, out)
+    return out
+
+
+def parse_ais_json(obj):
+    out = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            tan = next((str(v) for v in o.values() if isinstance(v, str) and TAN_RE.fullmatch(v.strip())), "")
+            if tan:
+                low = {k.lower(): v for k, v in o.items()}
+                pick = lambda *ws: next((_as_num(v) for k, v in low.items()
+                                         if any(w in k for w in ws) and _as_num(v) is not None), None)
+                tds = pick("tdsdeposit", "taxdeducted", "tdsamount", "tds", "taxcollected")
+                paid = pick("amountpaid", "amtpaid", "creditedamount", "amount", "credited")
+                if tds is not None:
+                    name = next((str(v) for k, v in low.items() if "name" in k and isinstance(v, str)), "")
+                    sec = next((str(v) for k, v in low.items() if "section" in k), "")
+                    out.append(dict(deductor=name.title()[:80], tan=tan.strip(), section=sec[:12],
+                                    paid=round(paid or 0, 2), tds=round(tds, 2), source="TDS"))
+                    return
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(obj)
+    return out
+
+
+def parse_26as(name, data, password):
+    """Form 26AS (TRACES text or PDF) or AIS (JSON or PDF): who deducted tax and how much.
+    Returns (assessment year start or None, rows)."""
+    if len(data) > MAX_BYTES:
+        raise ValueError("File is larger than 15 MB.")
+    if data[:2] == b"PK":  # TRACES gives the text file in a zip locked with the date of birth
+        try:
+            z = zipfile.ZipFile(io.BytesIO(data))
+            inner = next(n for n in z.namelist() if n.lower().endswith((".txt", ".json", ".pdf")))
+            data = z.read(inner, pwd=(password or "").encode() or None)
+        except StopIteration:
+            raise ValueError("This zip file has no 26AS text, JSON or PDF inside.")
+        except (RuntimeError, zipfile.BadZipFile):
+            raise ValueError("Could not open the zip. Its password is the date of birth as DDMMYYYY.")
+    if data[:4] == b"%PDF":
+        lines = pdf_text_lines(data, password)
+        rows = parse_26as_lines(lines, None)
+        text = "\n".join(lines)
+    else:
+        text = data.decode("utf-8-sig", "replace")
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            obj = None
+        rows = parse_ais_json(obj) if obj is not None else parse_26as_lines(text.splitlines(), "^")
+    ay = re.search(r"(?i)assessment\s*year\W{0,5}(20\d\d)\s*-\s*\d\d", text)
+    if not ay:
+        ay = re.search(r"(?i)\"?(?:assessmentyear|ay)\"?\s*[:=]\s*\"?(20\d\d)", text)
+    if not rows:
+        raise ValueError("No tax deducted (TDS) found. Upload Form 26AS (TRACES, View Tax Credit, "
+                         "export as Text or PDF) or the AIS JSON/PDF from the income-tax portal.")
+    return (int(ay.group(1)) - 1 if ay else None), rows
+
+
+def tds_rows(con, fy, owner):
+    return [dict(r) for r in con.execute(
+        "SELECT * FROM tds WHERE fy=? AND owner=? ORDER BY tds DESC", (fy, owner))]
 
 
 # ---------- mutual fund statements ----------
@@ -4680,6 +4983,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(page.encode(), "text/html; charset=utf-8")
             elif u.path == "/api/tax":
                 self.send(api_tax(q))
+            elif u.path == "/api/itr/guide":
+                self.send(itr_guide(q))
+            elif u.path == "/itr-filing.xlsx":
+                fy = int(qget(q, "fy") or fy_of(datetime.now().strftime("%Y-%m-%d")))
+                self.send(itr_filing_xlsx(q), "application/vnd.openxmlformats-officedocument"
+                          ".spreadsheetml.sheet", extra={
+                    "Content-Disposition": f"attachment; filename=itr-filing-AY{fy + 1}-{str(fy + 2)[2:]}.xlsx"})
             elif u.path == "/api/parties":
                 self.send(api_parties(q))
             elif u.path == "/api/coverage":
@@ -4740,6 +5050,37 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(res)
             if u.path == "/api/mail/settings":
                 return self.send(save_mail_settings(json.loads(self.body() or b"{}")))
+            if u.path == "/api/tds/upload":
+                owner = qget(q, "owner") or "Self"
+                fy_file, rows = parse_26as(qget(q, "name"), self.body(), qget(q, "pw"))
+                fy = fy_file if fy_file is not None else int(qget(q, "fy"))
+                now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                with LOCK:
+                    con = db()
+                    con.execute("DELETE FROM tds WHERE fy=? AND owner=? AND source!='Manual'", (fy, owner))
+                    con.executemany("INSERT INTO tds(owner,fy,deductor,tan,section,paid,tds,source,uploaded)"
+                                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                                    [(owner, fy, r["deductor"], r["tan"], r["section"], r["paid"], r["tds"],
+                                      r["source"], now) for r in rows])
+                    con.commit()
+                    con.close()
+                return self.send(dict(fy=fy, found=len(rows), tds=round(sum(r["tds"] for r in rows), 2)))
+            if u.path == "/api/tds":
+                d = json.loads(self.body() or b"{}")
+                with LOCK:
+                    con = db()
+                    if d.get("delete"):
+                        con.execute("DELETE FROM tds WHERE id=?", (int(d["delete"]),))
+                    else:
+                        tan = str(d.get("tan") or "").strip().upper()
+                        con.execute("INSERT INTO tds(owner,fy,deductor,tan,section,paid,tds,source,uploaded)"
+                                    " VALUES(?,?,?,?,?,?,?,'Manual',?)",
+                                    (d.get("owner") or "Self", int(d["fy"]), str(d.get("deductor") or "")[:80],
+                                     tan[:10], str(d.get("section") or "")[:12], float(d.get("paid") or 0),
+                                     float(d.get("tds") or 0), datetime.now().strftime("%Y-%m-%d %H:%M")))
+                    con.commit()
+                    con.close()
+                return self.send({"ok": True})
             if u.path == "/api/mail/fetch":
                 started = start_mail_fetch()
                 return self.send(dict(api_mail(), started=started))
@@ -5322,6 +5663,24 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div id="heads"></div>
   <div id="chead"></div>
   <div class="card scroll" id="taxcard"></div>
+  <div class="card" id="filecard">
+    <div class="row"><h3 class="grow" style="margin:0">File on the income-tax portal</h3>
+      <button id="tds_up">Upload Form 26AS / AIS</button>
+      <button class="pri" id="itr_xlsx">Download filing sheet (Excel)</button></div>
+    <p class="mute" style="margin:6px 0">Upload Form 26AS (TRACES text zip or PDF; the password is your date of birth as
+    DDMMYYYY) or the AIS (JSON or PDF) so tax deducted by banks, hospitals and others is counted. The sheet below lists
+    every figure to enter, schedule by schedule, for the cheapest legal option.</p>
+    <div id="file_head"></div>
+    <details id="file_steps_box"><summary><b>Step by step</b></summary><ol id="file_steps" style="padding-left:22px"></ol></details>
+    <details id="file_tds_box"><summary><b>Tax deducted by others (TDS / TCS)</b> <span class="mute" id="tds_sum"></span></summary>
+      <div class="scroll" id="file_tds"></div>
+      <div class="row" style="margin-top:6px"><input id="tds_name" placeholder="Deductor" class="grow">
+        <input id="tds_tan" placeholder="TAN" size="11"><input id="tds_sec" placeholder="Section" size="6">
+        <input id="tds_paid" placeholder="Amount paid" type="number" size="10"><input id="tds_amt" placeholder="TDS" type="number" size="8">
+        <button id="tds_add">Add</button></div></details>
+    <div class="scroll" id="file_rows" style="margin-top:8px"></div>
+    <input type="file" id="tdsfile" hidden accept=".txt,.zip,.pdf,.json">
+  </div>
   <div class="card" id="itrcard">
     <div class="row"><h3 class="grow" style="margin:0">Previous income tax returns</h3>
       <select id="itr_owner" aria-label="Whose return"></select>
@@ -5706,6 +6065,7 @@ async function loadReport(){
   $('rtable').innerHTML=t;
   await loadItr();
   loadTax().catch(e=>{$('taxcard').innerHTML='<p class="mute">'+esc(e.message)+'</p>';});
+  loadFiling().catch(e=>{$('file_rows').innerHTML='<p class="mute">'+esc(e.message)+'</p>';});
   await loadTally();
 }
 async function loadTally(){
@@ -5759,9 +6119,34 @@ async function loadTax(){
     '. File the return by the due date to keep these losses.</p>';
   if(d.notes.length)h+='<ul class="mute" style="padding-left:18px">'+d.notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul>';
   h+='<p class="mute">Estimate from the books: salary, clinic receipts (cash included), expenses, depreciation, trading P&amp;L, '+
-    'interest and dividends, and the 80C/80D/80G payments sorted in the bank. Tax already paid is what the bank shows paid to CBDT; '+
-    'add TDS from Form 26AS. Interest for late advance tax (234B/C) is not included. Your CA confirms the final figures.</p>';
+    'interest and dividends, and the 80C/80D/80G payments sorted in the bank. Tax already paid is what the bank shows paid to CBDT, '+
+    'plus TDS from the Form 26AS uploaded below. Interest for late advance tax (234B/C) is not included. Your CA confirms the final figures.</p>';
   box.innerHTML=h;}
+async function loadFiling(){
+  const fyv=$('fy').value,owner=$('who').value||'Self';
+  if(!fyv){$('filecard').hidden=true;return;}
+  $('filecard').hidden=false;
+  const g=await api('/api/itr/guide?'+qs({fy:fyv,owner:owner}));
+  $('file_head').innerHTML='<div class="stats" style="margin:8px 0">'+
+    '<div class="card"><span class="mute">Form</span><b>'+esc(g.form)+'</b></div>'+
+    '<div class="card"><span class="mute">Regime</span><b>'+esc(g.regime)+'</b></div>'+
+    '<div class="card"><span class="mute">Due date</span><b>'+esc(g.due)+'</b></div></div>'+
+    '<p class="mute" style="margin:4px 0">'+esc(g.form_why)+' '+esc(g.regime_note)+'</p>';
+  $('file_steps').innerHTML=g.steps.map(s=>'<li style="margin:4px 0">'+esc(s)+'</li>').join('');
+  const tt=g.tds.reduce((a,r)=>a+r.tds,0);
+  $('tds_sum').textContent=g.tds.length?'('+g.tds.length+' deductors, '+inr(tt)+')':'(none yet: upload Form 26AS)';
+  $('file_tds').innerHTML=g.tds.length?'<table><tr><th>Deductor</th><th>TAN</th><th>Section</th><th>Amount paid</th><th>Tax deducted</th><th></th></tr>'+
+    g.tds.map(r=>'<tr><td>'+esc(r.deductor)+' <span class="mute">'+esc(r.source)+'</span></td><td>'+esc(r.tan)+'</td><td>'+esc(r.section)+
+      '</td><td class="num">'+inr(r.paid)+'</td><td class="num">'+inr(r.tds)+'</td><td><button data-tdel="'+r.id+'">Delete</button></td></tr>').join('')+
+    '<tr class="tot"><td colspan="3">Total</td><td class="num">'+inr(g.tds.reduce((a,r)=>a+r.paid,0))+'</td><td class="num">'+inr(tt)+'</td><td></td></tr></table>':'';
+  let h='<table><tr><th style="text-align:left">Field</th><th>Amount</th><th style="text-align:left">Note</th></tr>',last='';
+  for(const r of g.rows){
+    if(r.schedule!==last){h+='<tr class="grp"><td colspan="3">'+esc(r.schedule)+'</td></tr>';last=r.schedule;}
+    h+='<tr><td style="text-align:left">'+esc(r.field)+'</td><td class="num">'+(r.value===null?'':inr(r.value))+
+      '</td><td class="mute" style="text-align:left;white-space:normal;min-width:220px">'+esc(r.note)+'</td></tr>';}
+  $('file_rows').innerHTML=h+'</table><p class="mute">The portal\'s own JSON is not made here on purpose: a wrong upload is a wrong return. '+
+    'Fill the portal online with these figures (most of it is prefilled) or hand this sheet to your CA, who files it with their utility.</p>';
+}
 async function loadItr(){
   const d=await api('/api/itr?'+qs({owner:$('who').value,fy:$('fy').value}));
   keepValue('itr_owner',S.owners.map(o=>'<option'+(o===($('who').value||'Self')?' selected':'')+'>'+esc(o)+'</option>').join(''));
@@ -6333,6 +6718,19 @@ $('itr_files').onclick=run(async e=>{const d=e.target.dataset;
   if(d.ifig){IF=(await api('/api/itr/figures?id='+d.ifig)).rows;$('if_title').textContent='All figures in the file';
     $('if_q').value='';showFigures();$('ifdlg').showModal();}});
 $('if_q').oninput=showFigures;$('if_close').onclick=()=>$('ifdlg').close();
+$('itr_xlsx').onclick=()=>{location.href='/itr-filing.xlsx?'+qs({fy:$('fy').value,owner:$('who').value||'Self'});};
+$('tds_up').onclick=()=>{$('tdsfile').value='';$('tdsfile').click();};
+$('tdsfile').onchange=run(async()=>{const f=$('tdsfile').files[0];if(!f)return;
+  let pw='';if(/\.(pdf|zip)$/i.test(f.name))pw=prompt('Password, if any. For Form 26AS it is your date of birth as DDMMYYYY.')||'';
+  toast('Reading '+f.name+'...');
+  const r=await api('/api/tds/upload?'+qs({name:f.name,pw:pw,owner:$('who').value||'Self',fy:$('fy').value}),f);
+  toast('Read '+r.found+' deductors for '+fyLabel(r.fy)+': TDS '+inr(r.tds));await loadFiling();await loadTax();});
+$('tds_add').onclick=run(async()=>{const amt=+$('tds_amt').value;if(!amt)return toast('Enter the TDS amount');
+  await api('/api/tds',{owner:$('who').value||'Self',fy:+$('fy').value,deductor:$('tds_name').value,tan:$('tds_tan').value,
+    section:$('tds_sec').value,paid:+$('tds_paid').value||0,tds:amt});
+  for(const k of ['name','tan','sec','paid','amt'])$('tds_'+k).value='';await loadFiling();await loadTax();});
+$('file_tds').onclick=run(async e=>{const id=e.target.dataset.tdel;if(!id||!confirm('Delete this TDS line?'))return;
+  await api('/api/tds',{delete:+id});await loadFiling();await loadTax();});
 run(async()=>{await loadState();await loadCash();await loadMail();await loadCoverage();await loadPatientRule();})();
 </script></body></html>"""
 
