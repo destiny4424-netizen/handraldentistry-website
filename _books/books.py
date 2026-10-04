@@ -195,6 +195,137 @@ CARD_RULES = [
     ("AUTOPAY SI", "any", "Credit card payment"),
     ("AUTOPAY RETURNED", "any", "Credit card payment"),
 ]
+FIXED = "Fixed assets (equipment, furniture)"
+# Income-tax blocks of assets and their written-down-value rates.
+DEP_BLOCKS = {
+    "Plant & machinery": 15, "Life-saving medical equipment": 40, "Computers & software": 40,
+    "Furniture & fittings": 10, "Motor car": 15, "Intangible assets (licences)": 25,
+    "Building & interiors": 10,
+}
+# Equipment of a modern dental practice, with the block each belongs to.
+EQUIPMENT = [
+    ("Dental chair unit", "Plant & machinery"), ("Dental operating light / LED", "Plant & machinery"),
+    ("Intraoral X-ray unit", "Plant & machinery"), ("RVG / digital sensor", "Plant & machinery"),
+    ("OPG machine", "Plant & machinery"), ("CBCT scanner", "Plant & machinery"),
+    ("Intraoral scanner", "Plant & machinery"), ("CAD/CAM milling unit", "Plant & machinery"),
+    ("3D printer", "Plant & machinery"), ("Dental microscope", "Plant & machinery"),
+    ("Dental laser", "Plant & machinery"), ("Implant motor / physiodispenser", "Plant & machinery"),
+    ("Piezosurgery unit", "Plant & machinery"), ("Endomotor", "Plant & machinery"),
+    ("Apex locator", "Plant & machinery"), ("Obturation system", "Plant & machinery"),
+    ("Ultrasonic scaler", "Plant & machinery"), ("Air polisher", "Plant & machinery"),
+    ("Airotor / handpieces set", "Plant & machinery"), ("Micromotor", "Plant & machinery"),
+    ("Light cure unit", "Plant & machinery"), ("Intraoral camera", "Plant & machinery"),
+    ("Autoclave (class B)", "Plant & machinery"), ("Ultrasonic cleaner", "Plant & machinery"),
+    ("UV chamber / sterilizer", "Plant & machinery"), ("Pouch sealing machine", "Plant & machinery"),
+    ("Air compressor (oil-free)", "Plant & machinery"), ("Suction unit", "Plant & machinery"),
+    ("Amalgamator", "Plant & machinery"), ("Vacuum former", "Plant & machinery"),
+    ("Model trimmer", "Plant & machinery"), ("Lab micromotor", "Plant & machinery"),
+    ("Ceramic / press furnace", "Plant & machinery"), ("Bleaching light", "Plant & machinery"),
+    ("Electrosurgery unit", "Plant & machinery"), ("Pulse oximeter / BP monitor", "Plant & machinery"),
+    ("Air conditioner", "Plant & machinery"), ("Inverter / generator", "Plant & machinery"),
+    ("RO water purifier", "Plant & machinery"),
+    ("AED / defibrillator", "Life-saving medical equipment"),
+    ("Oxygen cylinder / concentrator", "Life-saving medical equipment"),
+    ("Computer / laptop", "Computers & software"), ("Printer / scanner", "Computers & software"),
+    ("Practice management software", "Computers & software"),
+    ("Reception and cabinet furniture", "Furniture & fittings"),
+    ("Clinic interiors / fit-out", "Furniture & fittings"), ("Signboard", "Furniture & fittings"),
+    ("Car used for the clinic", "Motor car"),
+]
+EQUIP_SUPPLIERS = ["DENTAL", "DENTSPLY", "SIRONA", "IVOCLAR", "GC INDIA", "PINKBLUE", "PINK BLUE",
+                   "CARESTREAM", "PLANMECA", "KAVO", "NSK", "WOODPECKER", "GNATUS", "CONFIDENT",
+                   "CHESA", "SAFEDENT", "WARIDENT", "BIOLASE", "3SHAPE", "MEDIT CORP", "VATECH",
+                   "NEWTOM", "SKANRAY", "DURR", "DUERR", "MAARC", "DENTCARE", "WALDENT",
+                   "BIOMEDENT", "SUPERDENT", "UNICORN DENTA", "DENTAURUM", "COLTENE", "MORITA"]
+
+
+def equip_min(con):
+    """Payments to dental suppliers of this amount or more buy equipment."""
+    try:
+        return float(setting(con, "equip_min", "50000") or 0)
+    except ValueError:
+        return 50000.0
+
+
+def equipment_rows(con):
+    """Every piece of equipment: entries filed under fixed assets and ones added by hand."""
+    have = {r["txn_id"]: dict(r) for r in con.execute("SELECT * FROM equipment WHERE txn_id IS NOT NULL")}
+    out = []
+    for t in con.execute(f"SELECT t.id, t.date, t.narration, t.payee, t.debit, t.credit, a.owner FROM txns t"
+                         f" JOIN accounts a ON a.id=t.account_id WHERE t.category=? AND t.debit>0"
+                         f" ORDER BY t.date", (FIXED,)):
+        e = have.get(t["id"], {})
+        out.append(dict(id=e.get("id"), txn_id=t["id"], date=t["date"], cost=t["debit"],
+                        name=e.get("name") or t["payee"] or t["narration"][:60], narration=t["narration"],
+                        item=e.get("item", ""), block=e.get("block") or "Plant & machinery",
+                        sold=e.get("sold", ""), sale=e.get("sale", 0), owner=t["owner"], manual=False))
+    for e in con.execute("SELECT * FROM equipment WHERE txn_id IS NULL ORDER BY date"):
+        out.append(dict(dict(e), owner="Self", narration="", manual=True,
+                        block=e["block"] or "Plant & machinery"))
+    out.sort(key=lambda r: r["date"] or "")
+    return out
+
+
+def depreciation(rows, upto_fy):
+    """Income-tax depreciation by block, WDV method, year by year up to upto_fy. Equipment
+    put to use for less than 180 days in its first year gets half the rate that year."""
+    years = {}
+    for block, rate in DEP_BLOCKS.items():
+        mine = [r for r in rows if r["block"] == block and r["date"]]
+        if not mine:
+            continue
+        first = min(fy_of(r["date"]) for r in mine)
+        wdv = 0.0
+        for fy in range(first, upto_fy + 1):
+            a, b = fy_range(fy)
+            full = sum(r["cost"] for r in mine if a <= r["date"] <= f"{fy}-10-03")
+            half = sum(r["cost"] for r in mine if f"{fy}-10-03" < r["date"] <= b)
+            sales = sum(r["sale"] or 0 for r in mine if r["sold"] and a <= r["sold"] <= b)
+            base_full = wdv + full - sales
+            base_half = half + min(base_full, 0)
+            base_full = max(base_full, 0)
+            dep = round(base_full * rate / 100 + max(base_half, 0) * rate / 200, 2)
+            close = round(max(base_full + max(base_half, 0) - dep, 0), 2)
+            years.setdefault(fy, []).append(dict(block=block, rate=rate, opening=round(wdv, 2),
+                                                 full=full, half=half, sales=sales, dep=dep, closing=close))
+            wdv = close
+    return years
+
+
+def api_equipment(q):
+    fy = int(qget(q, "fy") or fy_of(datetime.now().strftime("%Y-%m-%d")))
+    con = db()
+    rows = equipment_rows(con)
+    limit = equip_min(con)
+    con.close()
+    dep = depreciation(rows, fy).get(fy, [])
+    return dict(rows=rows, dep=dep, total=round(sum(d["dep"] for d in dep), 2), fy=fy, min=limit,
+                items=EQUIPMENT, blocks=[[k, v] for k, v in DEP_BLOCKS.items()])
+
+
+def save_equipment(con, d):
+    item = str(d.get("item") or "").strip()
+    block = d.get("block") if d.get("block") in DEP_BLOCKS else dict(EQUIPMENT).get(item, "Plant & machinery")
+    vals = dict(item=item, block=block, name=" ".join(str(d.get("name") or item).split()),
+                sold=check_date(d.get("sold")), sale=to_num(d.get("sale")) if str(d.get("sale") or "").strip() else 0,
+                note=str(d.get("note") or "").strip())
+    if d.get("txn_id"):
+        con.execute("INSERT INTO equipment(txn_id,item,block,name,sold,sale,note) VALUES(?,?,?,?,?,?,?)"
+                    " ON CONFLICT(txn_id) DO UPDATE SET item=excluded.item, block=excluded.block,"
+                    " name=excluded.name, sold=excluded.sold, sale=excluded.sale, note=excluded.note",
+                    (int(d["txn_id"]), vals["item"], block, vals["name"], vals["sold"], vals["sale"], vals["note"]))
+        return
+    date, cost = check_date(d.get("date")), to_num(d.get("cost"))
+    if not date or cost <= 0:
+        raise ValueError("Enter the date bought and the cost.")
+    if d.get("id"):
+        con.execute("UPDATE equipment SET item=?,block=?,name=?,date=?,cost=?,sold=?,sale=?,note=? WHERE id=?",
+                    (vals["item"], block, vals["name"], date, cost, vals["sold"], vals["sale"], vals["note"], int(d["id"])))
+    else:
+        con.execute("INSERT INTO equipment(item,block,name,date,cost,sold,sale,note) VALUES(?,?,?,?,?,?,?,?)",
+                    (vals["item"], block, vals["name"], date, cost, vals["sold"], vals["sale"], vals["note"]))
+
+
 # What an accountant files the same way every time (added in database version 14).
 CA_RULES = (
     [(p, "out", "Cash deposit or withdrawal") for p in
@@ -380,6 +511,10 @@ CREATE TABLE IF NOT EXISTS assets(
   valued TEXT DEFAULT '', sold TEXT DEFAULT '', sale REAL DEFAULT 0,
   note TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS equipment(
+  id INTEGER PRIMARY KEY, txn_id INTEGER UNIQUE, item TEXT DEFAULT '', block TEXT DEFAULT '',
+  name TEXT DEFAULT '', date TEXT DEFAULT '', cost REAL DEFAULT 0, sold TEXT DEFAULT '',
+  sale REAL DEFAULT 0, note TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS mail_log(
   id INTEGER PRIMARY KEY, msgid TEXT UNIQUE, date TEXT, subject TEXT, account TEXT DEFAULT '',
   status TEXT, found INTEGER DEFAULT 0, added INTEGER DEFAULT 0, detail TEXT DEFAULT '',
@@ -582,6 +717,14 @@ def init():
                         [r for r in CA_RULES if r[0].lower() not in have])
         apply_rules(con)
         con.execute("PRAGMA user_version=14")
+    if version < 15:  # large payments to dental suppliers are equipment, depreciated
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,'out','Dental materials','')",
+                        [(s,) for s in EQUIP_SUPPLIERS if s.lower() not in have])
+        con.execute("UPDATE txns SET category=? WHERE category='Dental materials' AND debit>=?",
+                    (FIXED, equip_min(con)))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=15")
     con.commit()
     con.close()
 
@@ -1092,6 +1235,10 @@ def apply_rules(con):
         " ORDER BY LENGTH(match) DESC")]
     pay = patient_rule(con)
     small = small_rule(con)
+    try:
+        big_equip = equip_min(con) or float("inf")
+    except sqlite3.OperationalError:
+        big_equip = float("inf")
     n = match_contras(con)
     acols = [c[1] for c in con.execute("PRAGMA table_info(accounts)")]
     kind = "a.kind" if "kind" in acols else "NULL"
@@ -1125,8 +1272,11 @@ def apply_rules(con):
                 continue
             if r["dir"] == "out" and t["debit"] == 0:
                 continue
+            cat = r["category"]
+            if cat == "Dental materials" and (t["debit"] or 0) >= big_equip:
+                cat = FIXED  # a large purchase from a dental supplier is equipment
             con.execute("UPDATE txns SET category=?, clinic=? WHERE id=?",
-                        (r["category"], r["clinic"] or "", t["id"]))
+                        (cat, r["clinic"] or "", t["id"]))
             n += 1
             break
         else:
@@ -3321,6 +3471,14 @@ def itr_rows(q):
     for n in names("expenses"):
         v = val(n, 4) - val(n, 3); exp += v
         rows.append(("", [n, cats[n][2], round(v, 2)]))
+    if qget(q, "fy"):
+        con = db()
+        dep = depreciation(equipment_rows(con), int(qget(q, "fy"))).get(int(qget(q, "fy")), [])
+        con.close()
+        dv = round(sum(x["dep"] for x in dep), 2)
+        if dv:
+            exp += dv
+            rows.append(("", ["Depreciation on equipment (income-tax WDV)", len(dep), dv]))
     rows.append(("b", ["Total clinic expenses", "", round(exp, 2)]))
     rows.append(("", []))
     rows.append(("b", ["C. Net clinic profit (A minus B)", "", round(rec - exp, 2)]))
@@ -3694,6 +3852,13 @@ def tally_pnl(q):
     d = dict(direct_inc=side("Direct Incomes", -1), purchases=side("Purchase Accounts", 1),
              direct_exp=side("Direct Expenses", 1), indirect_inc=side("Indirect Incomes", -1),
              indirect_exp=side("Indirect Expenses", 1))
+    if qget(q, "fy"):
+        con = db()
+        dep = depreciation(equipment_rows(con), int(qget(q, "fy"))).get(int(qget(q, "fy")), [])
+        con.close()
+        total = round(sum(x["dep"] for x in dep), 2)
+        if total:
+            d["indirect_exp"].append(("Depreciation", total))
     tot = lambda k: round(sum(v for _, v in d[k]), 2)
     d["gross"] = round(tot("direct_inc") - tot("purchases") - tot("direct_exp"), 2)
     d["net"] = round(d["gross"] + tot("indirect_inc") - tot("indirect_exp"), 2)
@@ -3964,6 +4129,8 @@ class Handler(BaseHTTPRequestHandler):
                     "Content-Disposition": f"attachment; filename={fname}"})
             elif u.path == "/api/groups":
                 self.send(api_groups(q))
+            elif u.path == "/api/equipment":
+                self.send(api_equipment(q))
             elif u.path == "/api/trading/years":
                 self.send(api_trading_years(q))
             elif u.path == "/api/trading":
@@ -4245,6 +4412,16 @@ class Handler(BaseHTTPRequestHandler):
                     con.execute("DELETE FROM mf_uploads WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/itr/delete":
                     con.execute("DELETE FROM itr_returns WHERE id=?", (int(d["id"]),))
+                elif u.path == "/api/equipment":
+                    save_equipment(con, d)
+                elif u.path == "/api/equipment/delete":
+                    con.execute("DELETE FROM equipment WHERE id=? AND txn_id IS NULL", (int(d["id"]),))
+                elif u.path == "/api/equipment/min":
+                    con.execute("INSERT OR REPLACE INTO settings VALUES('equip_min',?)",
+                                (str(to_num(d.get("min")) or 50000),))
+                    con.execute("UPDATE txns SET category=? WHERE category='Dental materials' AND debit>=?",
+                                (FIXED, to_num(d.get("min")) or 50000))
+                    res["changed"] = apply_rules(con)
                 elif u.path == "/api/asset/delete":
                     con.execute("DELETE FROM assets WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/consultant/delete":
@@ -4502,6 +4679,15 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <div id="mf_gains"></div><div id="mf_hold"></div><div id="mf_ups"></div>
     <input type="file" id="mffile" hidden accept=".pdf,.xls,.xlsx,.csv">
   </div>
+  <div class="card scroll" id="eqcard">
+    <div class="row"><h3 class="grow" style="margin:0">Clinic equipment and depreciation</h3>
+      <button class="pri" id="eq_add">Add equipment</button></div>
+    <p class="mute" style="margin:6px 0">Payments to dental suppliers of
+      <input type="number" id="eq_min" min="0" step="1000" style="width:8em"> or more are filed as equipment
+      (fixed assets) and depreciated, not expensed. <button class="link" id="eq_minsave">Save</button><br>
+      Pick what each one is; its income-tax block and rate follow. Add equipment bought before these
+      bank statements, or in cash, with Add equipment.</p>
+    <div id="eq_dep"></div><div id="eq_list"></div></div>
   <div id="alist"></div>
   <p class="mute" id="abank"></p>
   <p class="mute">Short or long term is worked out from the type and how long it was held
@@ -5066,7 +5252,29 @@ function openTrade(id,imp){tAcct=T.rows.find(r=>r.id==id);
   $('tdlg').showModal();}
 
 const fyBounds=y=>[y+'-04-01',(+y+1)+'-03-31'];
+let EQ=null;
+async function loadEquipment(){
+  EQ=await api('/api/equipment?'+qs({fy:$('fy').value}));
+  if(document.activeElement!==$('eq_min'))$('eq_min').value=EQ.min;
+  const fyName=fyLabel(EQ.fy).split(' (')[0];
+  $('eq_dep').innerHTML=EQ.dep.length?'<h3>Depreciation, '+fyName+' (income-tax WDV rates)</h3><table><tr><th>Block</th><th>Rate</th><th>Opening WDV</th>'+
+    '<th>Added, 180+ days</th><th>Added, under 180 days</th><th>Sold</th><th>Depreciation</th><th>Closing WDV</th></tr>'+
+    EQ.dep.map(d=>'<tr><td>'+esc(d.block)+'</td><td class="num">'+d.rate+'%</td><td class="num">'+inr(d.opening)+'</td><td class="num">'+(d.full?inr(d.full):'')+
+      '</td><td class="num">'+(d.half?inr(d.half):'')+'</td><td class="num">'+(d.sales?inr(d.sales):'')+'</td><td class="num"><b>'+inr(d.dep)+'</b></td><td class="num">'+inr(d.closing)+'</td></tr>').join('')+
+    '<tr><td><b>Total</b></td><td></td><td></td><td></td><td></td><td></td><td class="num"><b>'+inr(EQ.total)+'</b></td><td></td></tr></table>'+
+    '<p class="mute">Depreciation is a clinic expense: it is in the Tally P&amp;L and the ITR figures for the year. '+
+    'Equipment bought after 3 October is used under 180 days that year, so it gets half the rate.</p>':
+    '<p class="mute">No equipment yet for '+fyName+' or earlier.</p>';
+  const itemOpts=sel=>'<option value="">What is it?</option>'+EQ.items.map(([i,bl])=>'<option'+(i===sel?' selected':'')+'>'+esc(i)+'</option>').join('');
+  $('eq_list').innerHTML=EQ.rows.length?'<h3>Equipment register</h3><table><tr><th>Bought</th><th>Paid to / name</th><th>Cost</th><th>Equipment</th><th>Block</th><th></th></tr>'+
+    EQ.rows.map((r,i)=>'<tr><td>'+esc(r.date)+'</td><td>'+esc(r.name)+(r.manual?' <span class="chip">added</span>':'')+'</td><td class="num">'+inr(r.cost)+
+      '</td><td><select data-eqi="'+i+'" aria-label="Equipment">'+itemOpts(r.item)+'</select></td><td>'+esc(r.block)+' ('+(EQ.blocks.find(b=>b[0]===r.block)||[0,''])[1]+'%)</td><td>'+
+      (r.manual?'<button class="link" data-eqdel="'+r.id+'">Remove</button>':'')+'</td></tr>').join('')+'</table>':'';
+  $('eq_list').querySelectorAll('[data-eqi]').forEach(s=>s.onchange=run(async()=>{const r=EQ.rows[+s.dataset.eqi];
+    await api('/api/equipment',{txn_id:r.txn_id,id:r.id,item:s.value,name:r.name,date:r.date,cost:r.cost,sold:r.sold,sale:r.sale});await loadEquipment();}));
+  $('eq_list').querySelectorAll('[data-eqdel]').forEach(x=>x.onclick=run(async()=>{await api('/api/equipment/delete',{id:+x.dataset.eqdel});await loadEquipment();}));}
 async function loadAssets(){
+  loadEquipment().catch(e=>toast(e.message));
   const y=$('fy').value,[a,b]=fyBounds(y);
   A=await api('/api/assets?'+qs({owner:$('who').value,fy:y}));
   keepValue('as_type',A.types.map(t=>'<option>'+esc(t)+'</option>').join(''));
@@ -5275,6 +5483,13 @@ async function loadPatientRule(d){
   $('sm_stat').textContent=d.small_count+' entries filed as Personal in all, '+inr(d.small_total)+'.';}
 $('pr_save').onclick=run(async()=>{const d=await api('/api/patient-rule',{on:$('pr_on').checked,max:$('pr_max').value,exclude:$('pr_ex').value,small_on:$('sm_on').checked,small_max:$('sm_max').value});
   toast(d.sorted+' more entries sorted');await loadPatientRule(d);await loadState();});
+$('eq_minsave').onclick=run(async()=>{const r=await api('/api/equipment/min',{min:$('eq_min').value});toast('Saved. '+(r.changed||0)+' entries sorted.');await loadEquipment();});
+$('eq_add').onclick=run(async()=>{
+  const item=prompt('What equipment? e.g. Dental chair unit, Autoclave (class B), Computer / laptop');if(!item)return;
+  const date=prompt('Date bought (YYYY-MM-DD)');if(!date)return;
+  const cost=prompt('Cost in rupees');if(!cost)return;
+  const known=EQ.items.find(([i])=>i.toLowerCase()===item.trim().toLowerCase());
+  await api('/api/equipment',{item:known?known[0]:item.trim(),name:item.trim(),date:date.trim(),cost:cost});await loadEquipment();});
 let MT=null;
 async function loadMail(){
   const d=await api('/api/mail');

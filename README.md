@@ -86,6 +86,14 @@ the app, one per line, and stay on the droplet. Only the accounts listed are imp
 the daughter's account numbers are added under Daughter. Statements that fail are listed
 with the reason and the PDF, and are tried again on every check.
 
+### Clinic equipment and depreciation
+Payments to dental suppliers of Rs 50,000 or more (changeable in Assets) are filed as fixed assets,
+not expenses. In Assets, Clinic equipment and depreciation lists each one; pick what it is from a list
+of modern dental equipment and its income-tax block follows (plant and machinery 15%, computers 40%,
+furniture and interiors 10%, life-saving equipment 40%). Depreciation is worked out every year on
+the WDV method, half rate for equipment used under 180 days in its first year, and counted as a
+clinic expense in the ITR working and the Tally P&L.
+
 ### For the CA (Tally terms)
 Heads are Tally ledgers under Tally groups (Direct/Indirect Incomes and Expenses, Purchase
 Accounts, Capital Account with Drawings, Secured/Unsecured Loans, Current Liabilities,
