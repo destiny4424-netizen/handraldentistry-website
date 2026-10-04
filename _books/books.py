@@ -2027,7 +2027,9 @@ def api_state():
         " SUM(CASE WHEN t.category='' THEN 1 ELSE 0 END) open,"
         " CASE WHEN a.kind='Cash' THEN COALESCE(SUM(t.credit)-SUM(t.debit),0)"
         " ELSE (SELECT balance FROM txns x WHERE x.account_id=a.id"
-        "  ORDER BY date DESC, seq DESC LIMIT 1) END balance"
+        "  ORDER BY date DESC, seq DESC LIMIT 1) END balance,"
+        " (SELECT GROUP_CONCAT(fy) FROM (SELECT fy FROM trading_pnl p WHERE p.account_id=a.id"
+        "  ORDER BY fy)) pnl_years"
         " FROM accounts a LEFT JOIN txns t ON t.account_id=a.id"
         " GROUP BY a.id ORDER BY a.name")]
     rules = [dict(r) for r in con.execute("SELECT * FROM rules ORDER BY id")]
@@ -4975,7 +4977,8 @@ async function loadState(){
   keepValue('dl_bank','<option value="">All accounts</option>'+S.accounts.filter(a=>!$('who').value||a.owner===$('who').value).map(a=>'<option value="'+a.id+'">'+esc(a.name)+' only</option>').join(''));
   $('accts').innerHTML=S.accounts.length?S.accounts.map(a=>
     '<div class="card"><div class="row"><div class="grow"><b>'+esc(a.name)+'</b> <span class="chip">'+esc(a.owner)+'</span> <span class="chip">'+esc(a.kind)+'</span><div class="mute">'+
-    (a.n?a.n+' entries, '+a.first+' to '+a.last:'No statement imported yet')+'</div></div>'+
+    (a.kind==='Trading'?(a.pnl_years?'P&amp;L in: '+String(a.pnl_years).split(',').map(y=>fyLabel(+y).split(' (')[0]).join(', ')+' (see Trading tab)':'No P&amp;L report yet'):
+     a.n?a.n+' entries, '+a.first+' to '+a.last:'No statement imported yet')+'</div></div>'+
     (a.n?'<div class="num"><b>'+inr(a.balance)+'</b></div>':'')+'</div>'+
     '<div class="row" style="margin-top:8px">'+
     (a.open?'<span class="chip none">'+a.open+' unsorted</span>':(a.n?'<span class="chip">All sorted</span>':''))+
