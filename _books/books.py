@@ -1096,7 +1096,7 @@ def smart_statement(link, passwords):
         try:
             page = _get(opener, page_url).decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
-            if e.code in (404, 410):
+            if e.code in (401, 403, 404, 410):  # HDFC answers 401 once a statement is withdrawn
                 raise LinkExpired(EXPIRED)
             raise
         except urllib.error.URLError as e:
