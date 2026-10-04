@@ -389,6 +389,22 @@ MERCHANT_RULES = (
          "CULTFIT", "GYM")
 )
 
+# Seen in the bank's own wording (added in database version 22). Money out only.
+MORE_RULES = (
+    _M("Utilities and phone", "BHARAT CONNECT", "BHARATCONNECT", "AUTOPAYELECTRIC",
+       "ELECTRICITY BILL", "ELECTRICITY SUPPLY", "HUBLI ELECTRIC", "ELECTRICITY BOARD", "KPTCL",
+       "BROADBAND", "FIBERNET", "RECHARGE", "POSTPAID", "PREPAID", "WATER SUPPLY", "GAS BILL",
+       "INDANE", "BHARAT GAS", "HP GAS", "LPG")
+    + _M("Fuel and travel", "GPAY-TOLL", "TOLL PLAZA", "NETC FASTAG", "TOLL")
+    + _M("Trading transfer", "INDMONEYSTOCKS", "INDSTOCKS", "DELTAEXCHANGE", "DELTA EXCHANGE",
+         "EXCELIUM TECH", "MONEYLICIOUS")
+    + _M("Investments", "INDMONEY", "COIN BY ZERODHA", "KUVERA", "ETMONEY", "ET MONEY")
+    + _M("School fees (80C)", "BVV S", "BVVS", "BVV SANGHA", "PUBLIC SCHOOL", "COLLEGE")
+    + _M("Personal", "RAILSBI", "INDIAN RAILWAYS", "TITAN", "TEX MART", "TEXMART", "BAZAAR",
+         "SUPERMARKET", "TEXTILE", "SAREE", "JEWELLER", "SWEETS", "SWIGGY", "ZOMATO", "BOOKMYSHOW", "NETFLIX", "HOTSTAR",
+         "PAYTM TRAVEL", "BUS TICKET", "VRL TRAVELS", "SRS TRAVELS")
+)
+
 # Wallets used to move money from a credit card into the bank (card -> wallet -> account).
 WALLETS = ["PAYZAPP", "PAY ZAPP", "HDFC WALLET", "WALLET TO BANK", "WALLET2BANK"]
 
@@ -787,6 +803,12 @@ def init():
                         " ('Patient receipts','Personal')", (cat, p))
         apply_rules(con)
         con.execute("PRAGMA user_version=21")
+    if version < 22:  # merchants as the bank writes them, e.g. Bharat Connect electricity autopay
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+                        [r for r in MORE_RULES if r[0].lower() not in have])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=22")
     con.commit()
     con.close()
 
@@ -1285,8 +1307,8 @@ def parse_pnl(name, data, password):
 
 
 def apply_rules(con):
-    rules = con.execute(
-        "SELECT * FROM rules ORDER BY LENGTH(pattern) DESC, id").fetchall()
+    rules = [dict(r, flat=re.sub(r"\s+", "", r["pattern"].lower())) for r in con.execute(
+        "SELECT * FROM rules ORDER BY LENGTH(pattern) DESC, id")]
     people = [(head, [m for r in con.execute(f"SELECT match FROM {table}")
                       for m in spellings(r["match"])])
               for table, head in PEOPLE.values()]
@@ -1319,22 +1341,24 @@ def apply_rules(con):
             f"SELECT t.id, t.account_id, t.narration, t.payee, t.debit, t.credit, {kind} kind, {owner} owner FROM txns t"
             " LEFT JOIN accounts a ON a.id=t.account_id WHERE t.category=''").fetchall():
         low = t["narration"].lower()
+        flat = re.sub(r"\s+", "", low)  # statement PDFs wrap long narrations mid-word
         mate = lenders.get((t["payee"] or "").strip())
         if mate:
             con.execute("UPDATE txns SET category=? WHERE id=?", (mate, t["id"]))
             n += 1
             continue
-        hits = [(typ, emi) for m, typ, emi in loans if m in low]
+        has = lambda m: m in low or (len(m) >= 6 and re.sub(r"\s+", "", m) in flat)
+        hits = [(typ, emi) for m, typ, emi in loans if has(m)]
         loan = next((typ for typ, emi in hits if emi and abs(emi - (t["debit"] or 0)) < 1),
                     hits[0][0] if hits else None) or (
-            t["debit"] > 0 and next((c for m, c in policies if m in low), None))
+            t["debit"] > 0 and next((c for m, c in policies if has(m)), None))
         if loan:
             con.execute("UPDATE txns SET category=? WHERE id=?", (loan, t["id"]))
             n += 1
             continue
         head = t["debit"] > 0 and next(
             (h for h, ms in people
-             if any(m.lower() in low or m.upper() == t["payee"] for m in ms)), None)
+             if any(has(m.lower()) or m.upper() == t["payee"] for m in ms)), None)
         if head:
             con.execute("UPDATE txns SET category=? WHERE id=?", (head, t["id"]))
             n += 1
@@ -1343,7 +1367,8 @@ def apply_rules(con):
             if r["field"] == "payee":
                 if r["pattern"] != t["payee"]:
                     continue
-            elif r["pattern"].lower() not in low:
+            elif r["pattern"].lower() not in low and not (
+                    len(r["flat"]) >= 6 and r["flat"] in flat):
                 continue
             if r["dir"] == "in" and t["debit"] > 0:
                 continue
