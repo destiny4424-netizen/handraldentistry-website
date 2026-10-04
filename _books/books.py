@@ -909,8 +909,8 @@ def apply_rules(con):
     people = [(head, [m for r in con.execute(f"SELECT match FROM {table}")
                       for m in spellings(r["match"])])
               for table, head in PEOPLE.values()]
-    loans = [(r["match"].lower(), r["type"]) for r in con.execute(
-        "SELECT match, type FROM loans WHERE LENGTH(match) >= 3 ORDER BY LENGTH(match) DESC")]
+    loans = [(r["match"].lower(), r["type"], r["emi"] or 0) for r in con.execute(
+        "SELECT match, type, emi FROM loans WHERE LENGTH(match) >= 3 ORDER BY LENGTH(match) DESC")]
     policies = [(r["match"].lower(), policy_category(r["type"], r["purpose"])) for r in con.execute(
         "SELECT match, type, purpose FROM policies WHERE LENGTH(match) >= 3"
         " ORDER BY LENGTH(match) DESC")]
@@ -923,7 +923,9 @@ def apply_rules(con):
             f"SELECT t.id, t.narration, t.payee, t.debit, t.credit, {kind} kind, {owner} owner FROM txns t"
             " LEFT JOIN accounts a ON a.id=t.account_id WHERE t.category=''").fetchall():
         low = t["narration"].lower()
-        loan = next((typ for m, typ in loans if m in low), None) or (
+        hits = [(typ, emi) for m, typ, emi in loans if m in low]
+        loan = next((typ for typ, emi in hits if emi and abs(emi - (t["debit"] or 0)) < 1),
+                    hits[0][0] if hits else None) or (
             t["debit"] > 0 and next((c for m, c in policies if m in low), None))
         if loan:
             con.execute("UPDATE txns SET category=? WHERE id=?", (loan, t["id"]))
@@ -2438,13 +2440,22 @@ def api_loans(q):
     loans = [dict(r) for r in con.execute(
         "SELECT * FROM loans" + (" WHERE owner=?" if owner else "") + " ORDER BY closed!='', type, name",
         [owner] if owner else [])]
+    shared = {}
+    for r in con.execute("SELECT LOWER(match) m, COUNT(*) n FROM loans WHERE LENGTH(match) >= 3 GROUP BY 1"):
+        shared[r["m"]] = r["n"] > 1
     out = []
     for l in loans:
         received = paid = 0
         if len(l["match"]) >= 3:
-            r = con.execute("SELECT COALESCE(SUM(credit),0) c, COALESCE(SUM(debit),0) d FROM txns"
-                            " WHERE category=? AND narration LIKE ? AND date BETWEEN ? AND ?",
-                            (l["type"], f"%{l['match']}%", a, b)).fetchone()
+            sql = ("SELECT COALESCE(SUM(credit),0) c, COALESCE(SUM(debit),0) d FROM txns"
+                   " WHERE category=? AND narration LIKE ? AND date BETWEEN ? AND ?")
+            args = [l["type"], f"%{l['match']}%", a, b]
+            if shared.get(l["match"].lower()) and l["emi"]:
+                # Several loans paid through the same bank text (e.g. one app's loans): this
+                # loan's entries are its EMIs and its own disbursement.
+                sql += " AND (ABS(debit-?) < 1 OR ABS(credit-?) < 1)"
+                args += [l["emi"], l["amount"] or -1]
+            r = con.execute(sql, args).fetchone()
             received, paid = r["c"], r["d"]
         y = con.execute("SELECT * FROM loan_years WHERE loan_id=? AND fy=?", (l["id"], fy)).fetchone()
         sched = loan_schedule(l["amount"], l["rate"], l["emi"], l["start"])
