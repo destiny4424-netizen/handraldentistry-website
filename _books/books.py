@@ -383,6 +383,12 @@ MERCHANT_RULES = (
          "CULTFIT", "GYM")
 )
 
+# Money in from these is a loan being paid out (dividends are matched by their own rule first,
+# being longer text, only when the narration says DIVIDEND).
+LENDER_CREDITS = ["IDFC FIRST BANK LIM", "CRED CASH", "KISETSU SAISON", "HDB FINANCIAL",
+                  "CHOLAMANDALAM", "WHIZDM", "NAVI FINSERV", "BAJAJ FINANCE LIMITED-DISB",
+                  "LOAN DISB", "DISBURSAL"]
+
 # Stock brokers: money sent to or received from them (added in database version 12).
 BROKERS = ["KOTAK SEC", "KOTAKSEC", "KOTAK SECURITIES", "ZERODHA", "RAISE SECURITIES",
            "RAISESECURITIES", "ANGEL ONE", "ANGELONE", "ANGEL BROKING", "UPSTOX", "RKSV",
@@ -728,6 +734,12 @@ def init():
     if version < 16:  # card bill payments by netbanking, UPI or cheque
         apply_rules(con)
         con.execute("PRAGMA user_version=16")
+    if version < 17:  # loan pay-outs from lending partners (CRED Cash is lent by IDFC FIRST)
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,'in','Personal loan','')",
+                        [(x,) for x in LENDER_CREDITS if x.lower() not in have])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=17")
     con.commit()
     con.close()
 
@@ -1273,6 +1285,8 @@ def apply_rules(con):
                 continue
             if r["dir"] == "in" and t["debit"] > 0:
                 continue
+            if r["category"] in LOAN_TYPES and "dividend" in low:
+                continue  # a lender that is also a listed company pays dividends too
             if r["dir"] == "out" and t["debit"] == 0:
                 continue
             cat = r["category"]
