@@ -725,6 +725,9 @@ def init():
                     (FIXED, equip_min(con)))
         apply_rules(con)
         con.execute("PRAGMA user_version=15")
+    if version < 16:  # card bill payments by netbanking, UPI or cheque
+        apply_rules(con)
+        con.execute("PRAGMA user_version=16")
     con.commit()
     con.close()
 
@@ -1280,7 +1283,12 @@ def apply_rules(con):
             n += 1
             break
         else:
-            if pay and is_patient_payment(t, low, pay):
+            if t["kind"] == "Credit card" and (t["credit"] or 0) > 0 and not re.search(
+                    REVERSAL + r"|cashback|reward|cash\s*back", low):
+                # Money into a card account is the bill being paid, whatever the bank calls it
+                con.execute("UPDATE txns SET category='Credit card payment' WHERE id=?", (t["id"],))
+                n += 1
+            elif pay and is_patient_payment(t, low, pay):
                 con.execute("UPDATE txns SET category=? WHERE id=?", ("Patient receipts", t["id"]))
                 n += 1
             elif reversal_of(con, t):
