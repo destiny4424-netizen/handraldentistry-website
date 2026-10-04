@@ -2195,6 +2195,102 @@ def api_patient_rule():
     return r
 
 
+# ---------- salary paid in cash, with payment vouchers ----------
+
+_ONES = ("Zero One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve Thirteen Fourteen "
+         "Fifteen Sixteen Seventeen Eighteen Nineteen").split()
+_TENS = "_ _ Twenty Thirty Forty Fifty Sixty Seventy Eighty Ninety".split()
+
+
+def words_upto_99(n):
+    return _ONES[n] if n < 20 else _TENS[n // 10] + ("" if n % 10 == 0 else " " + _ONES[n % 10])
+
+
+def rupees_in_words(v):
+    """12345.50 -> Rupees Twelve Thousand Three Hundred Forty Five and Fifty Paise Only."""
+    n, paise = int(abs(v)), round((abs(v) - int(abs(v))) * 100)
+    parts = []
+    for size, label in ((10000000, "Crore"), (100000, "Lakh"), (1000, "Thousand"), (100, "Hundred")):
+        if n >= size:
+            parts.append((rupees_in_words(n // size).replace("Rupees ", "").replace(" Only", "")
+                          if n // size >= 100 else words_upto_99(n // size)) + " " + label)
+            n %= size
+    if n or not parts:
+        parts.append(words_upto_99(n))
+    text = "Rupees " + " ".join(parts)
+    if paise:
+        text += " and " + words_upto_99(paise) + " Paise"
+    return text + " Only"
+
+
+def cash_salaries(con, fy):
+    a, b = fy_range(fy)
+    return [dict(r) for r in con.execute(
+        "SELECT t.id, t.date, t.narration, t.ref, t.debit, t.clinic, t.note, t.payee FROM txns t"
+        " JOIN accounts a ON a.id=t.account_id WHERE a.kind='Cash' AND t.category=? AND t.debit>0"
+        " AND t.date BETWEEN ? AND ? ORDER BY t.date DESC, t.id DESC", (SALARY, a, b))]
+
+
+def add_cash_salary(con, d):
+    staff = con.execute("SELECT * FROM staff WHERE id=?", (int(d.get("staff") or 0),)).fetchone()
+    if not staff:
+        raise ValueError("Choose the staff member.")
+    date, amount = check_date(d.get("date")), to_num(d.get("amount"))
+    if not date:
+        raise ValueError("Enter the date paid.")
+    if amount <= 0:
+        raise ValueError("Enter the amount paid.")
+    month = str(d.get("month") or "").strip()
+    month_txt = datetime.strptime(month, "%Y-%m").strftime("%B %Y") if re.fullmatch(r"\d{4}-\d{2}", month) else ""
+    fy = fy_of(date)
+    n = con.execute("SELECT COUNT(*) FROM txns WHERE ref LIKE ?", (f"CPV/{fy}-{(fy + 1) % 100:02d}/%",)).fetchone()[0]
+    ref = f"CPV/{fy}-{(fy + 1) % 100:02d}/{n + 1:03d}"
+    note = " ".join(str(d.get("note") or "").split())
+    who = spellings(staff["match"])[0] if spellings(staff["match"]) else staff["name"]
+    narr = " - ".join(x for x in ("Cash salary", staff["name"], month_txt and "for " + month_txt, note) if x)
+    clinic = d.get("clinic") if d.get("clinic") in CLINICS else ""
+    seq = con.execute("SELECT COALESCE(MAX(seq),0)+1 FROM txns").fetchone()[0]
+    h = hashlib.sha1(f"cashsal|{time.time_ns()}|{narr}|{amount}".encode()).hexdigest()
+    con.execute("INSERT INTO txns(account_id,date,narration,ref,debit,credit,balance,category,clinic,"
+                "note,seq,hash,payee) VALUES(?,?,?,?,?,0,0,?,?,?,?,?,?)",
+                (cash_account(con), date, narr, ref, amount, SALARY, clinic, note, seq, h, who.upper()))
+    return ref
+
+
+def voucher_page(con, txn_id):
+    t = con.execute("SELECT t.*, a.kind FROM txns t JOIN accounts a ON a.id=t.account_id WHERE t.id=?",
+                    (txn_id,)).fetchone()
+    if not t or t["kind"] != "Cash" or not (t["debit"] or 0) > 0:
+        raise ValueError("Voucher not found.")
+    parts = t["narration"].split(" - ")
+    name = parts[1] if len(parts) > 1 else t["payee"]
+    towards = "Salary" + (" " + parts[2] if len(parts) > 2 and parts[2].startswith("for ") else "")
+    e = htmllib.escape
+    when = datetime.strptime(t["date"], "%Y-%m-%d").strftime("%d %b %Y")
+    clinic = f" ({e(t['clinic'])} clinic)" if t["clinic"] else ""
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Voucher {e(t['ref'] or '')}</title>
+<style>body{{font:15px/1.5 Georgia,serif;color:#111;background:#fff;margin:0;padding:24px}}
+.v{{max-width:720px;margin:auto;border:2px solid #111;padding:24px 28px}}h1{{font-size:20px;margin:0;text-align:center}}
+.sub{{text-align:center;margin:2px 0 18px;letter-spacing:2px;font-size:13px}}table{{width:100%;border-collapse:collapse}}
+td{{padding:9px 6px;border-bottom:1px dotted #777;vertical-align:top}}td.k{{width:34%;color:#444}}
+.amt{{font-size:22px;font-weight:bold}}.sig{{display:flex;justify-content:space-between;margin-top:56px;gap:24px}}
+.sig div{{flex:1;border-top:1px solid #111;padding-top:6px;text-align:center;font-size:13px}}
+.rev{{border:1px dashed #777;width:90px;height:70px;font-size:11px;color:#777;display:flex;align-items:center;justify-content:center;text-align:center}}
+button{{margin:16px auto 0;display:block;padding:10px 18px;font-size:15px}}@media print{{button{{display:none}}body{{padding:0}}}}</style></head>
+<body><div class="v"><h1>Handral Dentistry</h1><div class="sub">CASH PAYMENT VOUCHER</div>
+<table><tr><td class="k">Voucher no.</td><td>{e(t['ref'] or str(t['id']))}</td></tr>
+<tr><td class="k">Date</td><td>{when}</td></tr>
+<tr><td class="k">Paid to</td><td><b>{e(name)}</b>{clinic}</td></tr>
+<tr><td class="k">Towards</td><td>{e(towards)}{(' - ' + e(t['note'])) if t['note'] else ''}</td></tr>
+<tr><td class="k">Amount</td><td class="amt">{inr_text(t['debit'])}</td></tr>
+<tr><td class="k">In words</td><td>{e(rupees_in_words(t['debit']))}</td></tr>
+<tr><td class="k">Mode</td><td>Cash</td></tr></table>
+<div class="sig"><div>Prepared by</div><div>Authorised by<br><br>Dr Ravichandra K Handral</div>
+<div class="rev">Receiver's signature<br>(revenue stamp above Rs 5,000)</div></div></div>
+<button onclick="print()">Print</button></body></html>"""
+
+
 # ---------- income tax computation (estimate) ----------
 
 # Slabs: (upper limit of the slab, rate %); the last slab has no limit.
@@ -2442,7 +2538,7 @@ def api_cash(q):
     """Cash entries for the year with totals by month and treatment."""
     fy = qget(q, "fy")
     con = db()
-    where, args = "a.kind='Cash'", []
+    where, args = "a.kind='Cash' AND t.credit>0", []  # collections; cash paid out has its own lists
     if fy:
         where += " AND date BETWEEN ? AND ?"
         args += list(fy_range(fy))
@@ -2452,10 +2548,10 @@ def api_cash(q):
         f" ORDER BY date DESC, seq DESC", args)]
     patients = sorted({r[0].title() for r in con.execute(
         "SELECT DISTINCT payee FROM txns t JOIN accounts a ON a.id=t.account_id"
-        " WHERE a.kind='Cash' AND payee NOT IN ('', 'CASH')")})
+        " WHERE a.kind='Cash' AND t.credit>0 AND payee NOT IN ('', 'CASH')")})
     treats = [r[0] for r in con.execute(
         "SELECT DISTINCT ref FROM txns t JOIN accounts a ON a.id=t.account_id"
-        " WHERE a.kind='Cash' AND ref!=''")]
+        " WHERE a.kind='Cash' AND t.credit>0 AND ref!=''")]
     acct = con.execute("SELECT id FROM accounts WHERE kind='Cash' ORDER BY id LIMIT 1").fetchone()
     con.close()
     by_treat, by_month = {}, {}
@@ -4361,6 +4457,19 @@ class Handler(BaseHTTPRequestHandler):
                     "Content-Disposition": f"attachment; filename={fname}"})
             elif u.path == "/api/patient-rule":
                 self.send(api_patient_rule())
+            elif u.path == "/api/cash-salary":
+                con = db()
+                rows = cash_salaries(con, int(qget(q, "fy") or fy_of(datetime.now().strftime("%Y-%m-%d"))))
+                staff = [dict(id=r["id"], name=r["name"]) for r in con.execute("SELECT id, name FROM staff ORDER BY name")]
+                con.close()
+                self.send(dict(rows=rows, staff=staff, total=round(sum(r["debit"] for r in rows), 2)))
+            elif u.path == "/voucher":
+                con = db()
+                try:
+                    page = voucher_page(con, int(qget(q, "id") or 0))
+                finally:
+                    con.close()
+                self.send(page.encode(), "text/html; charset=utf-8")
             elif u.path == "/api/tax":
                 self.send(api_tax(q))
             elif u.path == "/api/coverage":
@@ -4545,6 +4654,8 @@ class Handler(BaseHTTPRequestHandler):
                         "category,clinic,note,seq,hash,payee) VALUES(?,?,?,?,0,?,0,?,?,?,?,?,?)",
                         (acct, date, narr, treat, amount, CASH_HEAD, clinic,
                          note, seq, h, patient.upper()[:30] or "CASH"))
+                elif u.path == "/api/cash-salary":
+                    res["ref"] = add_cash_salary(con, d)
                 elif u.path == "/api/cash/delete":
                     con.execute("DELETE FROM txns WHERE id=? AND account_id IN"
                                 " (SELECT id FROM accounts WHERE kind='Cash')", (int(d["id"]),))
@@ -4887,6 +4998,20 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <p class="mute" style="margin:8px 0 0">Banks often shorten names, and each bank differently. For another spelling, add the same name again with that spelling. If no payments are found, search
     the name in Entries and enter the spelling used there in the third box.</p></div>
   <div class="card" id="stlist"></div>
+  <div class="card" id="cscard">
+    <h3 style="margin:0 0 8px">Salary paid in cash</h3>
+    <div class="filters" style="margin:0">
+      <select id="sc_staff" aria-label="Staff"></select>
+      <input type="date" id="sc_date" aria-label="Date paid">
+      <label class="mute">For <input type="month" id="sc_month" aria-label="Salary month"></label>
+      <input type="number" id="sc_amt" min="0" step="1" placeholder="Amount">
+      <select id="sc_clinic" aria-label="Clinic"></select>
+      <input type="text" id="sc_note" placeholder="Note (optional)">
+      <button class="pri" id="sc_add">Pay and make voucher</button></div>
+    <p class="mute" style="margin:8px 0 0">Each cash payment is filed under Staff salaries from cash in hand and gets a
+      numbered cash payment voucher. Print it and have the staff member sign it (with a revenue stamp above Rs 5,000)
+      and keep it with the books.</p>
+    <div id="sc_list"></div></div>
   <div class="card scroll" id="stmonths" hidden></div>
 </section>
 <section id="consult">
@@ -5452,7 +5577,22 @@ async function loadConsult(){
   const d=await api('/api/consultants?'+qs({owner:$('who').value,fy:$('fy').value}));
   renderPeople($('clist'),d.rows,'consultant','Consultant fees','No consultants added yet. Add a name above, or in the Sort tab choose Consultant fees for a name and it is added here.');
 }
+async function loadCashSalary(){
+  const d=await api('/api/cash-salary?'+qs({fy:$('fy').value}));
+  keepValue('sc_staff','<option value="">Staff member</option>'+d.staff.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join(''));
+  keepValue('sc_clinic',clinicOptions('<option value="">Clinic</option>'));
+  if(!$('sc_date').value)$('sc_date').value=today();
+  if(!$('sc_month').value)$('sc_month').value=today().slice(0,7);
+  $('sc_list').innerHTML=d.rows.length?'<h3 style="margin-top:12px">Cash salaries, '+fyLabel(+$('fy').value).split(' (')[0]+': '+inr(d.total)+'</h3>'+
+    d.rows.map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+r.date+'</b> <span class="chip">'+esc(r.ref||'')+'</span>'+
+      '<div class="mute">'+esc(r.narration.replace(/^Cash salary - /,''))+'</div></div><div class="num out">'+inr(r.debit)+'</div>'+
+      '<a class="link" href="/voucher?id='+r.id+'" target="_blank" rel="noopener">Voucher</a>'+
+      '<button class="link" data-scdel="'+r.id+'">Delete</button></div>').join(''):'';
+  $('sc_list').querySelectorAll('[data-scdel]').forEach(x=>x.onclick=run(async()=>{
+    if(!confirm('Delete this cash salary entry and its voucher?'))return;
+    await api('/api/cash/delete',{id:+x.dataset.scdel});await loadStaff();}));}
 async function loadStaff(){
+  loadCashSalary().catch(e=>toast(e.message));
   const d=await api('/api/staff?'+qs({owner:$('who').value,fy:$('fy').value}));
   renderPeople($('stlist'),d.rows,'staff','Staff salaries','No staff added yet. Add a name above, or in the Sort tab choose Staff salaries for a name and it is added here.');
   const paid=d.rows.filter(c=>c.n),months=fyMonths(),box=$('stmonths');box.hidden=!paid.length;if(!paid.length)return;
@@ -5768,6 +5908,10 @@ $('eq_add').onclick=run(async()=>{
   const cost=prompt('Cost in rupees');if(!cost)return;
   const known=EQ.items.find(([i])=>i.toLowerCase()===item.trim().toLowerCase());
   await api('/api/equipment',{item:known?known[0]:item.trim(),name:item.trim(),date:date.trim(),cost:cost});await loadEquipment();});
+$('sc_add').onclick=run(async()=>{
+  const r=await api('/api/cash-salary',{staff:$('sc_staff').value,date:$('sc_date').value,month:$('sc_month').value,
+    amount:$('sc_amt').value,clinic:$('sc_clinic').value,note:$('sc_note').value});
+  $('sc_amt').value='';$('sc_note').value='';toast('Saved as voucher '+r.ref);await loadStaff();});
 let MT=null;
 async function loadMail(){
   const d=await api('/api/mail');
