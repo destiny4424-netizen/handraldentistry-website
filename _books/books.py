@@ -690,7 +690,41 @@ def lines_to_txns(text):
     return txns
 
 
-def parse_statement(name, data, password):
+CARD_AMOUNT = r"(\+\s*)?(?:C|₹|Rs\.?|INR)?\s*([\d,]+\.\d{2})\s*(Cr|CR|Dr|DR)?\b"
+
+
+def card_lines_to_txns(text):
+    """Credit card statement lines: a date (and maybe a time) first and one amount
+    last, with no running balance. Credits are marked "Cr" or "+"."""
+    out = []
+    for line in text:
+        line = " ".join(line.replace("|", " ").split())
+        m = re.match(rf"({STMT_DATE})(?:\s+\d{{1,2}}:\d{{2}}(?::\d{{2}})?)?\s+(.*)$", line)
+        if not m or not parse_date(m.group(1)) or re.search(STMT_SKIP, line, re.I):
+            continue
+        amounts = list(re.finditer(CARD_AMOUNT, m.group(2)))
+        if not amounts:
+            continue
+        a = amounts[-1]
+        desc = m.group(2)[:a.start()]
+        desc = re.sub(r"(\s+\+?\s*\d{1,6})+\s*$", "", desc)  # reward points
+        desc = re.sub(r"\s+(C|₹|Rs\.?|INR|\+)\s*$", "", desc).strip()
+        if not desc:
+            continue
+        amt = parse_num(a.group(2))
+        credit = bool(a.group(1)) or (a.group(3) or "").lower() == "cr" or bool(
+            re.search(r"payment received|reversal|refund|cashback", desc, re.I))
+        out.append(dict(date=parse_date(m.group(1)), narration=desc, ref="",
+                        debit=0.0 if credit else amt, credit=amt if credit else 0.0, balance=0.0))
+    out.sort(key=lambda t: t["date"])
+    return out
+
+
+def parse_statement(name, data, password, kind="Bank"):
+    if kind == "Credit card" and data[:4] == b"%PDF":
+        txns = card_lines_to_txns(pdf_text_lines(data, password))
+        if txns:
+            return txns
     rows, lines = read_rows(name, data, password)
     try:
         txns = rows_to_txns(rows or lines)
@@ -702,7 +736,10 @@ def parse_statement(name, data, password):
         if data[:4] != b"%PDF":
             raise
     if not txns and data[:4] == b"%PDF":  # tables not found: read the text lines instead
-        txns = lines_to_txns(pdf_text_lines(data, password))
+        text = pdf_text_lines(data, password)
+        txns = lines_to_txns(text)
+        if not txns and re.search(r"credit card", " ".join(text[:60]), re.I):
+            txns = card_lines_to_txns(text)
     if not txns:
         raise ValueError("No entries could be read from this file. Download the statement from "
                          "net banking as Excel or CSV (Delimited) and import that, or send the "
@@ -888,12 +925,33 @@ def apply_rules(con):
 
 
 def import_statement(account_id, name, data, password):
-    txns = parse_statement(name, data, password)
+    con = db()
+    r = con.execute("SELECT kind FROM accounts WHERE id=?", (account_id,)).fetchone()
+    con.close()
+    return import_txns(account_id, parse_statement(name, data, password, r["kind"] if r else "Bank"))
+
+
+def import_txns(account_id, txns):
+    """Add entries to an account, skipping ones already there. An entry counts as
+    already there when the account has one with the same date, amounts and balance,
+    so overlapping monthly and yearly statements, or the same statement as PDF and
+    Excel, are not added twice."""
     with LOCK:
         con = db()
         seq = con.execute("SELECT COALESCE(MAX(seq),0) FROM txns").fetchone()[0]
+        have = {}
+        if txns:
+            for r in con.execute("SELECT date, debit, credit, balance FROM txns WHERE account_id=?"
+                                 " AND date BETWEEN ? AND ?", (account_id, min(t["date"] for t in txns),
+                                                              max(t["date"] for t in txns))):
+                k = (r[0], round(r[1] or 0, 2), round(r[2] or 0, 2), round(r[3] or 0, 2))
+                have[k] = have.get(k, 0) + 1
         seen, added = {}, 0
         for t in txns:
+            k = (t["date"], round(t["debit"], 2), round(t["credit"], 2), round(t["balance"] or 0, 2))
+            if have.get(k):
+                have[k] -= 1
+                continue
             key = "|".join(str(x) for x in (account_id, t["date"], t["narration"],
                                            t["debit"], t["credit"], abs(t["balance"])))
             seen[key] = seen.get(key, 0) + 1
