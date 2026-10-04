@@ -2326,6 +2326,44 @@ def add_cash_salary(con, d):
     return ref
 
 
+def repeat_cash_salary(con, d):
+    """The same cash salary every month to the end of the financial year: the same day of each
+    later month, each for the next salary month, with its own voucher. Months already paid in
+    cash to that person, and dates still to come, are skipped."""
+    if d.get("id"):  # repeat an entry already made
+        t = con.execute("SELECT * FROM txns WHERE id=? AND category=?", (int(d["id"]), SALARY)).fetchone()
+        if not t:
+            raise ValueError("Cash salary entry not found.")
+        parts = t["narration"].split(" - ")
+        staff = con.execute("SELECT id FROM staff WHERE name=?", (parts[1] if len(parts) > 1 else "",)).fetchone()
+        if not staff:
+            raise ValueError("The staff member of this entry is no longer in the staff list.")
+        m = next((datetime.strptime(x[4:], "%B %Y").strftime("%Y-%m") for x in parts[2:]
+                  if x.startswith("for ")), "")
+        d = dict(staff=staff["id"], date=t["date"], month=m, amount=t["debit"], clinic=t["clinic"],
+                 note=" - ".join(x for x in parts[2:] if not x.startswith("for ")))
+        start = 1
+    else:
+        start = 0
+    date, month = check_date(d.get("date")), str(d.get("month") or "")
+    if not date:
+        raise ValueError("Enter the date paid.")
+    end = fy_range(fy_of(date))[1]
+    today = Date.today().isoformat()
+    name = con.execute("SELECT name FROM staff WHERE id=?", (int(d.get("staff") or 0),)).fetchone()
+    refs, k = [], start
+    while add_months(date, k) <= min(end, today):
+        mk = add_months(month + "-01", k)[:7] if re.fullmatch(r"\d{4}-\d{2}", month) else ""
+        label = datetime.strptime(mk, "%Y-%m").strftime("%B %Y") if mk else ""
+        paid = name and label and con.execute(
+            "SELECT 1 FROM txns WHERE category=? AND narration LIKE ? AND narration LIKE ?",
+            (SALARY, f"Cash salary - {name[0]}%", f"%for {label}%")).fetchone()
+        if not paid:
+            refs.append(add_cash_salary(con, dict(d, date=add_months(date, k), month=mk)))
+        k += 1
+    return refs
+
+
 def voucher_page(con, txn_id):
     t = con.execute("SELECT t.*, a.kind FROM txns t JOIN accounts a ON a.id=t.account_id WHERE t.id=?",
                     (txn_id,)).fetchone()
@@ -5231,7 +5269,13 @@ class Handler(BaseHTTPRequestHandler):
                         (acct, date, narr, treat, amount, CASH_HEAD, clinic,
                          note, seq, h, patient.upper()[:30] or "CASH"))
                 elif u.path == "/api/cash-salary":
-                    res["ref"] = add_cash_salary(con, d)
+                    if d.get("repeat") or d.get("id"):
+                        refs = repeat_cash_salary(con, d)
+                        if not refs:
+                            raise ValueError("Every month to the end of the year is already paid.")
+                        res["ref"], res["count"] = refs[0] + (" to " + refs[-1] if len(refs) > 1 else ""), len(refs)
+                    else:
+                        res["ref"] = add_cash_salary(con, d)
                 elif u.path == "/api/cash/delete":
                     con.execute("DELETE FROM txns WHERE id=? AND account_id IN"
                                 " (SELECT id FROM accounts WHERE kind='Cash')", (int(d["id"]),))
@@ -5584,6 +5628,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
       <input type="number" id="sc_amt" min="0" step="1" placeholder="Amount">
       <select id="sc_clinic" aria-label="Clinic"></select>
       <input type="text" id="sc_note" placeholder="Note (optional)">
+      <label class="mute" style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="sc_rep"> Every month till March</label>
       <button class="pri" id="sc_add">Pay and make voucher</button></div>
     <p class="mute" style="margin:8px 0 0">Each cash payment is filed under Staff salaries from cash in hand and gets a
       numbered cash payment voucher. Print it and have the staff member sign it (with a revenue stamp above Rs 5,000)
@@ -6218,7 +6263,11 @@ async function loadCashSalary(){
     d.rows.map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+r.date+'</b> <span class="chip">'+esc(r.ref||'')+'</span>'+
       '<div class="mute">'+esc(r.narration.replace(/^Cash salary - /,''))+'</div></div><div class="num out">'+inr(r.debit)+'</div>'+
       '<a class="link" href="/voucher?id='+r.id+'" target="_blank" rel="noopener">Voucher</a>'+
+      '<button class="link" data-screp="'+r.id+'">Repeat monthly</button>'+
       '<button class="link" data-scdel="'+r.id+'">Delete</button></div>').join(''):'';
+  $('sc_list').querySelectorAll('[data-screp]').forEach(x=>x.onclick=run(async()=>{
+    if(!confirm('Pay the same amount on the same day of every following month up to March, each for the next month, with its own voucher?'))return;
+    const r=await api('/api/cash-salary',{id:+x.dataset.screp});toast(r.count+' months added: '+r.ref);await loadStaff();}));
   $('sc_list').querySelectorAll('[data-scdel]').forEach(x=>x.onclick=run(async()=>{
     if(!confirm('Delete this cash salary entry and its voucher?'))return;
     await api('/api/cash/delete',{id:+x.dataset.scdel});await loadStaff();}));}
@@ -6542,8 +6591,9 @@ $('eq_add').onclick=run(async()=>{
   await api('/api/equipment',{item:known?known[0]:item.trim(),name:item.trim(),date:date.trim(),cost:cost});await loadEquipment();});
 $('sc_add').onclick=run(async()=>{
   const r=await api('/api/cash-salary',{staff:$('sc_staff').value,date:$('sc_date').value,month:$('sc_month').value,
-    amount:$('sc_amt').value,clinic:$('sc_clinic').value,note:$('sc_note').value});
-  $('sc_amt').value='';$('sc_note').value='';toast('Saved as voucher '+r.ref);await loadStaff();});
+    amount:$('sc_amt').value,clinic:$('sc_clinic').value,note:$('sc_note').value,repeat:$('sc_rep').checked});
+  $('sc_amt').value='';$('sc_note').value='';$('sc_rep').checked=false;
+  toast(r.count?r.count+' months saved: vouchers '+r.ref:'Saved as voucher '+r.ref);await loadStaff();});
 async function loadParties(){
   const d=await api('/api/parties?'+qs({owner:$('who').value})),box=$('ln_people');
   if(!d.rows.length){box.innerHTML='<h3>People: money lent and borrowed</h3><p class="mute">Nobody yet. In Sort, put a person\'s payment under '+
