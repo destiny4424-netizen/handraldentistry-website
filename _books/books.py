@@ -2499,11 +2499,21 @@ def api_loans(q):
             sql = ("SELECT COALESCE(SUM(credit),0) c, COALESCE(SUM(debit),0) d FROM txns"
                    " WHERE category=? AND narration LIKE ? AND date BETWEEN ? AND ?")
             args = [l["type"], f"%{l['match']}%", a, b]
-            if shared.get(l["match"].lower()) and l["emi"]:
+            if l["start"]:
+                sql += " AND date >= ?"
+                args.append(l["start"])
+            if shared.get(l["match"].lower()):
                 # Several loans paid through the same bank text (e.g. one app's loans): this
-                # loan's entries are its EMIs and its own disbursement.
-                sql += " AND (ABS(debit-?) < 1 OR ABS(credit-?) < 1)"
-                args += [l["emi"], l["amount"] or -1]
+                # loan's entries are its EMIs and its own disbursement, or, while its EMI is
+                # not known, whatever does not belong to the others.
+                if l["emi"]:
+                    sql += " AND (ABS(debit-?) < 1 OR ABS(credit-?) < 1)"
+                    args += [l["emi"], l["amount"] or -1]
+                else:
+                    others = [o["emi"] for o in loans if o["id"] != l["id"] and o["emi"]
+                              and o["match"].lower() == l["match"].lower()]
+                    sql += "".join(" AND ABS(debit-?) >= 1" for _ in others)
+                    args += others
             r = con.execute(sql, args).fetchone()
             received, paid = r["c"], r["d"]
         y = con.execute("SELECT * FROM loan_years WHERE loan_id=? AND fy=?", (l["id"], fy)).fetchone()
@@ -2693,7 +2703,9 @@ def export_rules():
                staff=[dict(name=r["name"], match=r["match"], role=r["role"] or "")
                       for r in con.execute("SELECT * FROM staff ORDER BY name")],
                consultants=[dict(name=r["name"], match=r["match"])
-                            for r in con.execute("SELECT * FROM consultants ORDER BY name")])
+                            for r in con.execute("SELECT * FROM consultants ORDER BY name")],
+               loans=[{k: r[k] for k in LOAN_FIELDS}
+                      for r in con.execute("SELECT * FROM loans ORDER BY start, name")])
     con.close()
     return out
 
@@ -2706,7 +2718,7 @@ def import_rules(data):
     if not isinstance(d, dict) or not isinstance(d.get("rules", []), list):
         raise ValueError("This is not a rules file. Use a .json file made by Download rules.")
     cats = dict(CATS)
-    added = dict(rules=0, staff=0, consultants=0, skipped=0)
+    added = dict(rules=0, staff=0, consultants=0, loans=0, skipped=0)
     with LOCK:
         con = db()
         have = {(r["pattern"], r["dir"], r["field"] or "narration")
@@ -2732,10 +2744,34 @@ def import_rules(data):
                     continue
                 added[key] += add_person(con, table, x.get("name"), match,
                                          str(x["role"]) if kind == "staff" and x.get("role") else None)
+        names = {r[0].lower() for r in con.execute("SELECT name FROM loans")}
+        for x in d.get("loans", []) if isinstance(d.get("loans"), list) else []:
+            name = " ".join(str(x.get("name") or "").split())
+            if not name or name.lower() in names or x.get("type") not in LOAN_TYPES:
+                added["skipped"] += 1
+                continue
+            v = {k: x.get(k) for k in LOAN_FIELDS}
+            v["name"] = name
+            v["owner"] = v["owner"] if v["owner"] in OWNERS else "Self"
+            v["purpose"] = v["purpose"] if v["purpose"] in LOAN_PURPOSES else "Personal"
+            for k in ("amount", "rate", "emi"):
+                v[k] = to_num(v[k]) if str(v[k] or "").strip() else 0
+            for k in ("start", "closed"):
+                v[k] = check_date(v[k])
+            for k in ("lender", "match", "note"):
+                v[k] = str(v[k] or "").strip()
+            con.execute(f"INSERT INTO loans({','.join(LOAN_FIELDS)}) VALUES({','.join('?' * len(LOAN_FIELDS))})",
+                        [v[k] for k in LOAN_FIELDS])
+            names.add(name.lower())
+            added["loans"] += 1
         added["sorted"] = apply_rules(con)
         con.commit()
         con.close()
     return added
+
+
+LOAN_FIELDS = ("name", "type", "lender", "owner", "purpose", "amount", "start", "rate", "emi",
+               "match", "closed", "note")
 
 
 def books_year(fy, owner):
@@ -5008,7 +5044,7 @@ $('r_export').onclick=()=>{location.href='/rules.json';};
 $('r_import').onclick=()=>{$('rfile').value='';$('rfile').click();};
 $('rfile').onchange=run(async()=>{const f=$('rfile').files[0];if(!f)return;
   const r=await api('/api/rules/import',f);
-  toast('Added '+r.rules+' rules, '+r.staff+' staff, '+r.consultants+' consultants. '+r.sorted+' entries sorted.'+(r.skipped?' '+r.skipped+' already there.':''));
+  toast('Added '+r.rules+' rules, '+r.staff+' staff, '+r.consultants+' consultants, '+(r.loans||0)+' loans. '+r.sorted+' entries sorted.'+(r.skipped?' '+r.skipped+' already there.':''));
   await loadState();});
 $('rlist').onclick=run(async e=>{const id=e.target.dataset.rdel;if(!id)return;
   await api('/api/rule/delete',{id:+id});await loadState();});
