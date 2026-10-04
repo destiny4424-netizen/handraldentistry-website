@@ -195,6 +195,13 @@ CARD_RULES = [
     ("AUTOPAY SI", "any", "Credit card payment"),
     ("AUTOPAY RETURNED", "any", "Credit card payment"),
 ]
+# Stock brokers: money sent to or received from them (added in database version 12).
+BROKERS = ["KOTAK SEC", "KOTAKSEC", "KOTAK SECURITIES", "ZERODHA", "RAISE SECURITIES",
+           "RAISESECURITIES", "ANGEL ONE", "ANGELONE", "ANGEL BROKING", "UPSTOX", "RKSV",
+           "GROWW", "NEXTBILLION", "HDFC SECURITIES", "HDFCSEC", "ICICI SECURITIES", "ICICISEC",
+           "FYERS", "5PAISA", "MOTILAL OSWAL", "SHAREKHAN", "PAYTM MONEY", "SAMCO",
+           "INDIAN CLEARING CORP", "NSE CLEARING", "BSE LIMITED"]
+
 # Added in database version 11: entries common to every account that can sort themselves.
 AUTO_RULES = [
     # credit card bills and card costs
@@ -490,6 +497,16 @@ def init():
                         [r for r in AUTO_RULES if r[0].lower() not in have])
         apply_rules(con)
         con.execute("PRAGMA user_version=11")
+    if version < 12:  # money to and from brokers is a trading transfer, never income or spending
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+                        [(pat, "any", "Trading transfer") for pat in BROKERS if pat.lower() not in have])
+        # The patient and small-payment rules may already have filed broker entries; move them.
+        for pat in BROKERS:
+            con.execute("UPDATE txns SET category='Trading transfer', clinic='' WHERE category IN"
+                        " ('Patient receipts','Personal') AND narration LIKE ?", (f"%{pat}%",))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=12")
     con.commit()
     con.close()
 
@@ -1061,7 +1078,8 @@ def small_rule(con):
 # Money in that is not from a patient, whatever the payer's name.
 NOT_PATIENT = (r"\binterest\b|\bint\.?\s*p(ai)?d\b|\bint\s+cr|refund|revers|\brev\b|cashback|dividend|"
                r"\breturn|cash\s*dep|by\s+cash|\bcdm\b|\bself\b|\bloan\b|disburs|\bemi\b|"
-               r"\bmutual\s+fund|redemption|\bsalary\b|\bchit\b")
+               r"\bmutual\s+fund|redemption|\bsalary\b|\bchit\b|securities|zerodha|groww|upstox|"
+               r"angel\s*one|clearing\s+corp")
 PATIENT_DEFAULT_EXCLUDE = "HANDRAL, RAVICHANDRA K, SUPRIYA H, SUPRIYA ENT, KIRAN HAN, VIDYA HAN, HARISH HAN"
 
 
