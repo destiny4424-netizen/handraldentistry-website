@@ -2820,6 +2820,13 @@ def itr_guide(q):
     con = db()
     tds = tds_rows(con, fy, owner)
     ais = ais_compare(con, fy, owner, f)
+    up = dict(tds=con.execute("SELECT COUNT(*), COALESCE(SUM(tds),0), MAX(uploaded) FROM tds WHERE fy=? AND owner=?"
+                              " AND source!='Manual'", (fy, owner)).fetchone()[:],
+              ais=con.execute("SELECT COUNT(*), MAX(uploaded) FROM ais WHERE fy=? AND owner=? AND source!='Manual'",
+                              (fy, owner)).fetchone()[:],
+              other=[list(r) for r in con.execute(
+                  "SELECT fy, COUNT(*) FROM (SELECT fy FROM tds WHERE owner=? UNION ALL SELECT fy FROM ais WHERE owner=?)"
+                  " WHERE fy!=? GROUP BY fy", (owner, owner, fy))])
     a, b = fy_range(fy)
     challans = [dict(r) for r in con.execute(
         "SELECT t.date, t.debit amount, t.narration, x.name acct FROM txns t JOIN accounts x ON x.id=t.account_id"
@@ -2970,7 +2977,7 @@ def itr_guide(q):
         f"under 5 lakh) and losses can no longer be carried forward.",
     ]
     return dict(fy=fy, owner=owner, ay=ay, form=form, form_why=form_why, due=due, regime=regime,
-                regime_note=regime_note, best=best, rows=rows, tds=tds, challans=challans, steps=steps, ais=ais,
+                regime_note=regime_note, best=best, rows=rows, tds=tds, challans=challans, steps=steps, ais=ais, up=up,
                 tis_cats=TIS_CATS,
                 notes=t["notes"])
 
@@ -6159,6 +6166,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <p class="mute" style="margin:6px 0">Upload Form 26AS (TRACES text zip or PDF; the password is your date of birth as
     DDMMYYYY) or the AIS (JSON or PDF) so tax deducted by banks, hospitals and others is counted. The sheet below lists
     every figure to enter, schedule by schedule, for the cheapest legal option.</p>
+    <div id="up_status" class="card" style="margin:8px 0;padding:10px 12px"></div>
     <div id="file_head"></div>
     <details id="file_steps_box"><summary><b>Step by step</b></summary><ol id="file_steps" style="padding-left:22px"></ol></details>
     <details id="file_tds_box"><summary><b>Tax deducted by others (TDS / TCS)</b> <span class="mute" id="tds_sum"></span></summary>
@@ -6628,6 +6636,12 @@ async function loadFiling(){
     '<div class="card"><span class="mute">Regime</span><b>'+esc(g.regime)+'</b></div>'+
     '<div class="card"><span class="mute">Due date</span><b>'+esc(g.due)+'</b></div></div>'+
     '<p class="mute" style="margin:4px 0">'+esc(g.form_why)+' '+esc(g.regime_note)+'</p>';
+  const u=g.up,tt0=u.tds,aa=u.ais,when=x=>x?x.replace(' ',' at '):'';
+  $('up_status').innerHTML=(tt0[0]||aa[0])?'<b class="in">&#10003; Uploaded for '+esc(fyLabel(g.fy).split(' (')[0])+'</b>'+
+      '<div class="mute">'+(tt0[0]?tt0[0]+' deductor'+(tt0[0]>1?'s':'')+', TDS '+inr(tt0[1])+(tt0[2]?' ('+when(tt0[2])+')':''):'No TDS lines read')+
+      (aa[0]?'; '+aa[0]+' AIS figures'+(aa[1]?' ('+when(aa[1])+')':''):'')+'</div>'
+    :'<b class="out">Nothing uploaded for '+esc(fyLabel(g.fy).split(' (')[0])+' yet</b><div class="mute">Tap Upload AIS / TIS / 26AS'+
+      (u.other.length?'. Found uploads for '+u.other.map(o=>fyLabel(o[0]).split(' (')[0]).join(', ')+': pick that year at the top to see them':'')+'.</div>';
   $('file_steps').innerHTML=g.steps.map(s=>'<li style="margin:4px 0">'+esc(s)+'</li>').join('');
   const tt=g.tds.reduce((a,r)=>a+r.tds,0);
   $('tds_sum').textContent=g.tds.length?'('+g.tds.length+' deductors, '+inr(tt)+')':'(none yet: upload Form 26AS)';
@@ -7312,8 +7326,10 @@ $('itr_xlsx').onclick=()=>{location.href='/itr-filing.xlsx?'+qs({fy:$('fy').valu
 $('tds_up').onclick=()=>{$('tdsfile').value='';$('tdsfile').click();};
 $('tdsfile').onchange=run(async()=>{const f=$('tdsfile').files[0];if(!f)return;
   let pw='';if(/\.(pdf|zip)$/i.test(f.name))pw=prompt('Password, if any. Form 26AS: date of birth as DDMMYYYY. AIS / TIS: PAN in small letters followed by date of birth, e.g. abcde1234f01011980.')||'';
-  toast('Reading '+f.name+'...');
-  const r=await api('/api/tds/upload?'+qs({name:f.name,pw:pw,owner:$('who').value||'Self',fy:$('fy').value}),f);
+  toast('Reading '+f.name+'...');$('up_status').innerHTML='<b>Reading '+esc(f.name)+'...</b>';
+  let r;try{r=await api('/api/tds/upload?'+qs({name:f.name,pw:pw,owner:$('who').value||'Self',fy:$('fy').value}),f);}
+  catch(e){$('up_status').innerHTML='<b class="out">Upload failed: '+esc(f.name)+'</b><div class="mute">'+esc(e.message)+'</div>';throw e;}
+  if(String(r.fy)!==$('fy').value){toast('This file is for '+fyLabel(r.fy)+'; showing that year');$('fy').value=String(r.fy);yearPicked=true;await loadState();await refresh();return;}
   toast('Read '+fyLabel(r.fy)+': '+r.found+' deductors, TDS '+inr(r.tds)+(r.tis?', '+r.tis+' AIS figures':''));await loadFiling();await loadTax();});
 $('ais_add').onclick=run(async()=>{if($('ais_amt').value==='')return toast('Enter the AIS amount');
   await api('/api/ais',{owner:$('who').value||'Self',fy:+$('fy').value,category:$('ais_cat').value,amount:$('ais_amt').value});
