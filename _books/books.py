@@ -2055,6 +2055,8 @@ def txn_filter(q):
         where.append("date BETWEEN ? AND ?"); args += [a, b]
     if g("month"):
         where.append("substr(date,1,7)=?"); args.append(g("month"))
+    if g("before"):
+        where.append("date < ?"); args.append(g("before"))
     if g("cat") == "__none__":
         where.append("category=''")
     elif g("cat"):
@@ -4189,6 +4191,133 @@ def trial_balance(q):
     return out
 
 
+PRIOR_PL = "Profit & Loss A/c (earlier years)"
+ACC_DEP = "Less: accumulated depreciation"
+OPENING_DIFF = "Difference in opening balances"
+
+
+def ledger_moves(q):
+    """Net movement per ledger (debit positive) and each ledger's group."""
+    bal, groups = {}, {}
+    for v in tally_vouchers(q):
+        bal[v["dr"]] = bal.get(v["dr"], 0) + v["amount"]
+        bal[v["cr"]] = bal.get(v["cr"], 0) - v["amount"]
+        groups[v["ledger"]] = v["group"]
+        groups[v["bank"]] = v["bgroup"]
+    return bal, groups
+
+
+def bank_openings(q, start):
+    """Each bank account's real balance at the start of the year, from its statements:
+    the last balance before the year, or the first entry of the year less its amount."""
+    owner = qget(q, "owner")
+    con = db()
+    out = {}
+    for a in con.execute("SELECT id, name, kind FROM accounts WHERE kind='Bank'"
+                         + (" AND owner=?" if owner else ""), [owner] if owner else []):
+        if qget(q, "account") and int(qget(q, "account")) != a["id"]:
+            continue
+        r = con.execute("SELECT balance FROM txns WHERE account_id=? AND date<? ORDER BY date DESC, seq DESC"
+                        " LIMIT 1", (a["id"], start)).fetchone()
+        if r is None:
+            r = con.execute("SELECT balance - credit + debit FROM txns WHERE account_id=? AND date>=?"
+                            " ORDER BY date, seq LIMIT 1", (a["id"], start)).fetchone()
+        if r is not None and r[0] is not None:
+            out[account_ledger(a["name"], a["kind"])[0]] = round(r[0], 2)
+    con.close()
+    return out
+
+
+def ledger_balances(q):
+    """Opening, debits, credits and closing for every ledger in the year. Balance-sheet ledgers
+    open with last year's closing; income and expense ledgers start at nil, and earlier years'
+    profit sits in the capital account. Bank ledgers open with the balance on the statement;
+    any gap between that and the books shows as a difference in opening balances."""
+    fy = qget(q, "fy")
+    rows = {}
+    def row(name, group):
+        return rows.setdefault(name, dict(name=name, group=group, opening=0.0, dr=0.0, cr=0.0))
+    for v in tally_vouchers(q):
+        row(v["dr"], v["group"] if v["dr"] == v["ledger"] else v["bgroup"])["dr"] += v["amount"]
+        row(v["cr"], v["group"] if v["cr"] == v["ledger"] else v["bgroup"])["cr"] += v["amount"]
+    if fy:
+        start = fy_range(fy)[0]
+        prev = {k: v for k, v in q.items() if k not in ("fy", "month")}
+        prev["before"] = [start]
+        moves, groups = ledger_moves(prev)
+        profit = 0.0
+        for name, amt in moves.items():
+            g = groups.get(name, "Suspense A/c")
+            if g in PNL_GROUPS:
+                profit += amt                       # debit positive: expenses less incomes
+            elif abs(amt) >= 0.005:
+                row(name, g)["opening"] += amt
+        con = db()
+        eq = equipment_rows(con)
+        con.close()
+        if qget(q, "owner"):
+            eq = [r for r in eq if r["owner"] == qget(q, "owner")]
+        prior_dep = sum(x["dep"] for y, rs in depreciation(eq, int(fy) - 1).items() for x in rs)
+        if prior_dep:                               # earlier years' depreciation, as a CA posts it
+            profit += prior_dep
+            row(ACC_DEP, "Fixed Assets")["opening"] -= prior_dep
+        if abs(profit) >= 0.005:
+            row(PRIOR_PL, "Capital Account")["opening"] += profit
+        diff = 0.0
+        for name, real in bank_openings(q, start).items():
+            r = row(name, "Bank Accounts")
+            diff += real - r["opening"]
+            r["opening"] = real
+        if abs(diff) >= 0.005:                       # balances that were there before the books began
+            row(OPENING_DIFF, "Capital Account")["opening"] -= diff
+    out = []
+    for g in TALLY_GROUPS + sorted({r["group"] for r in rows.values()} - set(TALLY_GROUPS)):
+        items = []
+        for r in sorted((r for r in rows.values() if r["group"] == g), key=lambda r: r["name"]):
+            r["closing"] = round(r["opening"] + r["dr"] - r["cr"], 2)
+            if any(abs(r[k]) >= 0.005 for k in ("opening", "dr", "cr")):
+                items.append({k: (round(v, 2) if isinstance(v, float) else v) for k, v in r.items()})
+        if items:
+            out.append((g, items))
+    return out
+
+
+def balance_sheet(q):
+    """Liabilities and assets at the year end, from the closing balances."""
+    sides = dict(liabilities=[], assets=[])
+    fy = int(qget(q, "fy"))
+    profit = tally_pnl(q)["net"]
+    lb = ledger_balances(q)
+    pv = -sum(i["closing"] for g, items in lb if g in PNL_GROUPS for i in items)  # profit before depreciation
+    con = db()
+    eq = equipment_rows(con)
+    con.close()
+    if qget(q, "owner"):
+        eq = [r for r in eq if r["owner"] == qget(q, "owner")]
+    dep_now = sum(x["dep"] for x in depreciation(eq, fy).get(fy, []))  # earlier years' is in the ledgers
+    groups = {g: items for g, items in lb}
+    groups.setdefault("Capital Account", [])
+    for g, items in groups.items():
+        if g in PNL_GROUPS:
+            continue
+        total = sum(i["closing"] for i in items)
+        shown = [(i["name"], i["closing"]) for i in items]
+        if g == "Capital Account":
+            total = total - pv + dep_now            # this year's profit, after depreciation
+            shown.append(("Profit for the year" if profit >= 0 else "Loss for the year", -profit))
+        if g == "Fixed Assets" and dep_now:
+            total -= dep_now                        # at written-down value
+            shown.append(("Less: depreciation this year", -dep_now))
+        total = round(total, 2)
+        if abs(total) < 0.005:
+            continue
+        (sides["assets"] if total > 0 else sides["liabilities"]).append(
+            dict(group=g, amount=abs(total), items=shown))
+    return dict(sides, profit=profit,
+                liab_total=round(sum(x["amount"] for x in sides["liabilities"]), 2),
+                asset_total=round(sum(x["amount"] for x in sides["assets"]), 2))
+
+
 def tally_pnl(q):
     """Profit & Loss A/c in Tally's layout, for the clinic ledgers."""
     tb = dict(trial_balance(q))
@@ -4216,18 +4345,18 @@ def tally_report_rows(q):
                   "Narration", "Cost centre"])]
     day += [("", [v["date"], v["type"], v["no"], v["dr"], v["cr"], float(v["amount"]),
                   v["narration"], v["centre"]]) for v in vs]
-    tb = [("t", ["Trial Balance (movement for the period; opening balances not included)"]),
-          ("h", ["Particulars", "Debit", "Credit"])]
-    dr = cr = 0
-    for g, items in trial_balance(q):
-        gd = sum(v for _, v in items if v > 0)
-        gc = -sum(v for _, v in items if v < 0)
-        tb.append(("b", [g, float(round(gd, 2)) if gd else "", float(round(gc, 2)) if gc else ""]))
-        for n, v in items:
-            tb.append(("", ["    " + n, float(v) if v > 0 else "", float(-v) if v < 0 else ""]))
-        dr += gd
-        cr += gc
-    tb.append(("b", ["Grand Total", float(round(dr, 2)), float(round(cr, 2))]))
+    tb = [("t", ["Trial Balance" + (" (opening balances carried from last year)" if qget(q, "fy") else "")]),
+          ("h", ["Particulars", "Opening", "Debit", "Credit", "Closing"])]
+    sd = lambda v: f"{abs(v):,.2f} " + ("Dr" if v > 0 else "Cr") if abs(v) >= 0.005 else ""
+    tot = dict(dr=0, cr=0)
+    for g, items in ledger_balances(q):
+        tb.append(("b", [g, sd(sum(i["opening"] for i in items)), float(round(sum(i["dr"] for i in items), 2)),
+                         float(round(sum(i["cr"] for i in items), 2)), sd(sum(i["closing"] for i in items))]))
+        for i in items:
+            tb.append(("", ["    " + i["name"], sd(i["opening"]), float(i["dr"]) if i["dr"] else "",
+                            float(i["cr"]) if i["cr"] else "", sd(i["closing"])]))
+            tot["dr"] += i["dr"]; tot["cr"] += i["cr"]
+    tb.append(("b", ["Grand Total", "", float(round(tot["dr"], 2)), float(round(tot["cr"], 2)), ""]))
     p = tally_pnl(q)
     pl = [("t", ["Profit & Loss A/c"]), ("h", ["Particulars (Dr)", "Amount", "Particulars (Cr)", "Amount"])]
     left = ([("Purchase Accounts", None)] + p["purchases"] + [("Direct Expenses", None)] + p["direct_exp"]
@@ -4252,10 +4381,16 @@ def tally_report_rows(q):
 def tally_xml(q):
     """A zip with ledgers and vouchers in TallyPrime's XML import format."""
     vs = tally_vouchers(q)
-    ledgers = {}
+    ledgers, opening = {}, {}
     for v in vs:
         ledgers[v["ledger"]] = v["group"]
         ledgers[v["bank"]] = v["bgroup"]
+    if qget(q, "fy"):  # carry last year's closing balances in as opening balances
+        for g, items in ledger_balances(q):
+            for i in items:
+                ledgers.setdefault(i["name"], g)
+                if abs(i["opening"]) >= 0.005:
+                    opening[i["name"]] = i["opening"]
     env = lambda report, body: (
         '<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE><HEADER><TALLYREQUEST>Import Data'
         '</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>' + report +
@@ -4268,7 +4403,10 @@ def tally_xml(q):
         f'<NAME.LIST><NAME>{x(n)}</NAME></NAME.LIST><PARENT>{x(g)}</PARENT>'
         f'<ISBILLWISEON>No</ISBILLWISEON><ISCOSTCENTRESON>'
         f'{"Yes" if g in PNL_GROUPS else "No"}'
-        f'</ISCOSTCENTRESON></LEDGER></TALLYMESSAGE>' for n, g in sorted(ledgers.items()))
+        f'</ISCOSTCENTRESON>'
+        # Tally writes debit balances as negative amounts
+        + (f'<OPENINGBALANCE>{-opening[n]:.2f}</OPENINGBALANCE>' if n in opening else '')
+        + '</LEDGER></TALLYMESSAGE>' for n, g in sorted(ledgers.items()))
     centres = "".join(
         f'<TALLYMESSAGE xmlns:UDF="TallyUDF"><COSTCENTRE NAME="{x(c)}" ACTION="Create">'
         f'<NAME.LIST><NAME>{x(c)}</NAME></NAME.LIST><PARENT/></COSTCENTRE></TALLYMESSAGE>'
@@ -4311,6 +4449,8 @@ def api_tally(q):
     p = tally_pnl(q)
     tb = trial_balance(q)
     return dict(pnl=p, tb=[[g, items] for g, items in tb],
+                full=[[g, items] for g, items in ledger_balances(q)],
+                bs=balance_sheet(q) if qget(q, "fy") else None,
                 suspense=sum(-v for g, items in tb if g == "Suspense A/c" for _, v in items))
 
 
@@ -5510,13 +5650,23 @@ async function loadTally(){
       (p.net>=0?line('Net Profit',p.net):''))+
     col('<tr><th>Particulars (Cr)</th><th>Amount</th></tr>'+rows('Direct Incomes',p.direct_inc)+(p.gross<0?line('Gross Loss c/o',-p.gross):'')+
       (p.gross>=0?line('Gross Profit b/f',p.gross):'')+rows('Indirect Incomes',p.indirect_inc)+(p.net<0?line('Net Loss',-p.net):''))+'</div>';
-  let dr=0,cr=0,t='<tr><th>Particulars</th><th>Debit</th><th>Credit</th></tr>';
-  for(const [g,items] of d.tb){const gd=items.filter(i=>i[1]>0).reduce((a,i)=>a+i[1],0),gc=-items.filter(i=>i[1]<0).reduce((a,i)=>a+i[1],0);dr+=gd;cr+=gc;
-    t+='<tr class="grp"><td>'+esc(g)+'</td><td class="num">'+(gd?inr(gd):'')+'</td><td class="num">'+(gc?inr(gc):'')+'</td></tr>'+
-      items.map(i=>'<tr><td>&nbsp;&nbsp;'+esc(i[0])+'</td><td class="num">'+(i[1]>0?inr(i[1]):'')+'</td><td class="num">'+(i[1]<0?inr(-i[1]):'')+'</td></tr>').join('');}
-  t+='<tr class="tot"><td>Grand Total</td><td class="num">'+inr(dr)+'</td><td class="num">'+inr(cr)+'</td></tr>';
-  $('tally_tb').innerHTML=d.tb.length?'<details style="margin-top:12px"><summary><b>Trial Balance</b> <span class="mute">(movement for the year; opening balances not included)</span></summary>'+
-    '<div class="scroll"><table>'+t+'</table></div></details>'+(d.suspense?'<p class="mute">Suspense A/c has entries not yet sorted; post them in the Sort tab.</p>':''):'';
+  const sd=v=>Math.abs(v)<0.005?'':inr(Math.abs(v))+(v>0?' Dr':' Cr');
+  let dr=0,cr=0,t='<tr><th>Particulars</th><th>Opening</th><th>Debit</th><th>Credit</th><th>Closing</th></tr>';
+  for(const [g,items] of d.full){const s=k=>items.reduce((a,i)=>a+i[k],0);dr+=s('dr');cr+=s('cr');
+    t+='<tr class="grp"><td>'+esc(g)+'</td><td class="num">'+sd(s('opening'))+'</td><td class="num">'+(s('dr')?inr(s('dr')):'')+'</td><td class="num">'+(s('cr')?inr(s('cr')):'')+'</td><td class="num">'+sd(s('closing'))+'</td></tr>'+
+      items.map(i=>'<tr><td>&nbsp;&nbsp;'+esc(i.name)+'</td><td class="num">'+sd(i.opening)+'</td><td class="num">'+(i.dr?inr(i.dr):'')+'</td><td class="num">'+(i.cr?inr(i.cr):'')+'</td><td class="num">'+sd(i.closing)+'</td></tr>').join('');}
+  t+='<tr class="tot"><td>Grand Total</td><td></td><td class="num">'+inr(dr)+'</td><td class="num">'+inr(cr)+'</td><td></td></tr>';
+  let bsh='';
+  if(d.bs){const side=list=>list.map(x=>'<tr class="grp"><td>'+esc(x.group)+'</td><td class="num">'+inr(x.amount)+'</td></tr>'+
+      x.items.map(i=>'<tr><td>&nbsp;&nbsp;'+esc(i[0])+'</td><td class="num mute">'+sd(i[1])+'</td></tr>').join('')).join('');
+    bsh='<details style="margin-top:12px"><summary><b>Balance Sheet</b> <span class="mute">as on 31 March '+(+$('fy').value+1)+'</span></summary>'+
+      '<div class="row" style="align-items:flex-start;gap:16px">'+
+      col('<tr><th>Liabilities</th><th>Amount</th></tr>'+side(d.bs.liabilities)+line('Total',d.bs.liab_total))+
+      col('<tr><th>Assets</th><th>Amount</th></tr>'+side(d.bs.assets)+line('Total',d.bs.asset_total))+'</div>'+
+      '<p class="mute">Closing balances here are next year\'s opening balances. Bank accounts open with the balance on their statements; '+
+      'money that was there before these books began shows as Difference in opening balances (your opening capital).</p></details>';}
+  $('tally_tb').innerHTML=d.full.length?'<details style="margin-top:12px"><summary><b>Trial Balance</b> <span class="mute">(opening balances carried from last year)</span></summary>'+
+    '<div class="scroll"><table>'+t+'</table></div></details>'+bsh+(d.suspense?'<p class="mute">Suspense A/c has entries not yet sorted; post them in the Sort tab.</p>':''):'';
 }
 let IF=[];
 async function loadTax(){
