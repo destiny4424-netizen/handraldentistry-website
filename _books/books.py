@@ -1174,6 +1174,14 @@ def import_txns(account_id, txns):
 MAIL_QUERY = ('from:hdfcbank after:{since} (subject:"Account Statement" OR '
               'subject:"Combined Email Statement" OR subject:"Credit Card Statement") '
               '-subject:"Year End"')
+# Yearly P&L reports that brokers email (on request, or by themselves each year).
+BROKER_MAIL = [("dhan.co", "Dhan"), ("zerodha", "Zerodha"), ("kotaksecurities", "Kotak Securities"),
+               ("kotak.com", "Kotak Securities"), ("angelone", "Angel One"),
+               ("angelbroking", "Angel One"), ("hdfcsec", "HDFC Securities"), ("upstox", "Upstox"),
+               ("groww", "Groww"), ("icicisecurities", "ICICI Securities"), ("fyers", "Fyers")]
+BROKER_QUERY = ("after:{since} has:attachment (" + " OR ".join(f"from:{d}" for d, _ in BROKER_MAIL) +
+                ') (subject:"Profit and Loss" OR subject:"P&L" OR subject:"PnL" OR subject:"Tax P"'
+                ' OR subject:"Capital Gain" OR subject:"Realised" OR subject:"Realized")')
 SMART_HOSTS = ("smartstatements.hdfc.bank.in", "smartstatements.hdfcbank.com")
 SMART_LINK = (r"https://smartstatements\.hdfc(?:\.bank\.in|bank\.com)/HDFCRestFulService/"
               r"GetStatement\.jsp\?jobkey=[^\"'\s<>]+")
@@ -1384,8 +1392,76 @@ def _decode(v):
         return v or ""
 
 
+def broker_of(sender):
+    s = (sender or "").lower()
+    return next((name for dom, name in BROKER_MAIL if dom in s), None)
+
+
+def report_fy(text):
+    """FY of a report period like "from 01 Apr 2025 to 31 Mar 2026"."""
+    m = re.search(rf"({STMT_DATE})\s*(?:to|-|–)\s*({STMT_DATE})", text or "", re.I)
+    start = m and parse_date(m.group(1))
+    return fy_of(start) if start else None
+
+
+def handle_broker_pnl(con, msg, subject, cfg, broker):
+    """A broker's P&L report: fill that broker's year in the Trading tab."""
+    files, body = [], ""
+    for part in msg.walk():
+        name = _decode(part.get_filename() or "")
+        data = None if part.is_multipart() else part.get_payload(decode=True)
+        if not data:
+            continue
+        if name and re.search(r"\.(pdf|xlsx?|csv)$", name, re.I) or data[:4] == b"%PDF":
+            files.append((name or "report.pdf", data))
+        elif part.get_content_type() in ("text/plain", "text/html"):
+            body += data.decode(part.get_content_charset() or "utf-8", "replace")
+    if not files:
+        raise ValueError("No report attached.")
+    body = re.sub(r"(?s)<[^>]+>", " ", body)
+    got, last_err = None, None
+    for name, data in files:
+        pw = pdf_password(data, cfg["pdf_passwords"]) if data[:4] == b"%PDF" else ""
+        try:
+            got = parse_pnl(name, data, pw)
+            break
+        except ValueError as e:
+            last_err = e
+    if not got:
+        raise last_err or ValueError("No P&L figures found in the report.")
+    fy = report_fy(subject) or report_fy(body) or got["fy"]
+    if not fy:
+        raise ValueError("Could not tell which financial year this report is for.")
+    label = f"{broker} {fy_label(fy)}"
+    acct = next((r["id"] for r in con.execute("SELECT id, name FROM accounts WHERE kind='Trading'")
+                 if broker.split()[0].lower() in r["name"].lower()), None)
+    with LOCK:
+        if not acct:
+            con.execute("INSERT OR IGNORE INTO accounts(name,owner,kind) VALUES(?,'Self','Trading')", (broker,))
+            acct = con.execute("SELECT id FROM accounts WHERE name=?", (broker,)).fetchone()[0]
+        old = con.execute("SELECT * FROM trading_pnl WHERE account_id=? AND fy=?", (acct, fy)).fetchone()
+        if old and not (old["note"] or "").startswith("From Gmail") and any(
+                old[k] for k, _ in TRADE_FIELDS):
+            con.commit()
+            return label, 0, 0, "skipped: figures for this year were entered by hand", None, ""
+        keys = [k for k, _ in TRADE_FIELDS]
+        vals = {k: (old[k] if old else 0) or 0 for k in keys}
+        vals.update(got["figures"])
+        note = "From Gmail: " + subject[:120]
+        con.execute(f"INSERT INTO trading_pnl(account_id,fy,{','.join(keys)},note)"
+                    f" VALUES(?,?,{','.join('?' * len(keys))},?) ON CONFLICT(account_id,fy) DO UPDATE SET "
+                    + ", ".join(f"{k}=excluded.{k}" for k in keys + ["note"]),
+                    [acct, fy] + [vals[k] for k in keys] + [note])
+        con.commit()
+    detail = ", ".join(f"{f['field']} {f['value']:,.2f}" for f in got["found"])
+    return label, len(got["found"]), len(got["found"]), detail, None, ""
+
+
 def handle_statement(con, msg, subject, cfg):
     """Import one statement email. Returns (account label, found, added, detail, file, filename)."""
+    broker = broker_of(msg.get("From"))
+    if broker:
+        return handle_broker_pnl(con, msg, subject, cfg, broker)
     pdfs, body = [], ""
     for part in msg.walk():
         name = _decode(part.get_filename() or "")
@@ -1491,9 +1567,12 @@ def fetch_statements():
             raise ValueError("Gmail did not accept the address and App Password. Make a new "
                              "App Password at myaccount.google.com/apppasswords and save it here.")
         M.select(gmail_folder(M), readonly=True)
-        q = MAIL_QUERY.format(since=since)
-        typ, data = M.uid("SEARCH", "X-GM-RAW", '"' + q.replace("\\", "\\\\").replace('"', '\\"') + '"')
-        uids = (data[0] or b"").split()
+        uids = []
+        for query in (MAIL_QUERY, BROKER_QUERY):
+            q = query.format(since=since)
+            typ, data = M.uid("SEARCH", "X-GM-RAW", '"' + q.replace("\\", "\\\\").replace('"', '\\"') + '"')
+            uids += [u for u in (data[0] or b"").split() if u not in uids]
+        uids.sort(key=int)
         for i, uid in enumerate(uids):
             MAIL["message"] = f"Checking email {i + 1} of {len(uids)}"
             typ, meta = M.uid("FETCH", uid, "(X-GM-MSGID)")
@@ -1976,6 +2055,21 @@ def api_trading(q):
                         added=added, withdrawn=withdrawn, net=trade_net(p)))
     con.close()
     return dict(fields=TRADE_FIELDS, rows=out)
+
+
+def api_trading_years(q):
+    """Every broker's figures for every year, newest year first."""
+    owner = qget(q, "owner")
+    con = db()
+    rows = [dict(r) for r in con.execute(
+        "SELECT a.name, t.* FROM trading_pnl t JOIN accounts a ON a.id=t.account_id"
+        + (" WHERE a.owner=?" if owner else "") + " ORDER BY t.fy DESC, a.name",
+        [owner] if owner else [])]
+    con.close()
+    for r in rows:
+        r["net"] = trade_net(r)
+        r["from_mail"] = (r["note"] or "").startswith("From Gmail")
+    return dict(fields=TRADE_FIELDS, rows=rows)
 
 
 def api_assets(q):
@@ -3735,6 +3829,8 @@ class Handler(BaseHTTPRequestHandler):
                     "Content-Disposition": f"attachment; filename={fname}"})
             elif u.path == "/api/groups":
                 self.send(api_groups(q))
+            elif u.path == "/api/trading/years":
+                self.send(api_trading_years(q))
             elif u.path == "/api/trading":
                 self.send(api_trading(q))
             elif u.path == "/api/assets":
@@ -4250,6 +4346,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   Money moved between your banks and the broker is filled in from bank entries sorted as
   Trading transfer.</p>
   <div class="stats" id="tstats"></div>
+  <div class="card scroll" id="tyears" hidden></div>
   <div id="tacc"></div>
   <div class="card"><div class="row">
     <input id="t_new" class="grow" type="text" placeholder="New trading account, e.g. Zerodha">
@@ -4792,7 +4889,22 @@ async function loadCash(){
 let T=null,tAcct=null,A=null,aCur=null;
 const signed=n=>'<span class="num '+(n<0?'out':'in')+'">'+inr(n)+'</span>';
 const stat=(label,v,col)=>'<div class="card"><span class="mute">'+label+'</span><b class="num'+(col?(v<0?' out':' in'):'')+'">'+inr(v)+'</b></div>';
+async function loadTradeYears(){
+  const d=await api('/api/trading/years?'+qs({owner:$('who').value})),box=$('tyears');
+  box.hidden=!d.rows.length;if(!d.rows.length)return;
+  const cols=d.fields.filter(([k])=>k!=='turnover'&&d.rows.some(r=>r[k]));
+  const yrs=[...new Set(d.rows.map(r=>r.fy))];
+  let h='<h3>P&amp;L and charges, every year</h3><table><tr><th>Year</th><th>Broker</th>'+cols.map(([k,l])=>'<th>'+esc(({intraday:'Intraday',fno:'F&O',stcg:'STCG',ltcg:'LTCG',dividends:'Dividends',charges:'Charges'})[k]||l)+'</th>').join('')+'<th>Net</th></tr>';
+  for(const y of yrs){const rs=d.rows.filter(r=>r.fy===y);
+    h+=rs.map(r=>'<tr><td>'+fyLabel(y).split(' (')[0]+'</td><td>'+esc(r.name)+(r.from_mail?' <span class="chip">Gmail</span>':'')+'</td>'+
+      cols.map(([k])=>'<td class="num'+(k==='charges'?'':r[k]<0?' out':r[k]>0?' in':'')+'">'+(r[k]?inr(r[k]):'')+'</td>').join('')+
+      '<td class="num '+(r.net<0?'out':'in')+'"><b>'+inr(r.net)+'</b></td></tr>').join('');
+    if(rs.length>1)h+='<tr><td></td><td><b>Total</b></td>'+cols.map(([k])=>'<td class="num"><b>'+inr(rs.reduce((a,r)=>a+(r[k]||0),0))+'</b></td>').join('')+
+      '<td class="num"><b>'+inr(rs.reduce((a,r)=>a+r.net,0))+'</b></td></tr>';}
+  box.innerHTML=h+'</table><p class="mute">Yearly P&amp;L reports that brokers email you are filled in by themselves (marked Gmail). '+
+    'Figures you entered by hand are never replaced.</p>';}
 async function loadTrading(){
+  loadTradeYears().catch(()=>{});
   const y=$('fy').value;
   T=await api('/api/trading?'+qs({owner:$('who').value,fy:y}));
   const tot=k=>T.rows.reduce((a,r)=>a+(r[k]||0),0);
