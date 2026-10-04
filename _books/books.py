@@ -383,6 +383,9 @@ MERCHANT_RULES = (
          "CULTFIT", "GYM")
 )
 
+# Wallets used to move money from a credit card into the bank (card -> wallet -> account).
+WALLETS = ["PAYZAPP", "PAY ZAPP", "HDFC WALLET", "WALLET TO BANK", "WALLET2BANK"]
+
 # Money in from these is a loan being paid out (dividends are matched by their own rule first,
 # being longer text, only when the narration says DIVIDEND).
 LENDER_CREDITS = ["IDFC FIRST BANK LIM", "CRED CASH", "KISETSU SAISON", "HDB FINANCIAL",
@@ -758,6 +761,15 @@ def init():
                 con.execute("UPDATE txns SET category='' WHERE id=?", (r["id"],))
         apply_rules(con)
         con.execute("PRAGMA user_version=19")
+    if version < 20:  # card -> wallet -> own bank: the user's own money moving, both sides
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,'any','Own account transfer','')",
+                        [(x,) for x in WALLETS if x.lower() not in have])
+        for x in WALLETS:  # the patient or small-payment rules may have taken the bank side
+            con.execute("UPDATE txns SET category='Own account transfer' WHERE category IN"
+                        " ('', 'Patient receipts', 'Personal') AND narration LIKE ?", (f"%{x}%",))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=20")
     con.commit()
     con.close()
 
