@@ -195,6 +195,42 @@ CARD_RULES = [
     ("AUTOPAY SI", "any", "Credit card payment"),
     ("AUTOPAY RETURNED", "any", "Credit card payment"),
 ]
+# Added in database version 11: entries common to every account that can sort themselves.
+AUTO_RULES = [
+    # credit card bills and card costs
+    ("CREDCLUB", "out", "Credit card payment"), ("CRED.CLUB", "out", "Credit card payment"),
+    ("PAYMENT RECEIVED", "in", "Credit card payment"),
+    ("FINANCE CHARGES", "any", "Personal"), ("FINANCE CHARGE", "any", "Personal"),
+    ("LATE PAYMENT FEE", "any", "Personal"), ("LATE FEE", "out", "Personal"),
+    # bank charges
+    ("SMS CHRG", "out", "Bank charges"), ("SMS CHARGES", "out", "Bank charges"),
+    ("SMS ALERT", "out", "Bank charges"), ("DEBIT CARD ANNUAL", "out", "Bank charges"),
+    ("DC ANNUAL FEE", "out", "Bank charges"), ("ATM ANNUAL", "out", "Bank charges"),
+    ("MIN BAL", "out", "Bank charges"), ("NON MAINT", "out", "Bank charges"),
+    ("NON-MAINT", "out", "Bank charges"), ("ACH RTN", "out", "Bank charges"),
+    ("NACH RTN", "out", "Bank charges"), ("ECS RTN", "out", "Bank charges"),
+    ("RTN CHRG", "out", "Bank charges"), ("BOUNCE CHARGE", "out", "Bank charges"),
+    ("CHQ BOOK", "out", "Bank charges"), ("CHEQUE BOOK", "out", "Bank charges"),
+    ("IMPS CHG", "out", "Bank charges"), ("CONSOLIDATED CHARGES", "out", "Bank charges"),
+    # interest and dividends received
+    ("CREDIT INTEREST", "in", "Interest received"), ("INTEREST PAID", "in", "Interest received"),
+    ("INT PD", "in", "Interest received"), ("INT.CR", "in", "Interest received"),
+    ("SB INT", "in", "Interest received"), ("DIVIDEND", "in", "Other income"),
+    # taxes
+    ("CBDT", "out", "Income tax and TDS paid"), ("INCOME TAX", "out", "Income tax and TDS paid"),
+    ("ITNS", "out", "Income tax and TDS paid"), ("TIN/NSDL", "out", "Income tax and TDS paid"),
+    ("PROFESSIONAL TAX", "out", "GST, TDS and professional tax"),
+    # life insurance premiums
+    ("HDFC LIFE", "out", "Life insurance premium (80C)"),
+    ("ICICI PRU", "out", "Life insurance premium (80C)"),
+    ("SBI LIFE", "out", "Life insurance premium (80C)"),
+    ("TATA AIA", "out", "Life insurance premium (80C)"),
+    ("MAX LIFE", "out", "Life insurance premium (80C)"),
+    # plainly personal spending
+    ("SWIGGY", "out", "Personal"), ("ZOMATO", "out", "Personal"), ("NETFLIX", "out", "Personal"),
+    ("BOOKMYSHOW", "out", "Personal"), ("HOTSTAR", "out", "Personal"),
+]
+
 SEED_RULES_2 = [
     ("RAISE SECURITIES", "any", "Trading transfer"),
     ("RAISESECURITIES", "any", "Trading transfer"),
@@ -448,6 +484,12 @@ def init():
                         [r for r in CARD_RULES if r[0] not in have])
         apply_rules(con)
         con.execute("PRAGMA user_version=10")
+    if version < 11:  # more entries that every bank account has, sorted without asking
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+                        [r for r in AUTO_RULES if r[0].lower() not in have])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=11")
     con.commit()
     con.close()
 
