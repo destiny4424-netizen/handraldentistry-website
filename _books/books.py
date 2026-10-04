@@ -750,6 +750,14 @@ def init():
                         " category IN ('', 'Patient receipts') AND narration LIKE ?", (f"%{x}%",))
         apply_rules(con)
         con.execute("PRAGMA user_version=18")
+    if version < 19:  # fixed monthly credits the patient rule took are not patient payments
+        rec = recurring_credits(con)
+        for r in con.execute("SELECT id, account_id, TRIM(payee) p, ROUND(credit) c FROM txns"
+                             " WHERE category='Patient receipts' AND credit>0").fetchall():
+            if (r["account_id"], r["p"], r["c"]) in rec:
+                con.execute("UPDATE txns SET category='' WHERE id=?", (r["id"],))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=19")
     con.commit()
     con.close()
 
@@ -1259,6 +1267,8 @@ def apply_rules(con):
         "SELECT match, type, purpose FROM policies WHERE LENGTH(match) >= 3"
         " ORDER BY LENGTH(match) DESC")]
     pay = patient_rule(con)
+    if pay:
+        pay["recurring"] = recurring_credits(con)
     small = small_rule(con)
     try:
         big_equip = equip_min(con) or float("inf")
@@ -1269,7 +1279,7 @@ def apply_rules(con):
     kind = "a.kind" if "kind" in acols else "NULL"
     owner = "a.owner" if "owner" in acols else "'Self'"
     for t in con.execute(
-            f"SELECT t.id, t.narration, t.payee, t.debit, t.credit, {kind} kind, {owner} owner FROM txns t"
+            f"SELECT t.id, t.account_id, t.narration, t.payee, t.debit, t.credit, {kind} kind, {owner} owner FROM txns t"
             " LEFT JOIN accounts a ON a.id=t.account_id WHERE t.category=''").fetchall():
         low = t["narration"].lower()
         hits = [(typ, emi) for m, typ, emi in loans if m in low]
@@ -1416,6 +1426,14 @@ def patient_rule(con):
     return dict(limit=limit, names=names, own=own_re)
 
 
+def recurring_credits(con):
+    """(account, payer, amount) of 15,000 or more received in three or more different months:
+    a fixed monthly credit such as salary or rent. Smaller fixed instalments (braces) stay patients."""
+    return {(r[0], r[1], r[2]) for r in con.execute(
+        "SELECT account_id, TRIM(payee), ROUND(credit) FROM txns WHERE credit>=15000 AND TRIM(payee)!=''"
+        " GROUP BY 1, 2, 3 HAVING COUNT(DISTINCT substr(date,1,7)) >= 3")}
+
+
 def is_patient_payment(t, low, rule):
     if t["owner"] == "Daughter":  # her account's money is not the practice's income
         return False
@@ -1423,6 +1441,8 @@ def is_patient_payment(t, low, rule):
         return False
     if rule["limit"] and t["credit"] > rule["limit"] + 0.005:
         return False
+    if (t["account_id"], (t["payee"] or "").strip(), round(t["credit"])) in rule.get("recurring", ()):
+        return False  # the same amount from the same payer month after month: salary or rent
     if any(n in low for n in rule["names"]) or re.search(NOT_PATIENT, low) or (
             rule["own"] and rule["own"].search(low)):
         return False
