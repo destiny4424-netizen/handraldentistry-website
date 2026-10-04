@@ -22,6 +22,7 @@ import re
 import sqlite3
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -1071,23 +1072,40 @@ def _input_value(page, name):
     return htmllib.unescape(v.group(1)) if v else ""
 
 
+class LinkExpired(ValueError):
+    """The statement link no longer works; trying again will not help."""
+
+
+EXPIRED = ("HDFC no longer has this statement (its links work for about 3 months). "
+           "Get this period again from NetBanking (Email Statement) and it is imported by itself.")
+
+
 def smart_statement(link, passwords):
     """Open a SmartStatement link. Returns ("pdf", bytes) or ("html", text)."""
     link = htmllib.unescape(link)
     u = urllib.parse.urlparse(link)
     jobkey = urllib.parse.parse_qs(u.query).get("jobkey", [""])[0]
-    base = f"{u.scheme}://{u.netloc}/HDFCRestFulService/"
+    netloc = "smartstatements.hdfc.bank.in" if u.hostname == "smartstatements.hdfcbank.com" else u.netloc
+    base = f"{u.scheme}://{netloc}/HDFCRestFulService/"  # the old hdfcbank.com site is gone
     page_url = base + "GetStatement.jsp?jobkey=" + urllib.parse.quote(jobkey)
     if not passwords:
         raise ValueError("Add the statement passwords first.")
     for pw in passwords:
         opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), _HdfcOnly())
-        page = _get(opener, page_url).decode("utf-8", "replace")
+        try:
+            page = _get(opener, page_url).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (404, 410):
+                raise LinkExpired(EXPIRED)
+            raise
+        except urllib.error.URLError as e:
+            if "hostname" in str(e.reason) or "Name or service" in str(e.reason):
+                raise LinkExpired(EXPIRED)
+            raise
         ke, seq = _input_value(page, "ke"), _input_value(page, "seqence")
         if not ke:
-            raise ValueError("HDFC no longer has this statement (links work for about 3 "
-                             "months). Get it again from NetBanking or WhatsApp banking.")
+            raise LinkExpired(EXPIRED)
         token = _get(opener, base + "CRSGetToken?jobkey=" + urllib.parse.quote(jobkey)).decode().strip()
         body = urllib.parse.urlencode(dict(ke=ke, seqence=seq, pwd=smart_encrypt(token + pw))).encode()
         resp = _get(opener, base + "webresources/app/htmlformat", body, {
@@ -1316,6 +1334,8 @@ def fetch_statements():
                 status = "skipped" if detail.startswith("skipped") else "ok"
                 file = None  # keep files only for statements that failed
                 done += 1
+            except LinkExpired as e:
+                acct, found, added, detail, status = "", 0, 0, str(e), "expired"
             except Exception as e:
                 acct, found, added, detail, status = "", 0, 0, str(e) or e.__class__.__name__, "error"
                 errors += 1
@@ -4716,10 +4736,10 @@ async function loadMail(){
   if(document.activeElement!==$('m_since'))$('m_since').value=d.since;
   const c=d.counts||{};
   $('m_status').textContent=[(d.running?'Working: ':'')+(d.message||(d.log.length?'':d.user?'Not checked yet':'Not set up yet')),
-    d.log.length?(c.ok||0)+' imported, '+(c.skipped||0)+' skipped, '+(c.error||0)+' need attention':''].filter(Boolean).join(' · ');
+    d.log.length?(c.ok||0)+' imported, '+(c.skipped||0)+' skipped, '+(c.expired||0)+' expired, '+(c.error||0)+' need attention':''].filter(Boolean).join(' · ');
   $('m_fetch').disabled=d.running;
-  const badge=s=>s==='ok'?'<span class="chip">Imported</span>':s==='skipped'?'<span class="chip">Skipped</span>':'<span class="chip none">Needs attention</span>';
-  const errs=d.log.filter(r=>r.status==='error'),rest=d.log.filter(r=>r.status!=='error');
+  const badge=s=>s==='ok'?'<span class="chip">Imported</span>':s==='skipped'?'<span class="chip">Skipped</span>':s==='expired'?'<span class="chip">Link expired</span>':'<span class="chip none">Needs attention</span>';
+  const errs=d.log.filter(r=>r.status==='error'),gone=d.log.filter(r=>r.status==='expired'),rest=d.log.filter(r=>r.status!=='error'&&r.status!=='expired');
   const row=r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+esc(r.date)+'</b> '+badge(r.status)+' '+esc(r.account||'')+
     '<div class="mute">'+esc(r.subject)+(r.detail?' — '+esc(r.detail):'')+'</div></div>'+
     '<div class="num">'+(r.status==='ok'?r.added+' new of '+r.found:'')+
@@ -4727,6 +4747,7 @@ async function loadMail(){
   $('m_log').innerHTML=(errs.length?'<h3>Needs attention ('+errs.length+')</h3>'+errs.map(row).join('')+
     '<p class="mute">These are tried again on every check. Wrong password: add the right one above. Expired link: '+
     'get that period again from NetBanking or WhatsApp banking (it arrives by email and is imported by itself).</p>':'')+
+    (gone.length?'<details><summary class="mute">Expired links ('+gone.length+'): HDFC no longer keeps these; the periods show in What\'s missing</summary>'+gone.map(row).join('')+'</details>':'')+
     (rest.length?'<details><summary class="mute">Imported emails ('+rest.length+')</summary>'+rest.map(row).join('')+'</details>':'');
   clearTimeout(MT);if(d.running)MT=setTimeout(run(loadMail),4000);
   else if(loadMail.was)await loadState();
