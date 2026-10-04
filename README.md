@@ -86,6 +86,15 @@ the app, one per line, and stay on the droplet. Only the accounts listed are imp
 the daughter's account numbers are added under Daughter. Statements that fail are listed
 with the reason and the PDF, and are tried again on every check.
 
+### Tax to pay
+The ITR tab works out the year's income tax from the books for both regimes, with clinic income
+either at 50% of receipts (section 44ADA) or from the books (receipts less expenses and
+depreciation): salary after standard deduction, F&O as business income with losses set off
+(never against salary) and carried forward, intraday as speculative, capital gains at their own
+rates, interest and dividends, 80C/80D/80G/80TTA in the old regime, 87A rebate, surcharge and 4%
+cess, less tax already paid from the bank. It shows the cheapest legal option, the full working,
+losses to carry forward and audit or ITR-form notes. It is an estimate for the CA to confirm.
+
 ### Clinic equipment and depreciation
 Payments to dental suppliers of Rs 50,000 or more (changeable in Assets) are filed as fixed assets,
 not expenses. In Assets, Clinic equipment and depreciation lists each one; pick what it is from a list

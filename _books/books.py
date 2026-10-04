@@ -2195,6 +2195,199 @@ def api_patient_rule():
     return r
 
 
+# ---------- income tax computation (estimate) ----------
+
+# Slabs: (upper limit of the slab, rate %); the last slab has no limit.
+NEW_SLABS = {
+    2023: [(300000, 0), (600000, 5), (900000, 10), (1200000, 15), (1500000, 20), (None, 30)],
+    2024: [(300000, 0), (700000, 5), (1000000, 10), (1200000, 15), (1500000, 20), (None, 30)],
+    2025: [(400000, 0), (800000, 5), (1200000, 10), (1600000, 15), (2000000, 20), (2400000, 25),
+           (None, 30)],
+}
+OLD_SLABS = [(250000, 0), (500000, 5), (1000000, 20), (None, 30)]
+
+
+def slab_tax(income, slabs):
+    tax, low = 0.0, 0
+    for top, rate in slabs:
+        if income <= low:
+            break
+        part = (min(income, top) if top else income) - low
+        tax += part * rate / 100
+        low = top or low
+    return tax
+
+
+def tax_rules(fy, regime):
+    """Year-specific figures, as notified for that year (later years follow FY 2025-26)."""
+    y = min(max(fy, 2023), 2025)
+    new = regime == "new"
+    return dict(
+        slabs=NEW_SLABS[y] if new else OLD_SLABS,
+        std=(75000 if new and y >= 2024 else 50000),
+        rebate_upto=(1200000 if y >= 2025 else 700000) if new else 500000,
+        rebate_max=(60000 if y >= 2025 else 25000) if new else 12500,
+        stcg_rate=15 if fy <= 2023 else 20,          # sec 111A (20% for sales from 23 Jul 2024)
+        ltcg_rate=10 if fy <= 2023 else 12.5,         # sec 112A
+        ltcg_free=100000 if fy <= 2023 else 125000,
+        presumptive_limit=7500000,                    # sec 44ADA, cash receipts up to 5%
+    )
+
+
+def surcharge(tax, income, new):
+    rate = 0 if income <= 5e6 else 10 if income <= 1e7 else 15 if income <= 2e7 else 25 \
+        if income <= 5e7 or new else 37
+    return tax * rate / 100
+
+
+def tax_figures(fy, owner):
+    """The year's figures from the books, by income head, for one person."""
+    q = {"fy": [str(fy)], "owner": [owner]}
+    cats = {r[1]: r for r in summary_rows(q)}
+    cin = lambda n: (cats[n][3] - cats[n][4]) if n in cats else 0
+    cout = lambda n: (cats[n][4] - cats[n][3]) if n in cats else 0
+    receipts = sum(cin(n) for n, g in CATS if g == "receipts")
+    expenses = sum(cout(n) for n, g in CATS if g == "expenses")
+    con = db()
+    dep = round(sum(x["dep"] for x in depreciation(
+        [r for r in equipment_rows(con) if r["owner"] == owner], fy).get(fy, [])), 2)
+    a, b = fy_range(fy)
+    cash = con.execute("SELECT COALESCE(SUM(t.credit),0) FROM txns t JOIN accounts x ON x.id=t.account_id"
+                       " WHERE x.kind='Cash' AND x.owner=? AND t.date BETWEEN ? AND ?",
+                       (owner, a, b)).fetchone()[0]
+    con.close()
+    tr = {k: 0.0 for k, _ in TRADE_FIELDS}
+    for r in api_trading({"fy": [str(fy)], "owner": [owner]})["rows"]:
+        for k, _ in TRADE_FIELDS:
+            tr[k] += r[k] or 0
+    return dict(
+        salary=cin("Salary income"), receipts=receipts, cash=cash, expenses=expenses, dep=dep,
+        interest=cin("Interest received"), other=cin("Other income"), dividends=tr["dividends"],
+        fno=tr["fno"] - tr["charges"], intraday=tr["intraday"], stcg=tr["stcg"], ltcg=tr["ltcg"],
+        turnover=tr["turnover"],
+        d80c=sum(cout(n) for n in ("Life insurance premium (80C)", "Term insurance premium (80C)",
+                                   "Tax-saving investment (80C)", "School fees (80C)")),
+        d80d=cout("Health insurance premium (80D)"), d80g=cout("Donations (80G)"),
+        ptax=cout("GST, TDS and professional tax"),
+        paid=cout("Income tax and TDS paid"))
+
+
+def compute_tax(f, fy, regime, method):
+    """Tax for one regime and one way of working out clinic income. Returns the lines shown."""
+    r = tax_rules(fy, regime)
+    new = regime == "new"
+    lines = []
+    sal = max(f["salary"] - min(r["std"], f["salary"]) - (0 if new else min(f["ptax"], 2500)), 0)
+    if method == "44ADA":
+        prof = round(f["receipts"] * 0.5, 2)
+    else:
+        prof = round(f["receipts"] - f["expenses"] - f["dep"], 2)
+    business = prof + f["fno"]                      # F&O is non-speculative business income
+    spec = max(f["intraday"], 0)                    # a speculative loss only carries forward
+    other = f["interest"] + f["other"] + f["dividends"]
+    stcg, ltcg = f["stcg"], f["ltcg"]
+    carried = []
+    if f["intraday"] < 0:
+        carried.append(("Intraday (speculative) loss", -f["intraday"]))
+    if business < 0:                                # set off against other heads except salary
+        use = min(-business, max(other, 0))
+        other -= use
+        business += use
+        if business < 0:
+            use = min(-business, max(stcg, 0)); stcg -= use; business += use
+        if business < 0:
+            use = min(-business, max(ltcg, 0)); ltcg -= use; business += use
+        if business < 0:
+            carried.append(("Business loss (F&O / clinic)", -business))
+            business = 0
+    if stcg < 0:                                    # a short-term loss can go against long-term gains
+        use = min(-stcg, max(ltcg, 0)); ltcg -= use; stcg += use
+        if stcg < 0:
+            carried.append(("Short-term capital loss", -stcg)); stcg = 0
+    if ltcg < 0:
+        carried.append(("Long-term capital loss", -ltcg)); ltcg = 0
+    gross = sal + business + spec + other
+    ded = 0.0
+    if not new:
+        ded += min(f["d80c"], 150000) + min(f["d80d"], 25000) + f["d80g"] * 0.5
+        ded += min(f["interest"], 10000)            # 80TTA, savings interest
+    normal = max(gross - ded, 0)
+    total = normal + stcg + ltcg
+    tax_normal = slab_tax(normal, r["slabs"])
+    ltcg_tax = max(ltcg - r["ltcg_free"], 0) * r["ltcg_rate"] / 100
+    stcg_tax = stcg * r["stcg_rate"] / 100
+    rebate = min(tax_normal, r["rebate_max"]) if total <= r["rebate_upto"] else 0
+    tax = tax_normal - rebate + stcg_tax + ltcg_tax
+    sc = surcharge(tax, total, new)
+    cess = (tax + sc) * 0.04
+    due = round(tax + sc + cess)
+    add = lambda label, v, bold=False: lines.append(dict(label=label, value=round(v, 2), bold=bold))
+    add("Salary, after standard deduction" + ("" if new else " and professional tax"), sal)
+    add("Clinic income (" + ("44ADA: 50% of receipts" if method == "44ADA"
+                             else "receipts less expenses and depreciation") + ")", prof)
+    if f["fno"]:
+        add("F&O (non-speculative business), after charges", f["fno"])
+    if spec:
+        add("Intraday (speculative) profit", spec)
+    add("Interest, dividends and other income", f["interest"] + f["other"] + f["dividends"])
+    if not new:
+        add("Less: deductions (80C, 80D, 80G, 80TTA)", -ded)
+    add("Income at slab rates", normal, True)
+    if stcg or f["stcg"]:
+        add(f"Short-term capital gains (taxed at {r['stcg_rate']}%)", stcg)
+    if ltcg or f["ltcg"]:
+        add(f"Long-term capital gains ({r['ltcg_rate']}% above {r['ltcg_free']:,.0f})", ltcg)
+    add("Total income", total, True)
+    add("Tax at slab rates", tax_normal)
+    if rebate:
+        add("Less: rebate u/s 87A", -rebate)
+    if stcg_tax or ltcg_tax:
+        add("Tax on capital gains", stcg_tax + ltcg_tax)
+    if sc:
+        add("Surcharge", sc)
+    add("Health and education cess (4%)", cess)
+    add("Tax for the year", due, True)
+    add("Less: tax already paid from the bank (advance / self-assessment)", -f["paid"])
+    add("Balance to pay" if due - f["paid"] >= 0 else "Refund due", due - f["paid"], True)
+    return dict(lines=lines, due=due, balance=round(due - f["paid"]), total=round(total),
+                carried=carried)
+
+
+def api_tax(q):
+    fy = int(qget(q, "fy") or fy_of(datetime.now().strftime("%Y-%m-%d")))
+    owner = qget(q, "owner") or "Self"
+    f = tax_figures(fy, owner)
+    r = tax_rules(fy, "new")
+    cash_share = f["cash"] / f["receipts"] if f["receipts"] else 0
+    can_44ada = f["receipts"] <= (r["presumptive_limit"] if cash_share <= 0.05 else 5000000)
+    books_income = f["receipts"] - f["expenses"] - f["dep"]
+    options = []
+    for regime in ("new", "old"):
+        for method in (["44ADA"] if can_44ada else []) + ["books"]:
+            c = compute_tax(f, fy, regime, method)
+            c.update(regime=regime, method=method)
+            options.append(c)
+    # Declaring clinic income below 50% of receipts needs full books and a tax audit.
+    audit = can_44ada and books_income < f["receipts"] * 0.5
+    best = min(options, key=lambda o: (o["due"] + (25000 if o["method"] == "books" and audit else 0)))
+    notes = []
+    if f["turnover"] > 1e8:
+        notes.append("F&O turnover is above Rs 10 crore: a tax audit is needed.")
+    if audit:
+        notes.append("Clinic income from the books is below 50% of receipts. Declaring it needs the "
+                     "books maintained and a tax audit (sec 44AB), which costs a CA's audit fee; "
+                     "44ADA needs neither.")
+    if not can_44ada:
+        notes.append("Receipts are above the 44ADA limit, so clinic income must come from the books.")
+    if cash_share > 0.05:
+        notes.append(f"Cash is {cash_share:.0%} of receipts: the 44ADA limit is Rs 50 lakh, not 75 lakh.")
+    if f["fno"] or f["intraday"]:
+        notes.append("With F&O or intraday income the return is ITR-3, not ITR-4.")
+    return dict(fy=fy, owner=owner, figures=f, options=options, best=best, notes=notes,
+                can_44ada=can_44ada, cash_share=round(cash_share, 4))
+
+
+
 def api_coverage():
     """For each bank and card account: which periods have entries and where
     statements are missing. In a bank account each day's balances must follow
@@ -4168,6 +4361,8 @@ class Handler(BaseHTTPRequestHandler):
                     "Content-Disposition": f"attachment; filename={fname}"})
             elif u.path == "/api/patient-rule":
                 self.send(api_patient_rule())
+            elif u.path == "/api/tax":
+                self.send(api_tax(q))
             elif u.path == "/api/coverage":
                 self.send(api_coverage())
             elif u.path == "/api/mail":
@@ -4790,6 +4985,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="stats" id="rstats"></div>
   <div id="heads"></div>
   <div id="chead"></div>
+  <div class="card scroll" id="taxcard"></div>
   <div class="card" id="itrcard">
     <div class="row"><h3 class="grow" style="margin:0">Previous income tax returns</h3>
       <select id="itr_owner" aria-label="Whose return"></select>
@@ -5173,6 +5369,7 @@ async function loadReport(){
   t+=line('Clinic profit',m=>tot('receipts',m)-tot('expenses',m),'tot');
   $('rtable').innerHTML=t;
   await loadItr();
+  loadTax().catch(e=>{$('taxcard').innerHTML='<p class="mute">'+esc(e.message)+'</p>';});
   await loadTally();
 }
 async function loadTally(){
@@ -5197,6 +5394,28 @@ async function loadTally(){
     '<div class="scroll"><table>'+t+'</table></div></details>'+(d.suspense?'<p class="mute">Suspense A/c has entries not yet sorted; post them in the Sort tab.</p>':''):'';
 }
 let IF=[];
+async function loadTax(){
+  const d=await api('/api/tax?'+qs({fy:$('fy').value,owner:$('who').value||'Self'})),box=$('taxcard');
+  const f=d.figures,fyName=fyLabel(d.fy);
+  if(!f.receipts&&!f.salary&&!f.fno&&!f.stcg&&!f.interest){box.innerHTML='<h3>Tax to pay</h3><p class="mute">No income in the books for '+fyName+' yet.</p>';return;}
+  const name=o=>(o.regime==='new'?'New regime':'Old regime')+', '+(o.method==='44ADA'?'44ADA (50%)':'actual books');
+  const b=d.best,pay=b.balance;
+  let h='<h3>Tax to pay, '+fyName+' ('+esc(d.owner)+')</h3>'+
+    '<div class="stats" style="margin:8px 0"><div class="card"><span class="mute">Best option</span><b>'+name(b)+'</b></div>'+
+    '<div class="card"><span class="mute">Tax for the year</span><b class="num">'+inr(b.due)+'</b></div>'+
+    '<div class="card"><span class="mute">'+(pay>=0?'Still to pay':'Refund due')+'</span><b class="num '+(pay>=0?'out':'in')+'">'+inr(Math.abs(pay))+'</b></div></div>'+
+    '<table><tr><th>Option</th><th>Total income</th><th>Tax</th><th>'+(pay>=0?'Still to pay':'Balance')+'</th></tr>'+
+    d.options.map(o=>'<tr'+(o===b||(o.regime===b.regime&&o.method===b.method)?' style="font-weight:700"':'')+'><td>'+name(o)+'</td><td class="num">'+inr(o.total)+
+      '</td><td class="num">'+inr(o.due)+'</td><td class="num">'+inr(o.balance)+'</td></tr>').join('')+'</table>'+
+    '<h3 style="margin-top:14px">Working: '+name(b)+'</h3><table>'+b.lines.map(l=>'<tr><td>'+(l.bold?'<b>'+esc(l.label)+'</b>':esc(l.label))+
+      '</td><td class="num">'+(l.bold?'<b>'+inr(l.value)+'</b>':inr(l.value))+'</td></tr>').join('')+'</table>';
+  if(b.carried.length)h+='<p class="mute"><b>Carried forward to next years:</b> '+b.carried.map(c=>esc(c[0])+' '+inr(c[1])).join('; ')+
+    '. File the return by the due date to keep these losses.</p>';
+  if(d.notes.length)h+='<ul class="mute" style="padding-left:18px">'+d.notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul>';
+  h+='<p class="mute">Estimate from the books: salary, clinic receipts (cash included), expenses, depreciation, trading P&amp;L, '+
+    'interest and dividends, and the 80C/80D/80G payments sorted in the bank. Tax already paid is what the bank shows paid to CBDT; '+
+    'add TDS from Form 26AS. Interest for late advance tax (234B/C) is not included. Your CA confirms the final figures.</p>';
+  box.innerHTML=h;}
 async function loadItr(){
   const d=await api('/api/itr?'+qs({owner:$('who').value,fy:$('fy').value}));
   keepValue('itr_owner',S.owners.map(o=>'<option'+(o===($('who').value||'Self')?' selected':'')+'>'+esc(o)+'</option>').join(''));
