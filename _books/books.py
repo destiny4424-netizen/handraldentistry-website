@@ -406,6 +406,9 @@ def init():
         con.execute("UPDATE txns SET category='', clinic='' WHERE category='Patient receipts' AND"
                     " account_id IN (SELECT id FROM accounts WHERE owner='Daughter')")
         con.execute("PRAGMA user_version=8")
+    if version < 9:  # small payments are personal expenses, across all years
+        apply_rules(con)
+        con.execute("PRAGMA user_version=9")
     con.commit()
     con.close()
 
@@ -915,6 +918,7 @@ def apply_rules(con):
         "SELECT match, type, purpose FROM policies WHERE LENGTH(match) >= 3"
         " ORDER BY LENGTH(match) DESC")]
     pay = patient_rule(con)
+    small = small_rule(con)
     n = 0
     acols = [c[1] for c in con.execute("PRAGMA table_info(accounts)")]
     kind = "a.kind" if "kind" in acols else "NULL"
@@ -956,7 +960,21 @@ def apply_rules(con):
             if pay and is_patient_payment(t, low, pay):
                 con.execute("UPDATE txns SET category=? WHERE id=?", ("Patient receipts", t["id"]))
                 n += 1
+            elif small and t["kind"] in (None, "Bank", "Credit card") and \
+                    0 < (t["debit"] or 0) < small and not (t["credit"] or 0):
+                con.execute("UPDATE txns SET category='Personal' WHERE id=?", (t["id"],))
+                n += 1
     return n
+
+
+def small_rule(con):
+    """Payments below this amount are personal expenses (0 when the rule is off)."""
+    if setting(con, "small_rule", "1") != "1":
+        return 0
+    try:
+        return float(setting(con, "small_max", "2000") or 0)
+    except ValueError:
+        return 2000.0
 
 
 # Money in that is not from a patient, whatever the payer's name.
@@ -1652,6 +1670,10 @@ def api_patient_rule():
              exclude=setting(con, "patient_exclude", PATIENT_DEFAULT_EXCLUDE))
     r["count"], r["total"] = con.execute(
         "SELECT COUNT(*), COALESCE(SUM(credit),0) FROM txns WHERE category='Patient receipts'").fetchone()
+    r["small_on"] = setting(con, "small_rule", "1") == "1"
+    r["small_max"] = setting(con, "small_max", "2000")
+    r["small_count"], r["small_total"] = con.execute(
+        "SELECT COUNT(*), COALESCE(SUM(debit),0) FROM txns WHERE category='Personal'").fetchone()
     con.close()
     return r
 
@@ -3620,10 +3642,11 @@ class Handler(BaseHTTPRequestHandler):
                 with LOCK:
                     con = db()
                     for key, field in (("patient_rule", "on"), ("patient_max", "max"),
-                                       ("patient_exclude", "exclude")):
+                                       ("patient_exclude", "exclude"), ("small_rule", "small_on"),
+                                       ("small_max", "small_max")):
                         if field in d:
                             v = d[field]
-                            v = ("1" if v else "0") if field == "on" else str(v).strip()
+                            v = ("1" if v else "0") if field in ("on", "small_on") else str(v).strip()
                             con.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, v))
                     n = apply_rules(con)
                     con.commit()
@@ -4131,7 +4154,14 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
       <label class="mute">Up to ₹ <input type="number" id="pr_max" min="0" step="1" style="width:9em"></label>
       <label class="mute grow">Not from (family, own accounts) <input type="text" id="pr_ex" style="width:100%"></label>
       <button class="pri" id="pr_save">Save and apply</button></div>
-    <div class="mute" id="pr_stat" style="margin-top:6px"></div></div>
+    <div class="mute" id="pr_stat" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:14px"><div class="grow"><b>Small payments</b>
+    <div class="mute">Money going out of any bank account or card, in every year, below this amount is filed as
+    Personal (drawings), unless a rule, staff, consultant or loan already sorts it.</div></div>
+    <label class="mute"><input type="checkbox" id="sm_on"> On</label></div>
+    <div class="filters" style="margin:8px 0 0">
+      <label class="mute">Below ₹ <input type="number" id="sm_max" min="0" step="1" style="width:9em"></label>
+      <span class="mute grow" id="sm_stat"></span></div></div>
   <div class="card"><div class="row"><div class="grow"><b>Share rules</b><div class="mute">Save all rules, staff and
     consultants to a file, or add the ones in a file you were given. Adding sorts matching unsorted entries
     straight away; nothing already sorted is changed.</div></div>
@@ -4836,8 +4866,10 @@ $('cov_go').onclick=run(loadCoverage);
 async function loadPatientRule(d){
   d=d||await api('/api/patient-rule');
   $('pr_on').checked=d.on;$('pr_max').value=d.max;$('pr_ex').value=d.exclude;
-  $('pr_stat').textContent=d.count+' entries filed as Patient receipts in all, '+inr(d.total)+'.';}
-$('pr_save').onclick=run(async()=>{const d=await api('/api/patient-rule',{on:$('pr_on').checked,max:$('pr_max').value,exclude:$('pr_ex').value});
+  $('pr_stat').textContent=d.count+' entries filed as Patient receipts in all, '+inr(d.total)+'.';
+  $('sm_on').checked=d.small_on;$('sm_max').value=d.small_max;
+  $('sm_stat').textContent=d.small_count+' entries filed as Personal in all, '+inr(d.small_total)+'.';}
+$('pr_save').onclick=run(async()=>{const d=await api('/api/patient-rule',{on:$('pr_on').checked,max:$('pr_max').value,exclude:$('pr_ex').value,small_on:$('sm_on').checked,small_max:$('sm_max').value});
   toast(d.sorted+' more entries sorted');await loadPatientRule(d);await loadState();});
 let MT=null;
 async function loadMail(){
