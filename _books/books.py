@@ -401,11 +401,16 @@ MORE_RULES = (
     + _M("Trading transfer", "INDMONEYSTOCKS", "INDSTOCKS", "DELTAEXCHANGE", "DELTA EXCHANGE",
          "EXCELIUM TECH", "MONEYLICIOUS")
     + _M("Investments", "INDMONEY", "COIN BY ZERODHA", "KUVERA", "ETMONEY", "ET MONEY")
-    + _M("School fees (80C)", "BVV S", "BVVS", "BVV SANGHA", "PUBLIC SCHOOL", "COLLEGE")
+    + _M("School fees (80C)", "PUBLIC SCHOOL")
     + _M("Personal", "RAILSBI", "INDIAN RAILWAYS", "TITAN", "TEX MART", "TEXMART", "BAZAAR",
          "SUPERMARKET", "TEXTILE", "SAREE", "JEWELLER", "SWEETS", "SWIGGY", "ZOMATO", "BOOKMYSHOW", "NETFLIX", "HOTSTAR",
          "PAYTM TRAVEL", "BUS TICKET", "VRL TRAVELS", "SRS TRAVELS")
 )
+
+# The employer (AIS: salary from B.V.V. Sangha, P.M. Nadagouda dental college). Added in version 24.
+EMPLOYER_RULES = [(p, "in", "Salary income") for p in
+                  ("B.V.V.SANGH", "B.V.V. SANGH", "BVV SANGH", "BVVSANGH", "BVV S", "BVVS", "B V V S",
+                   "NADAGOUDA", "PMNM DENTAL", "PMNMDC")]
 
 # Wallets used to move money from a credit card into the bank (card -> wallet -> account).
 WALLETS = ["PAYZAPP", "PAY ZAPP", "HDFC WALLET", "WALLET TO BANK", "WALLET2BANK"]
@@ -823,6 +828,20 @@ def init():
         if "split_of" not in tcols:
             con.execute("ALTER TABLE txns ADD COLUMN split_of INTEGER DEFAULT 0")
         con.execute("PRAGMA user_version=23")
+    if version < 24:  # B.V.V. Sangha is the employer: credits are salary; a payment to it is not school fees
+        drop = ("BVV S", "BVVS", "BVV SANGHA", "COLLEGE")
+        con.executemany("DELETE FROM rules WHERE pattern=? AND category='School fees (80C)'", [(x,) for x in drop])
+        for x in drop:
+            con.execute("UPDATE txns SET category='' WHERE category='School fees (80C)' AND narration LIKE ?",
+                        (f"%{x}%",))
+        have = {r[0].lower() for r in con.execute("SELECT pattern FROM rules WHERE dir='in'")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+                        [r for r in EMPLOYER_RULES if r[0].lower() not in have])
+        for p, _, cat in EMPLOYER_RULES:  # salary credits the patient rule took for fees
+            con.execute("UPDATE txns SET category=? WHERE category IN ('', 'Patient receipts', 'Other income')"
+                        " AND credit>0 AND narration LIKE ?", (cat, f"%{p}%"))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=24")
     con.commit()
     con.close()
 
@@ -2966,7 +2985,10 @@ def ais_compare(con, fy, owner, f):
         v, books, note = r["amount"], None, ""
         if cat == "Salary":
             books = f.get("books_salary", f["salary"])
-            note = "Not in the books; the tax working uses the AIS figure. Show it in Schedule S (Form 16 from the employer)." if books < v - 1 else ""
+            note = ("" if books >= v - 1 else
+                    "Not in the books; the tax working uses the AIS figure. Show it in Schedule S (Form 16)." if books < 1
+                    else "The books have what reached the bank, after TDS and professional tax. The tax working uses "
+                    "the gross AIS salary and takes the TDS off the tax; upload the AIS so the TDS is counted.")
         elif cat.startswith("Interest from") and cat != "Interest from income tax refund":
             books = f.get("books_interest", f["interest"])
             note = ("All interest in AIS together is " + inr_text(interest) + "; the books have less. The tax "
