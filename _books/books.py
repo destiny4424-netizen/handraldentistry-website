@@ -5235,13 +5235,16 @@ async function loadTrading(){
   const tot=k=>T.rows.reduce((a,r)=>a+(r[k]||0),0);
   $('tstats').innerHTML=T.rows.length?stat('Net trading P&amp;L',tot('net'),1)+stat('Intraday and F&amp;O',tot('intraday')+tot('fno'),1)+
     stat('Capital gains',tot('stcg')+tot('ltcg'),1)+stat('Added from bank',tot('added'))+stat('Withdrawn to bank',tot('withdrawn')):'';
-  $('tacc').innerHTML=T.rows.length?T.rows.map(r=>
+  const has=r=>T.fields.some(f=>r[f[0]])||r.added||r.withdrawn;
+  $('tacc').innerHTML=T.rows.length?T.rows.map(r=>!has(r)?
+    '<div class="card"><div class="row"><div class="grow"><b>'+esc(r.name)+'</b> <span class="mute">no figures for '+fyLabel(+y).split(' (')[0]+'</span></div>'+
+    '<button data-timp="'+r.id+'">Import P&amp;L report</button><button class="pri" data-tedit="'+r.id+'">Enter figures</button></div></div>':
     '<div class="card"><div class="row"><div class="grow"><b>'+esc(r.name)+'</b> <span class="chip">'+esc(r.owner)+'</span>'+
     '<div class="mute">'+fyLabel(+y)+'</div></div><div style="text-align:right"><span class="mute">Net P&amp;L</span><br><b>'+signed(r.net)+'</b></div></div>'+
     '<div class="figs">'+T.fields.map(f=>'<div><span class="mute">'+esc(f[1])+'</span>'+(!r[f[0]]?'<span class="mute">-</span>':
       f[0]==='charges'||f[0]==='turnover'?'<span class="num">'+inr(r[f[0]])+'</span>':signed(r[f[0]]))+'</div>').join('')+'</div>'+
-    '<div class="row" style="margin-top:8px"><span class="mute grow">Bank to broker: added '+inr(r.added)+', withdrawn '+inr(r.withdrawn)+
-    (r.match?' (matched on "'+esc(r.match)+'")':'')+(r.note?'<br>'+esc(r.note):'')+'</span>'+
+    '<div class="row" style="margin-top:8px"><div class="mute grow">Bank to broker: added '+inr(r.added)+', withdrawn '+inr(r.withdrawn)+
+    (r.match?' (matched on "'+esc(r.match)+'")':'')+(r.note?'<br>'+esc(r.note):'')+'</div>'+
     '<button data-timp="'+r.id+'">Import P&amp;L report</button><button class="pri" data-tedit="'+r.id+'">Enter figures</button></div></div>').join('')
     :'<div class="card mute">No trading accounts yet. Add one below for each broker (Zerodha, Fyers, Kotak and so on).</div>';
 }
