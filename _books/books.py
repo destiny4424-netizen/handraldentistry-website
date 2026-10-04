@@ -4129,6 +4129,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   then kept under that loan on every import. For exact interest, enter it from the lender's interest
   certificate; otherwise it is estimated from the rate and EMI.</p>
   <div class="stats" id="ln_stats"></div>
+  <div class="card scroll" id="ln_order" hidden></div>
   <div id="ln_list"></div>
   <div class="card scroll" id="ln_types" hidden></div>
 </section>
@@ -4820,6 +4821,22 @@ async function loadLoans(){
     '<div class="row" style="margin-top:8px"><span class="grow"></span>'+(l.match?'<button class="link" data-lview="'+l.id+'">View entries</button>':'')+
     '<button class="pri" data-ledit="'+l.id+'">Edit</button></div></div>').join('')
     :'<div class="card mute">No loans added yet. Use Add loan for each car, jewel, personal or home loan.</div>';
+  const open=L.rows.filter(l=>!l.closed).map(l=>Object.assign({},l,
+    {monthly:l.rate&&l.outstanding?l.outstanding*l.rate/1200:null}))
+    .sort((a,b)=>(b.rate||-1)-(a.rate||-1)||(b.outstanding||0)-(a.outstanding||0));
+  const ob=$('ln_order');ob.hidden=open.length<2;
+  if(open.length>1){const tot=k=>open.reduce((a,r)=>a+(r[k]||0),0);
+    ob.innerHTML='<h3>Which loans to close first</h3><p class="mute" style="margin-top:0">Costliest rate first. Any spare money '+
+      'paid into the loan at the top saves the most interest. Check its foreclosure or part-payment charges first.</p>'+
+      '<table><tr><th>#</th><th>Loan</th><th>Rate</th><th>EMI</th><th>Outstanding</th><th>Interest a month</th></tr>'+
+      open.map((l,i)=>'<tr class="go" data-lopen="'+l.id+'"><td>'+(i+1)+'</td><td>'+esc(l.name)+'</td><td class="num">'+(l.rate?l.rate+'%':'<span class="mute">add rate</span>')+
+        '</td><td class="num">'+(l.emi?inr(l.emi):'<span class="mute">add EMI</span>')+'</td><td class="num">'+(l.outstanding==null?'-':inr(l.outstanding))+
+        '</td><td class="num">'+(l.monthly==null?'-':inr(l.monthly))+'</td></tr>').join('')+
+      '<tr><td></td><td><b>Total</b></td><td></td><td class="num"><b>'+inr(tot('emi'))+'</b></td><td class="num"><b>'+inr(tot('outstanding'))+
+      '</b></td><td class="num"><b>'+inr(tot('monthly'))+'</b></td></tr></table>'+
+      '<p class="mute">Outstanding is as of today, or the end of the year picked at the top; estimated from the rate and EMI unless you entered it. '+
+      'Tap a loan to edit it.</p>';
+    ob.querySelectorAll('[data-lopen]').forEach(tr=>tr.onclick=()=>openLoan(L.rows.find(x=>x.id==tr.dataset.lopen)));}
   const box=$('ln_types');box.hidden=!L.by_type.length;
   box.innerHTML='<h3>All loan entries in '+fyName+' by type</h3><table><tr><th>Type</th><th>Entries</th><th>Received</th><th>Paid</th><th>Not linked to a loan</th></tr>'+
     L.by_type.map(t=>{const loose=t.received+t.paid-t.matched;return '<tr class="go" data-ltype="'+esc(t.type)+'"><td>'+esc(t.type)+'</td><td>'+t.entries+'</td><td class="num">'+inr(t.received)+
