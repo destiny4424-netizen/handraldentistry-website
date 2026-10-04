@@ -54,7 +54,7 @@ GROUPS = [
 CATS = [
     ("Patient receipts", "receipts"), ("Other clinic income", "receipts"),
     ("Lab charges", "expenses"), ("Dental materials", "expenses"),
-    ("Staff salaries", "expenses"), ("Consultant fees", "expenses"),
+    ("Staff salaries", "expenses"), ("Staff incentives", "expenses"), ("Consultant fees", "expenses"),
     ("Rent", "expenses"),
     ("Utilities and phone", "expenses"), ("Equipment and repairs", "expenses"),
     ("Marketing", "expenses"), ("Fuel and travel", "expenses"),
@@ -91,6 +91,7 @@ TALLY = {
     "Lab charges": ("Lab Charges", "Direct Expenses"),
     "Consultant fees": ("Consultant Fees", "Direct Expenses"),
     "Staff salaries": ("Salaries & Wages", "Indirect Expenses"),
+    "Staff incentives": ("Staff Incentives", "Indirect Expenses"),
     "Rent": ("Rent", "Indirect Expenses"),
     "Utilities and phone": ("Electricity & Telephone", "Indirect Expenses"),
     "Equipment and repairs": ("Repairs & Maintenance", "Indirect Expenses"),
@@ -168,6 +169,7 @@ KIND_GROUP = {"Bank": "Bank Accounts", "Credit card": "Current Liabilities",
               "Trading": "Investments", "Cash": "Cash-in-Hand"}
 CONSULT = "Consultant fees"
 SALARY = "Staff salaries"
+INCENTIVE = "Staff incentives"
 # Named people whose bank payments are filed under a fixed head: kind -> (table, head).
 PEOPLE = {"consultant": ("consultants", CONSULT), "staff": ("staff", SALARY)}
 CASH_HEAD = "Patient receipts"
@@ -550,6 +552,7 @@ CREATE TABLE IF NOT EXISTS mail_log(
   id INTEGER PRIMARY KEY, msgid TEXT UNIQUE, date TEXT, subject TEXT, account TEXT DEFAULT '',
   status TEXT, found INTEGER DEFAULT 0, added INTEGER DEFAULT 0, detail TEXT DEFAULT '',
   checked TEXT, file BLOB, filename TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS nicknames(name TEXT PRIMARY KEY COLLATE NOCASE, nickname TEXT);
 CREATE TABLE IF NOT EXISTS tds(
   id INTEGER PRIMARY KEY, owner TEXT DEFAULT 'Self', fy INTEGER, deductor TEXT DEFAULT '',
   tan TEXT DEFAULT '', section TEXT DEFAULT '', paid REAL DEFAULT 0, tds REAL DEFAULT 0,
@@ -809,6 +812,14 @@ def init():
                         [r for r in MORE_RULES if r[0].lower() not in have])
         apply_rules(con)
         con.execute("PRAGMA user_version=22")
+    if version < 23:  # fixed monthly pay per staff member; incentives split off a bank payment
+        scols = [c[1] for c in con.execute("PRAGMA table_info(staff)")]
+        if "salary" not in scols:
+            con.execute("ALTER TABLE staff ADD COLUMN salary REAL DEFAULT 0")
+        tcols = [c[1] for c in con.execute("PRAGMA table_info(txns)")]
+        if "split_of" not in tcols:
+            con.execute("ALTER TABLE txns ADD COLUMN split_of INTEGER DEFAULT 0")
+        con.execute("PRAGMA user_version=23")
     con.commit()
     con.close()
 
@@ -1307,6 +1318,7 @@ def parse_pnl(name, data, password):
 
 
 def apply_rules(con):
+    apply_nicknames(con)
     rules = [dict(r, flat=re.sub(r"\s+", "", r["pattern"].lower())) for r in con.execute(
         "SELECT * FROM rules ORDER BY LENGTH(pattern) DESC, id")]
     people = [(head, [m for r in con.execute(f"SELECT match FROM {table}")
@@ -2296,33 +2308,38 @@ def cash_salaries(con, fy):
     a, b = fy_range(fy)
     return [dict(r) for r in con.execute(
         "SELECT t.id, t.date, t.narration, t.ref, t.debit, t.clinic, t.note, t.payee FROM txns t"
-        " JOIN accounts a ON a.id=t.account_id WHERE a.kind='Cash' AND t.category=? AND t.debit>0"
-        " AND t.date BETWEEN ? AND ? ORDER BY t.date DESC, t.id DESC", (SALARY, a, b))]
+        " JOIN accounts a ON a.id=t.account_id WHERE a.kind='Cash' AND t.category IN (?,?) AND t.debit>0"
+        " AND t.date BETWEEN ? AND ? ORDER BY t.date DESC, t.id DESC", (SALARY, INCENTIVE, a, b))]
 
 
 def add_cash_salary(con, d):
     staff = con.execute("SELECT * FROM staff WHERE id=?", (int(d.get("staff") or 0),)).fetchone()
     if not staff:
         raise ValueError("Choose the staff member.")
-    date, amount = check_date(d.get("date")), to_num(d.get("amount"))
+    date, amount = check_date(d.get("date")), max(to_num(d.get("amount")), 0)
+    bonus = max(to_num(d.get("incentive")), 0)
     if not date:
         raise ValueError("Enter the date paid.")
-    if amount <= 0:
+    if amount + bonus <= 0:
         raise ValueError("Enter the amount paid.")
     month = str(d.get("month") or "").strip()
     month_txt = datetime.strptime(month, "%Y-%m").strftime("%B %Y") if re.fullmatch(r"\d{4}-\d{2}", month) else ""
     fy = fy_of(date)
-    n = con.execute("SELECT COUNT(*) FROM txns WHERE ref LIKE ?", (f"CPV/{fy}-{(fy + 1) % 100:02d}/%",)).fetchone()[0]
+    n = con.execute("SELECT COALESCE(MAX(CAST(substr(ref, -3) AS INTEGER)), 0) FROM txns WHERE ref LIKE ?",
+                    (f"CPV/{fy}-{(fy + 1) % 100:02d}/%",)).fetchone()[0]
     ref = f"CPV/{fy}-{(fy + 1) % 100:02d}/{n + 1:03d}"
     note = " ".join(str(d.get("note") or "").split())
     who = spellings(staff["match"])[0] if spellings(staff["match"]) else staff["name"]
-    narr = " - ".join(x for x in ("Cash salary", staff["name"], month_txt and "for " + month_txt, note) if x)
     clinic = d.get("clinic") if d.get("clinic") in CLINICS else ""
-    seq = con.execute("SELECT COALESCE(MAX(seq),0)+1 FROM txns").fetchone()[0]
-    h = hashlib.sha1(f"cashsal|{time.time_ns()}|{narr}|{amount}".encode()).hexdigest()
-    con.execute("INSERT INTO txns(account_id,date,narration,ref,debit,credit,balance,category,clinic,"
-                "note,seq,hash,payee) VALUES(?,?,?,?,?,0,0,?,?,?,?,?,?)",
-                (cash_account(con), date, narr, ref, amount, SALARY, clinic, note, seq, h, who.upper()))
+    for label, head, amt in (("Cash salary", SALARY, amount), ("Cash incentive", INCENTIVE, bonus)):
+        if amt <= 0:
+            continue
+        narr = " - ".join(x for x in (label, staff["name"], month_txt and "for " + month_txt, note) if x)
+        seq = con.execute("SELECT COALESCE(MAX(seq),0)+1 FROM txns").fetchone()[0]
+        h = hashlib.sha1(f"cashsal|{time.time_ns()}|{narr}|{amt}".encode()).hexdigest()
+        con.execute("INSERT INTO txns(account_id,date,narration,ref,debit,credit,balance,category,clinic,"
+                    "note,seq,hash,payee) VALUES(?,?,?,?,?,0,0,?,?,?,?,?,?)",
+                    (cash_account(con), date, narr, ref, amt, head, clinic, note, seq, h, who.upper()))
     return ref
 
 
@@ -2358,10 +2375,164 @@ def repeat_cash_salary(con, d):
         paid = name and label and con.execute(
             "SELECT 1 FROM txns WHERE category=? AND narration LIKE ? AND narration LIKE ?",
             (SALARY, f"Cash salary - {name[0]}%", f"%for {label}%")).fetchone()
-        if not paid:
-            refs.append(add_cash_salary(con, dict(d, date=add_months(date, k), month=mk)))
+        if not paid and (to_num(d.get("amount")) > 0 or k == start):
+            refs.append(add_cash_salary(con, dict(d, date=add_months(date, k), month=mk,
+                                                  incentive=d.get("incentive") if k == start else 0)))
         k += 1
     return refs
+
+
+def api_incentives(q):
+    """Incentives by staff and month, and months where a bank salary is above the usual pay:
+    the fixed salary entered for that person, or else the amount paid most often."""
+    fy = int(qget(q, "fy") or fy_of(Date.today().isoformat()))
+    a, b = fy_range(fy)
+    con = db()
+    staff, tips = [], []
+    for c in con.execute("SELECT * FROM staff ORDER BY name").fetchall():
+        who, args = person_where(c["match"])
+        months = {r[0]: r[1] for r in con.execute(
+            f"SELECT substr(date,1,7), SUM(debit) FROM txns WHERE category=? AND debit>0 AND {who}"
+            f" AND date BETWEEN ? AND ? GROUP BY 1", [INCENTIVE] + args + [a, b])}
+        pay = {r[0]: r[1] for r in con.execute(
+            f"SELECT substr(t.date,1,7), SUM(t.debit) FROM txns t JOIN accounts x ON x.id=t.account_id"
+            f" WHERE t.category=? AND t.debit>0 AND {who.replace('narration', 't.narration').replace('payee', 't.payee')}"
+            f" AND t.date BETWEEN ? AND ? GROUP BY 1", [SALARY] + args + [a, b])}
+        usual, how = c["salary"] or 0, "fixed salary"
+        if not usual and len(pay) >= 3:
+            counts = {}
+            for v in pay.values():
+                counts[round(v)] = counts.get(round(v), 0) + 1
+            best = max(counts.values())
+            if best >= 2:
+                usual, how = min(v for v, n in counts.items() if n == best), "paid most months"
+        staff.append(dict(id=c["id"], name=c["name"], salary=c["salary"] or 0, usual=usual, how=how,
+                          months=months, total=round(sum(months.values()), 2)))
+        if not usual:
+            continue
+        for m, total in sorted(pay.items()):
+            extra = round(total - usual, 2)
+            if extra < 1:
+                continue
+            t = con.execute(
+                f"SELECT t.id, t.debit, t.date, x.kind FROM txns t JOIN accounts x ON x.id=t.account_id"
+                f" WHERE t.category=? AND {who.replace('narration', 't.narration').replace('payee', 't.payee')}"
+                f" AND substr(t.date,1,7)=? AND t.debit>? ORDER BY t.debit DESC LIMIT 1",
+                [SALARY] + args + [m, extra]).fetchone()
+            if t:
+                tips.append(dict(staff=c["name"], month=m, total=total, usual=usual, how=how,
+                                 extra=extra, id=t["id"], date=t["date"]))
+    entries = [dict(r) for r in con.execute(
+        "SELECT t.id, t.date, t.narration, t.ref, t.debit, t.payee, t.split_of, x.kind, x.name acct FROM txns t"
+        " JOIN accounts x ON x.id=t.account_id WHERE t.category=? AND t.debit>0 AND t.date BETWEEN ? AND ?"
+        " ORDER BY t.date DESC, t.id DESC", (INCENTIVE, a, b))]
+    con.close()
+    return dict(fy=fy, staff=staff, tips=tips, entries=entries,
+                total=round(sum(x["debit"] for x in entries), 2))
+
+
+def split_incentive(con, txn_id, amount):
+    """Part of one payment filed as incentive: the entry is split in two, same date and bank,
+    so the day's total and balance stay as on the statement."""
+    t = con.execute("SELECT * FROM txns WHERE id=?", (txn_id,)).fetchone()
+    amount = round(to_num(amount), 2)
+    if not t or not (0 < amount < (t["debit"] or 0)):
+        raise ValueError("The incentive must be less than the payment.")
+    h = hashlib.sha1(f"split|{t['id']}|{time.time_ns()}".encode()).hexdigest()
+    con.execute("INSERT INTO txns(account_id,date,narration,ref,debit,credit,balance,category,clinic,note,"
+                "seq,hash,payee,split_of) VALUES(?,?,?,?,?,0,?,?,?,?,?,?,?,?)",
+                (t["account_id"], t["date"], t["narration"], t["ref"], amount, t["balance"], INCENTIVE,
+                 t["clinic"], "Incentive part of this payment", t["seq"], h, t["payee"], t["id"]))
+    con.execute("UPDATE txns SET debit=? WHERE id=?", (round(t["debit"] - amount, 2), t["id"]))
+
+
+def undo_incentive(con, txn_id):
+    t = con.execute("SELECT * FROM txns WHERE id=? AND category=?", (txn_id, INCENTIVE)).fetchone()
+    if not t:
+        raise ValueError("Incentive entry not found.")
+    if t["split_of"]:
+        con.execute("UPDATE txns SET debit=debit+? WHERE id=?", (t["debit"], t["split_of"]))
+        con.execute("DELETE FROM txns WHERE id=?", (txn_id,))
+    else:  # a bank payment filed wholly as incentive goes back to salary
+        kind = con.execute("SELECT kind FROM accounts WHERE id=?", (t["account_id"],)).fetchone()[0]
+        if kind == "Cash":
+            con.execute("DELETE FROM txns WHERE id=?", (txn_id,))
+        else:
+            con.execute("UPDATE txns SET category=? WHERE id=?", (SALARY, txn_id))
+
+
+# ---------- nicknames: one name for every spelling of a person ----------
+
+def apply_nicknames(con):
+    try:
+        pairs = con.execute("SELECT name, nickname FROM nicknames").fetchall()
+    except sqlite3.OperationalError:
+        return 0
+    n = 0
+    for name, nick in pairs:
+        n += con.execute("UPDATE txns SET payee=? WHERE UPPER(TRIM(payee))=UPPER(?) AND payee!=?",
+                         (nick, name, nick)).rowcount
+    return n
+
+
+def merge_names(con, names, nickname):
+    nick = " ".join(str(nickname or "").split()).upper()[:30]
+    names = [" ".join(str(x).split()).upper() for x in names if str(x).strip()]
+    if not nick or not names:
+        raise ValueError("Pick the names and give the nickname.")
+    for x in names:
+        if x != nick:
+            con.execute("INSERT OR REPLACE INTO nicknames(name, nickname) VALUES(?,?)", (x, nick))
+            con.execute("UPDATE nicknames SET nickname=? WHERE UPPER(nickname)=?", (nick, x))
+            if con.execute("SELECT 1 FROM rules WHERE field='payee' AND pattern=?", (nick,)).fetchone():
+                con.execute("DELETE FROM rules WHERE field='payee' AND UPPER(pattern)=?", (x,))
+            else:
+                con.execute("UPDATE rules SET pattern=? WHERE field='payee' AND UPPER(pattern)=?", (nick, x))
+    con.execute("DELETE FROM nicknames WHERE UPPER(name)=UPPER(nickname)")
+    n = apply_nicknames(con)
+    # sorted entries of one spelling teach the others: unsorted ones follow the most used head
+    cat = con.execute("SELECT category, COUNT(*) c FROM txns WHERE payee=? AND category!=''"
+                      " GROUP BY 1 ORDER BY c DESC LIMIT 1", (nick,)).fetchone()
+    sorted_n = 0
+    if cat:
+        sorted_n = con.execute("UPDATE txns SET category=? WHERE payee=? AND category=''",
+                               (cat[0], nick)).rowcount
+    return dict(renamed=n, sorted=sorted_n + apply_rules(con), nickname=nick)
+
+
+def unmerge_name(con, name):
+    r = con.execute("SELECT name, nickname FROM nicknames WHERE name=?", (name,)).fetchone()
+    if not r:
+        return 0
+    con.execute("DELETE FROM nicknames WHERE name=?", (name,))
+    n = 0
+    for t in con.execute("SELECT id, narration FROM txns WHERE payee=?", (r["nickname"],)).fetchall():
+        if payee_of(t["narration"]).upper() == r["name"].upper():
+            con.execute("UPDATE txns SET payee=? WHERE id=?", (payee_of(t["narration"]), t["id"]))
+            n += 1
+    return n
+
+
+def merge_people(con, kind, ids, nickname):
+    """Several staff or consultant records that are one person: one record, every spelling kept."""
+    table = PEOPLE[kind][0]
+    rows = [con.execute(f"SELECT * FROM {table} WHERE id=?", (int(i),)).fetchone() for i in ids]
+    rows = [r for r in rows if r]
+    nick = " ".join(str(nickname or "").split())
+    if len(rows) < 2 or not nick:
+        raise ValueError("Pick at least two names and give the name to keep.")
+    match = ", ".join(dict.fromkeys(m for r in rows for m in spellings(r["match"])))
+    keep = rows[0]
+    for r in rows[1:]:
+        con.execute(f"DELETE FROM {table} WHERE id=?", (r["id"],))
+        if table == "staff" and (r["salary"] if "salary" in r.keys() else 0) and not keep["salary"]:
+            con.execute("UPDATE staff SET salary=? WHERE id=?", (r["salary"], keep["id"]))
+    con.execute(f"UPDATE {table} SET name=?, match=? WHERE id=?", (nick, match, keep["id"]))
+    for r in rows:  # cash vouchers carry the name
+        for label in ("Cash salary", "Cash incentive"):
+            con.execute("UPDATE txns SET narration=? || substr(narration, ?) WHERE narration LIKE ?",
+                        (f"{label} - {nick}", len(f"{label} - {r['name']}") + 1, f"{label} - {r['name']}%"))
+    return keep["id"]
 
 
 def voucher_page(con, txn_id):
@@ -2369,9 +2540,19 @@ def voucher_page(con, txn_id):
                     (txn_id,)).fetchone()
     if not t or t["kind"] != "Cash" or not (t["debit"] or 0) > 0:
         raise ValueError("Voucher not found.")
+    lines = [t]
+    if t["ref"]:
+        lines = con.execute("SELECT t.* FROM txns t JOIN accounts a ON a.id=t.account_id WHERE a.kind='Cash'"
+                            " AND t.ref=? AND t.debit>0 ORDER BY t.category!=?, t.id", (t["ref"], SALARY)).fetchall()
     parts = t["narration"].split(" - ")
     name = parts[1] if len(parts) > 1 else t["payee"]
-    towards = "Salary" + (" " + parts[2] if len(parts) > 2 and parts[2].startswith("for ") else "")
+    total = sum(x["debit"] for x in lines)
+    def what(x):
+        p = x["narration"].split(" - ")
+        return ("Incentive" if x["category"] == INCENTIVE else "Salary") + \
+            (" " + p[2] if len(p) > 2 and p[2].startswith("for ") else "")
+    towards = " + ".join(f"{what(x)}: {inr_text(x['debit'])}" for x in lines) if len(lines) > 1 else what(t)
+    t = dict(t, debit=total)
     e = htmllib.escape
     when = datetime.strptime(t["date"], "%Y-%m-%d").strftime("%d %b %Y")
     clinic = f" ({e(t['clinic'])} clinic)" if t["clinic"] else ""
@@ -5046,6 +5227,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(page.encode(), "text/html; charset=utf-8")
             elif u.path == "/api/tax":
                 self.send(api_tax(q))
+            elif u.path == "/api/incentives":
+                self.send(api_incentives(q))
+            elif u.path == "/api/nicknames":
+                con = db()
+                rows = [dict(r) for r in con.execute(
+                    "SELECT n.name, n.nickname, (SELECT COUNT(*) FROM txns t WHERE t.payee=n.nickname) n"
+                    " FROM nicknames n ORDER BY n.nickname, n.name")]
+                con.close()
+                self.send(dict(rows=rows))
             elif u.path == "/api/itr/guide":
                 self.send(itr_guide(q))
             elif u.path == "/itr-filing.xlsx":
@@ -5246,6 +5436,27 @@ class Handler(BaseHTTPRequestHandler):
                     res["other"] = con.execute(
                         f"SELECT COUNT(*) FROM txns WHERE category NOT IN ('', ?) AND debit>0"
                         f" AND {who}", [head] + who_args).fetchone()[0]
+                elif u.path == "/api/incentive/split":
+                    split_incentive(con, int(d["id"]), d.get("amount"))
+                elif u.path == "/api/incentive/undo":
+                    undo_incentive(con, int(d["id"]))
+                elif u.path == "/api/staff/salary":
+                    con.execute("UPDATE staff SET salary=? WHERE id=?", (max(to_num(d.get("salary")), 0), int(d["id"])))
+                elif u.path == "/api/cash-salary/amount":
+                    amt = to_num(d.get("amount"))
+                    if amt <= 0:
+                        raise ValueError("Enter the amount.")
+                    res["changed"] = con.execute(
+                        "UPDATE txns SET debit=? WHERE id=? AND account_id IN (SELECT id FROM accounts WHERE kind='Cash')",
+                        (amt, int(d["id"]))).rowcount
+                elif u.path == "/api/merge":
+                    res.update(merge_names(con, d.get("names") or [], d.get("nickname")))
+                elif u.path == "/api/nicknames/delete":
+                    res["restored"] = unmerge_name(con, str(d.get("name") or ""))
+                elif u.path == "/api/people/merge":
+                    if d.get("kind") not in PEOPLE:
+                        raise ValueError("Unknown list.")
+                    res["id"] = merge_people(con, d["kind"], d.get("ids") or [], d.get("nickname"))
                 elif u.path == "/api/staff/delete":
                     con.execute("DELETE FROM staff WHERE id=?", (int(d["id"]),))
                 elif u.path == "/api/cash":
@@ -5456,6 +5667,7 @@ h3{font-size:15px;margin:0 0 6px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .row>div.grow{min-width:min(100%,240px)}
 .grow{flex:1;min-width:0;overflow-wrap:anywhere}
+.tx.wrap{flex-wrap:wrap}.tx.wrap>.grow{flex:1 1 180px}.acts{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-left:auto}
 .mute{color:var(--mute);font-size:13px}
 .num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .in{color:var(--in)}.out{color:var(--out)}
@@ -5625,7 +5837,8 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
       <select id="sc_staff" aria-label="Staff"></select>
       <input type="date" id="sc_date" aria-label="Date paid">
       <label class="mute">For <input type="month" id="sc_month" aria-label="Salary month"></label>
-      <input type="number" id="sc_amt" min="0" step="1" placeholder="Amount">
+      <input type="number" id="sc_amt" min="0" step="1" placeholder="Salary">
+      <input type="number" id="sc_inc" min="0" step="1" placeholder="Incentive (optional)">
       <select id="sc_clinic" aria-label="Clinic"></select>
       <input type="text" id="sc_note" placeholder="Note (optional)">
       <label class="mute" style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="sc_rep"> Every month till March</label>
@@ -5635,6 +5848,24 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
       and keep it with the books.</p>
     <div id="sc_list"></div></div>
   <div class="card scroll" id="stmonths" hidden></div>
+</section>
+<section id="incent">
+  <h2>Incentives</h2>
+  <p class="mute">Incentives are kept apart from fixed salary (Tally ledger Staff Incentives), so a month paid more
+  than usual is not a pay rise. Enter each person's fixed monthly salary; any bank payment above it is offered
+  below to file the extra as incentive.</p>
+  <div class="card"><h3 style="margin:0 0 8px">Pay incentive in cash</h3>
+    <div class="filters" style="margin:0">
+      <select id="in_staff" aria-label="Staff"></select>
+      <input type="date" id="in_date" aria-label="Date paid">
+      <label class="mute">For <input type="month" id="in_month" aria-label="Incentive month"></label>
+      <input type="number" id="in_amt" min="0" step="1" placeholder="Incentive amount">
+      <select id="in_clinic" aria-label="Clinic"></select>
+      <input type="text" id="in_note" placeholder="Note, e.g. 20 implants (optional)">
+      <button class="pri" id="in_add">Pay and make voucher</button></div></div>
+  <div class="card" id="in_tips"></div>
+  <div class="card scroll" id="in_staffbox"></div>
+  <div class="card" id="in_list"></div>
 </section>
 <section id="consult">
   <h2>Visiting consultants</h2>
@@ -5723,6 +5954,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     straight away; nothing already sorted is changed.</div></div>
     <button id="r_export">Download rules</button><button class="pri" id="r_import">Upload rules file</button></div>
     <input type="file" id="rfile" hidden accept=".json"></div>
+  <div class="card" id="nicklist"></div>
   <div class="card" id="rlist"></div>
 </section>
 <section id="reports">
@@ -5801,6 +6033,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <button data-tab="loans">Loans</button>
   <button data-tab="insurance">Insurance</button>
   <button data-tab="staff">Salaries</button>
+  <button data-tab="incent">Incentives</button>
   <button data-tab="consult">Consultants</button>
   <button data-tab="rules">Rules</button>
   <button data-tab="reports">ITR</button>
@@ -5929,7 +6162,8 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div id="if_list" style="max-height:60vh;overflow:auto"></div>
 </dialog>
 <div id="selbar"><span class="grow" id="seltext"></span>
-  <button class="ghost" id="selclear">Clear</button><button class="pri" id="selgo">Sort selected</button></div>
+  <button class="ghost" id="selclear">Clear</button><button class="ghost" id="selmerge" hidden>Merge names</button>
+  <button class="pri" id="selgo">Sort selected</button></div>
 <div id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);
@@ -5944,7 +6178,8 @@ function showSel(){const n=sel.size,bar=$('selbar');
   bar.style.bottom=document.querySelector('nav').offsetHeight+'px';bar.style.display=n?'flex':'none';
   if(selKind==='group'){const e=[...sel.values()].reduce((a,g)=>a+g.n,0);
     $('seltext').textContent=n+(n>1?' names':' name')+' selected ('+e+(e>1?' entries)':' entry)');}
-  else $('seltext').textContent=n+(n>1?' entries':' entry')+' selected';}
+  else $('seltext').textContent=n+(n>1?' entries':' entry')+' selected';
+  $('selmerge').hidden=!(selKind==='group'&&n>1);}
 function clearSel(){sel.clear();selKind='';document.querySelectorAll('.pick input').forEach(c=>c.checked=false);showSel();}
 function pickBox(kind,key,val){
   const l=document.createElement('label');l.className='pick';
@@ -6252,6 +6487,8 @@ function renderPeople(box,rows,kind,head,empty){box.innerHTML='';
 async function loadConsult(){
   const d=await api('/api/consultants?'+qs({owner:$('who').value,fy:$('fy').value}));
   renderPeople($('clist'),d.rows,'consultant','Consultant fees','No consultants added yet. Add a name above, or in the Sort tab choose Consultant fees for a name and it is added here.');
+  if(d.rows.length>1){const b=document.createElement('button');b.className='link';b.textContent='Merge names of one person';
+    b.onclick=run(()=>mergePeople('consultant',d.rows,loadConsult));$('clist').appendChild(b);}
 }
 async function loadCashSalary(){
   const d=await api('/api/cash-salary?'+qs({fy:$('fy').value}));
@@ -6260,21 +6497,89 @@ async function loadCashSalary(){
   if(!$('sc_date').value)$('sc_date').value=today();
   if(!$('sc_month').value)$('sc_month').value=today().slice(0,7);
   $('sc_list').innerHTML=d.rows.length?'<h3 style="margin-top:12px">Cash salaries, '+fyLabel(+$('fy').value).split(' (')[0]+': '+inr(d.total)+'</h3>'+
-    d.rows.map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+r.date+'</b> <span class="chip">'+esc(r.ref||'')+'</span>'+
-      '<div class="mute">'+esc(r.narration.replace(/^Cash salary - /,''))+'</div></div><div class="num out">'+inr(r.debit)+'</div>'+
-      '<a class="link" href="/voucher?id='+r.id+'" target="_blank" rel="noopener">Voucher</a>'+
-      '<button class="link" data-screp="'+r.id+'">Repeat monthly</button>'+
-      '<button class="link" data-scdel="'+r.id+'">Delete</button></div>').join(''):'';
+    d.rows.map(r=>'<div class="tx wrap" style="cursor:default"><div class="grow"><b>'+r.date+'</b> <span class="chip">'+esc(r.ref||'')+'</span>'+
+      (/^Cash incentive/.test(r.narration)?' <span class="chip">Incentive</span>':'')+
+      '<div class="mute">'+esc(r.narration.replace(/^Cash (salary|incentive) - /,''))+'</div></div><div class="num out">'+inr(r.debit)+'</div>'+
+      '<div class="acts"><a class="link" href="/voucher?id='+r.id+'" target="_blank" rel="noopener">Voucher</a>'+
+      '<button class="link" data-scamt="'+r.id+'" data-v="'+r.debit+'">Change amount</button>'+
+      (/^Cash salary/.test(r.narration)?'<button class="link" data-screp="'+r.id+'">Repeat monthly</button>':'')+
+      '<button class="link" data-scdel="'+r.id+'">Delete</button></div></div>').join(''):'';
   $('sc_list').querySelectorAll('[data-screp]').forEach(x=>x.onclick=run(async()=>{
     if(!confirm('Pay the same amount on the same day of every following month up to March, each for the next month, with its own voucher?'))return;
     const r=await api('/api/cash-salary',{id:+x.dataset.screp});toast(r.count+' months added: '+r.ref);await loadStaff();}));
+  $('sc_list').querySelectorAll('[data-scamt]').forEach(x=>x.onclick=run(async()=>changeAmount(x.dataset.scamt,x.dataset.v,loadStaff)));
   $('sc_list').querySelectorAll('[data-scdel]').forEach(x=>x.onclick=run(async()=>{
     if(!confirm('Delete this cash salary entry and its voucher?'))return;
     await api('/api/cash/delete',{id:+x.dataset.scdel});await loadStaff();}));}
+async function changeAmount(id,old,after){
+  const v=prompt('New amount for this month (was '+inr(old)+')',Math.round(old));if(v===null)return;
+  await api('/api/cash-salary/amount',{id:+id,amount:v});toast('Amount changed; the voucher shows the new figure');await after();}
+async function mergePeople(kind,rows,after){
+  if(rows.length<2)return toast('Need at least two names to merge');
+  const list=rows.map((c,i)=>(i+1)+'. '+c.name).join('\n');
+  const pick=prompt('Which names are the same person? Enter their numbers, e.g. 1,2\n\n'+list);if(!pick)return;
+  const chosen=pick.split(/[^0-9]+/).filter(Boolean).map(n=>rows[+n-1]).filter(Boolean);
+  if(chosen.length<2)return toast('Pick at least two numbers');
+  const nick=prompt('Name to keep for all of them',chosen.map(c=>c.name).sort((a,b)=>a.length-b.length)[0]);if(!nick)return;
+  await api('/api/people/merge',{kind:kind,ids:chosen.map(c=>c.id),nickname:nick});
+  await api('/api/merge',{names:chosen.map(c=>c.name),nickname:nick});
+  toast('Merged as '+nick);await after();}
+let IN=null;
+async function loadIncentives(){
+  IN=await api('/api/incentives?'+qs({fy:$('fy').value}));
+  keepValue('in_staff','<option value="">Staff member</option>'+IN.staff.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join(''));
+  keepValue('in_clinic',clinicOptions('<option value="">Clinic</option>'));
+  if(!$('in_date').value)$('in_date').value=today();
+  if(!$('in_month').value)$('in_month').value=today().slice(0,7);
+  const ml=m=>MON[+m.slice(5)-1]+' '+m.slice(0,4);
+  $('in_tips').innerHTML='<h3 style="margin:0 0 6px">Paid more than usual</h3>'+(IN.tips.length?IN.tips.map((t,i)=>
+    '<div class="tx wrap" style="cursor:default"><div class="grow"><b>'+esc(t.staff)+'</b>, '+ml(t.month)+
+    '<div class="mute">Paid '+inr(t.total)+' by bank; usual '+inr(t.usual)+' ('+esc(t.how)+')</div></div>'+
+    '<div class="num out">+'+inr(t.extra)+'</div><button data-tip="'+i+'">File extra as incentive</button></div>').join('')
+    :'<p class="mute" style="margin:0">Nothing above the usual pay this year. Enter fixed salaries below so changes are spotted.</p>');
+  const months=fyMonths(),cell=v=>'<td class="num">'+(v?r0(v):'')+'</td>';
+  $('in_staffbox').innerHTML=IN.staff.length?'<h3>Fixed salary and incentives, month by month</h3><table><tr><th>Staff</th><th>Fixed salary</th>'+
+    months.map(m=>'<th>'+m[1].slice(0,3)+'</th>').join('')+'<th>Total</th></tr>'+
+    IN.staff.map(c=>'<tr><td>'+esc(c.name)+'</td><td><button class="link" data-sal="'+c.id+'" data-v="'+c.salary+'">'+
+      (c.salary?inr(c.salary):(c.usual?'usually '+r0(c.usual):'Set'))+'</button></td>'+months.map(m=>cell(c.months[m[0]])).join('')+
+      '<td class="num"><b>'+r0(c.total)+'</b></td></tr>').join('')+'</table>'+
+    '<button class="link" id="in_merge">Merge names of one person</button>'
+    :'<p class="mute">Add staff in Salaries first.</p>';
+  $('in_list').innerHTML='<h3 style="margin:0 0 6px">Incentives paid, '+fyLabel(IN.fy).split(' (')[0]+': '+inr(IN.total)+'</h3>'+
+    (IN.entries.length?IN.entries.map(r=>'<div class="tx wrap" style="cursor:default"><div class="grow"><b>'+r.date+'</b> '+
+      (r.ref&&r.kind==='Cash'?'<span class="chip">'+esc(r.ref)+'</span> ':'')+'<span class="chip">'+esc(r.kind==='Cash'?'Cash':r.acct)+'</span>'+
+      '<div class="mute">'+esc(r.kind==='Cash'?r.narration.replace(/^Cash incentive - /,''):(r.payee+(r.split_of?' (part of a salary payment)':'')))+'</div></div>'+
+      '<div class="num out">'+inr(r.debit)+'</div><div class="acts">'+
+      (r.kind==='Cash'?'<a class="link" href="/voucher?id='+r.id+'" target="_blank" rel="noopener">Voucher</a>'+
+        '<button class="link" data-inamt="'+r.id+'" data-v="'+r.debit+'">Change amount</button>':'')+
+      '<button class="link" data-inundo="'+r.id+'">'+(r.kind==='Cash'?'Delete':'Back to salary')+'</button></div></div>').join('')
+    :'<p class="mute" style="margin:0">None yet. Bank payments of incentives: file them under Staff incentives in Sort, or use the list above.</p>');
+  $('in_tips').querySelectorAll('[data-tip]').forEach(b=>b.onclick=run(async()=>{const t=IN.tips[+b.dataset.tip];
+    const v=prompt('Incentive part of '+t.staff+'\'s '+ml(t.month)+' payment',Math.round(t.extra));if(v===null)return;
+    await api('/api/incentive/split',{id:t.id,amount:v});toast('Filed '+inr(v)+' as incentive');await loadIncentives();}));
+  $('in_staffbox').querySelectorAll('[data-sal]').forEach(b=>b.onclick=run(async()=>{
+    const v=prompt('Fixed monthly salary (0 to use the amount paid most months)',b.dataset.v||'');if(v===null)return;
+    await api('/api/staff/salary',{id:+b.dataset.sal,salary:v});await loadIncentives();}));
+  if($('in_merge'))$('in_merge').onclick=run(()=>mergePeople('staff',IN.staff,loadIncentives));
+  $('in_list').querySelectorAll('[data-inamt]').forEach(b=>b.onclick=run(()=>changeAmount(b.dataset.inamt,b.dataset.v,loadIncentives)));
+  $('in_list').querySelectorAll('[data-inundo]').forEach(b=>b.onclick=run(async()=>{
+    if(!confirm('Undo this incentive? A cash one is deleted; a bank one goes back under salary.'))return;
+    await api('/api/incentive/undo',{id:+b.dataset.inundo});await loadIncentives();}));}
+async function loadNicknames(){
+  const d=await api('/api/nicknames'),box=$('nicklist');
+  box.innerHTML='<h3 style="margin:0 0 6px">Nicknames</h3><p class="mute" style="margin:0 0 6px">Different spellings of one person shown as one name, '+
+    'now and on every import. In Sort, tick the names and choose Merge names.</p>'+
+    (d.rows.length?d.rows.map(r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+esc(r.nickname)+'</b>'+
+      '<div class="mute">'+esc(r.name)+' &rarr; '+esc(r.nickname)+'</div></div><button class="link" data-nick="'+esc(r.name)+'">Undo</button></div>').join('')
+    :'<span class="mute">None yet.</span>');
+  box.querySelectorAll('[data-nick]').forEach(b=>b.onclick=run(async()=>{
+    const r=await api('/api/nicknames/delete',{name:b.dataset.nick});toast(r.restored+' entries back to '+b.dataset.nick);await loadNicknames();}));}
 async function loadStaff(){
   loadCashSalary().catch(e=>toast(e.message));
   const d=await api('/api/staff?'+qs({owner:$('who').value,fy:$('fy').value}));
   renderPeople($('stlist'),d.rows,'staff','Staff salaries','No staff added yet. Add a name above, or in the Sort tab choose Staff salaries for a name and it is added here.');
+  if(d.rows.length>1){const b=document.createElement('button');b.className='link';b.textContent='Merge names of one person';
+    b.onclick=run(()=>mergePeople('staff',d.rows,loadStaff));$('stlist').appendChild(b);}
   const paid=d.rows.filter(c=>c.n),months=fyMonths(),box=$('stmonths');box.hidden=!paid.length;if(!paid.length)return;
   const cell=v=>'<td class="num">'+(v?r0(v):'')+'</td>';
   box.innerHTML='<h3>Month by month</h3><table><tr><th>Staff</th>'+months.map(m=>'<th>'+m[1].slice(0,3)+'</th>').join('')+'<th>Total</th></tr>'+
@@ -6520,7 +6825,8 @@ function refresh(){const tab=activeTab();
   if(tab==='txns')return loadTxns(true);if(tab==='reports')return loadReport();if(tab==='sort')return loadSort();
   if(tab==='consult')return loadConsult();if(tab==='trading')return loadTrading();
   if(tab==='staff')return loadStaff();if(tab==='loans')return loadLoans();if(tab==='insurance')return loadInsurance();if(tab==='banking')return loadCash();
-  if(tab==='assets')return loadAssets();}
+  if(tab==='assets')return loadAssets();if(tab==='incent')return loadIncentives();
+  if(tab==='rules')return loadNicknames();}
 const run=fn=>async(...a)=>{try{await fn(...a);}catch(e){toast(e.message);}};
 async function go(tab){
   clearSel();
@@ -6589,10 +6895,14 @@ $('eq_add').onclick=run(async()=>{
   const cost=prompt('Cost in rupees');if(!cost)return;
   const known=EQ.items.find(([i])=>i.toLowerCase()===item.trim().toLowerCase());
   await api('/api/equipment',{item:known?known[0]:item.trim(),name:item.trim(),date:date.trim(),cost:cost});await loadEquipment();});
+$('in_add').onclick=run(async()=>{
+  const r=await api('/api/cash-salary',{staff:$('in_staff').value,date:$('in_date').value,month:$('in_month').value,
+    amount:0,incentive:$('in_amt').value,clinic:$('in_clinic').value,note:$('in_note').value});
+  $('in_amt').value='';$('in_note').value='';toast('Saved as voucher '+r.ref);await loadIncentives();});
 $('sc_add').onclick=run(async()=>{
   const r=await api('/api/cash-salary',{staff:$('sc_staff').value,date:$('sc_date').value,month:$('sc_month').value,
-    amount:$('sc_amt').value,clinic:$('sc_clinic').value,note:$('sc_note').value,repeat:$('sc_rep').checked});
-  $('sc_amt').value='';$('sc_note').value='';$('sc_rep').checked=false;
+    amount:$('sc_amt').value,incentive:$('sc_inc').value,clinic:$('sc_clinic').value,note:$('sc_note').value,repeat:$('sc_rep').checked});
+  $('sc_amt').value='';$('sc_inc').value='';$('sc_note').value='';$('sc_rep').checked=false;
   toast(r.count?r.count+' months saved: vouchers '+r.ref:'Saved as voucher '+r.ref);await loadStaff();});
 async function loadParties(){
   const d=await api('/api/parties?'+qs({owner:$('who').value})),box=$('ln_people');
@@ -6680,6 +6990,12 @@ $('b_save').onclick=run(async()=>{
   else r=await api('/api/txns-bulk',{ids:[...sel.keys()],category:cat,clinic:clinic});
   $('bdlg').close();toast('Posted '+r.changed+' entries to '+LED(cat));await loadState();await refresh();});
 $('selclear').onclick=clearSel;
+$('selmerge').onclick=run(async()=>{
+  const names=[...new Set([...sel.values()].map(g=>g.payee))];
+  if(names.length<2)return toast('Tick two or more names of the same person');
+  const nick=prompt('One name for all of these:\n'+names.join('\n'),names.slice().sort((a,b)=>a.length-b.length)[0]);if(!nick)return;
+  const r=await api('/api/merge',{names:names,nickname:nick});clearSel();
+  toast('Merged as '+r.nickname+(r.sorted?'; '+r.sorted+' entries sorted':''));await loadState();await loadSort();});
 $('selgo').onclick=()=>{bulkMode='sel';$('b_save').textContent='Apply to selected';
   $('b_rulewrap').style.display=selKind==='group'?'block':'none';
   $('b_title').textContent='Sort '+$('seltext').textContent.replace(' selected','');$('bdlg').showModal();};

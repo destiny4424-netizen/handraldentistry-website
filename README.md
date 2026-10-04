@@ -86,6 +86,14 @@ the app, one per line, and stay on the droplet. Only the accounts listed are imp
 the daughter's account numbers are added under Daughter. Statements that fail are listed
 with the reason and the PDF, and are tried again on every check.
 
+### Incentives and nicknames
+The **Incentives** tab keeps incentives apart from fixed salary (Tally ledger Staff Incentives). Enter each
+person's fixed monthly salary (or the app uses the amount paid most months); a bank payment above it is
+listed so the extra can be filed as incentive, splitting that entry in two. Cash incentives get a voucher,
+alone or with the month's cash salary, and any month's cash amount can be changed. **Merge names** (Sort,
+Salaries, Consultants) puts different spellings of one person under one nickname, now and on every import;
+Rules lists the nicknames with Undo.
+
 ### Tax to pay
 The ITR tab works out the year's income tax from the books for both regimes, with clinic income
 either at 50% of receipts (section 44ADA) or from the books (receipts less expenses and
