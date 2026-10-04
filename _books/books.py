@@ -553,6 +553,9 @@ CREATE TABLE IF NOT EXISTS mail_log(
   status TEXT, found INTEGER DEFAULT 0, added INTEGER DEFAULT 0, detail TEXT DEFAULT '',
   checked TEXT, file BLOB, filename TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS nicknames(name TEXT PRIMARY KEY COLLATE NOCASE, nickname TEXT);
+CREATE TABLE IF NOT EXISTS ais(
+  id INTEGER PRIMARY KEY, owner TEXT DEFAULT 'Self', fy INTEGER, category TEXT, amount REAL DEFAULT 0,
+  source TEXT DEFAULT '', uploaded TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS tds(
   id INTEGER PRIMARY KEY, owner TEXT DEFAULT 'Self', fy INTEGER, deductor TEXT DEFAULT '',
   tan TEXT DEFAULT '', section TEXT DEFAULT '', paid REAL DEFAULT 0, tds REAL DEFAULT 0,
@@ -2640,12 +2643,16 @@ def tax_figures(fy, owner):
                        " WHERE x.kind='Cash' AND x.owner=? AND t.date BETWEEN ? AND ?",
                        (owner, a, b)).fetchone()[0]
     tds = con.execute("SELECT COALESCE(SUM(tds),0) FROM tds WHERE fy=? AND owner=?", (fy, owner)).fetchone()[0]
+    try:
+        ais = {r[0]: r[1] for r in con.execute("SELECT category, amount FROM ais WHERE fy=? AND owner=?", (fy, owner))}
+    except sqlite3.OperationalError:
+        ais = {}
     con.close()
     tr = {k: 0.0 for k, _ in TRADE_FIELDS}
     for r in api_trading({"fy": [str(fy)], "owner": [owner]})["rows"]:
         for k, _ in TRADE_FIELDS:
             tr[k] += r[k] or 0
-    return dict(
+    out = dict(
         salary=cin("Salary income"), receipts=receipts, cash=cash, expenses=expenses, dep=dep,
         interest=cin("Interest received"), other=cin("Other income"), dividends=tr["dividends"],
         fno=tr["fno"] - tr["charges"], intraday=tr["intraday"], stcg=tr["stcg"], ltcg=tr["ltcg"],
@@ -2655,6 +2662,12 @@ def tax_figures(fy, owner):
         d80d=cout("Health insurance premium (80D)"), d80g=cout("Donations (80G)"),
         ptax=cout("GST, TDS and professional tax"),
         paid=cout("Income tax and TDS paid"), tds=round(tds, 2))
+    # The department matches the return with AIS: never declare less than it shows.
+    a_int = sum(ais.get(c, 0) for c in ("Interest from savings bank", "Interest from deposit", "Interest from others"))
+    out = dict(out, books_salary=out["salary"], books_interest=out["interest"], books_dividends=out["dividends"],
+               salary=max(out["salary"], ais.get("Salary", 0)), interest=max(out["interest"], a_int),
+               dividends=max(out["dividends"], ais.get("Dividend", 0)))
+    return out
 
 
 def compute_tax(f, fy, regime, method):
@@ -2787,6 +2800,7 @@ def itr_guide(q):
     books = best["method"] == "books"
     con = db()
     tds = tds_rows(con, fy, owner)
+    ais = ais_compare(con, fy, owner, f)
     a, b = fy_range(fy)
     challans = [dict(r) for r in con.execute(
         "SELECT t.date, t.debit amount, t.narration, x.name acct FROM txns t JOIN accounts x ON x.id=t.account_id"
@@ -2806,6 +2820,9 @@ def itr_guide(q):
         why.append("short-term capital gains")
     if f["ltcg"] and (fy < 2024 or f["ltcg"] > 125000):
         why.append("long-term gains" + ("" if fy < 2024 else " above Rs 1.25 lakh"))
+    if any(r["category"] == "Sale of securities and units of mutual fund" and r["ais"] > 0 for r in ais) \
+            and not (f["stcg"] or f["ltcg"]):
+        why.append("share or fund sales in AIS (capital gains to report)")
     if books:
         why.append("clinic income from the books, not 44ADA")
     if best["carried"]:
@@ -2813,7 +2830,7 @@ def itr_guide(q):
     if total > 5000000:
         why.append("income above Rs 50 lakh")
     if not f["receipts"] and not f["fno"] and not f["intraday"]:
-        form = "ITR-2" if (f["stcg"] or f["ltcg"]) else "ITR-1"
+        form = "ITR-2" if (f["stcg"] or f["ltcg"] or any("sales in AIS" in w for w in why)) else "ITR-1"
         form_why = "No business or professional income this year."
     elif why:
         form, form_why = "ITR-3", "Because of " + ", ".join(why) + "."
@@ -2934,8 +2951,51 @@ def itr_guide(q):
         f"under 5 lakh) and losses can no longer be carried forward.",
     ]
     return dict(fy=fy, owner=owner, ay=ay, form=form, form_why=form_why, due=due, regime=regime,
-                regime_note=regime_note, best=best, rows=rows, tds=tds, challans=challans, steps=steps,
+                regime_note=regime_note, best=best, rows=rows, tds=tds, challans=challans, steps=steps, ais=ais,
+                tis_cats=TIS_CATS,
                 notes=t["notes"])
+
+
+def ais_compare(con, fy, owner, f):
+    """Each AIS figure against the books, with what to do about a gap."""
+    ais = {r["category"]: dict(r) for r in con.execute("SELECT * FROM ais WHERE fy=? AND owner=?", (fy, owner))}
+    interest = sum(ais[c]["amount"] for c in ("Interest from savings bank", "Interest from deposit",
+                                                "Interest from others") if c in ais)
+    out = []
+    for cat, r in sorted(ais.items(), key=lambda x: TIS_CATS.index(x[0]) if x[0] in TIS_CATS else 99):
+        v, books, note = r["amount"], None, ""
+        if cat == "Salary":
+            books = f.get("books_salary", f["salary"])
+            note = "Not in the books; the tax working uses the AIS figure. Show it in Schedule S (Form 16 from the employer)." if books < v - 1 else ""
+        elif cat.startswith("Interest from") and cat != "Interest from income tax refund":
+            books = f.get("books_interest", f["interest"])
+            note = ("All interest in AIS together is " + inr_text(interest) + "; the books have less. The tax "
+                    "working uses the AIS figure; declare it in Schedule OS.") if books < interest - 1 else ""
+        elif cat == "Interest from income tax refund":
+            note = "Taxable in the year received; declare under other sources."
+        elif cat == "Dividend":
+            books = f.get("books_dividends", f["dividends"])
+            note = "The tax working uses the AIS figure; declare it in Schedule OS." if books < v - 1 else ""
+        elif cat == "Sale of securities and units of mutual fund":
+            books = f["stcg"] + f["ltcg"]
+            note = ("This is the sale value, not the gain. " + (
+                "No capital gains are in the books: upload the broker or CAS capital gains statement in Assets/Trading."
+                if not (f["stcg"] or f["ltcg"]) else "Gains in the books are shown; the CA matches them to these sales."))
+        elif cat == "Business receipts":
+            books = f["receipts"]
+            note = "Professional receipts in the books are lower than AIS: check unsorted credits." if books < v - 1 else ""
+        elif cat == "Receipt of transfer of virtual digital asset":
+            note = "Crypto: taxed at 30% (Schedule VDA), losses not set off."
+        elif cat in ("Cash deposits", "Cash withdrawals", "Purchase of time deposits", "Purchase of securities and units "
+                     "of mutual funds", "Purchase of immovable property", "Business expenses", "Foreign remittance"):
+            note = "Information only, not income; it should match your bank and investment records."
+        else:
+            note = "Check and declare if it is your income."
+        status = "ok" if books is not None and books >= v - 1 and not note else ("info" if books is None else "check")
+        if cat == "Sale of securities and units of mutual fund":
+            status = "check" if not (f["stcg"] or f["ltcg"]) else "ok"
+        out.append(dict(id=r["id"], category=cat, ais=v, books=books, status=status, note=note, source=r["source"]))
+    return out
 
 
 def itr_filing_xlsx(q):
@@ -2952,12 +3012,15 @@ def itr_filing_xlsx(q):
             for r in g["tds"]]
     tds.append(("b", ["Total", "", "", "", float(sum(r["paid"] for r in g["tds"])),
                       float(sum(r["tds"] for r in g["tds"]))]))
+    aiss = [("h", ["AIS category", "AIS", "Books", "Note"])] + [
+        ("r", [r["category"], float(r["ais"]), "" if r["books"] is None else float(r["books"]), r["note"]]) for r in g["ais"]]
     steps = [("h", ["#", "Step"])] + [("r", [str(i), s]) for i, s in enumerate(g["steps"], 1)]
     steps += [("r", []), ("b", ["", "Notes"])] + [("r", ["", n]) for n in g["notes"]]
     work = [("h", ["Tax working (" + g["regime"] + ", " + g["best"]["method"] + ")", "Amount"])]
     work += [("b" if l["bold"] else "r", [l["label"], float(l["value"])]) for l in g["best"]["lines"]]
     return make_xlsx([("Filing sheet", sheet, [34, 52, 16, 70], False), ("Tax working", work, [70, 16], True),
-                      ("TDS 26AS", tds, [40, 14, 10, 8, 16, 16], True), ("Steps", steps, [5, 120], True)])
+                      ("TDS 26AS", tds, [40, 14, 10, 8, 16, 16], True), ("AIS vs books", aiss, [44, 16, 16, 90], True),
+                      ("Steps", steps, [5, 120], True)])
 
 
 
@@ -3490,6 +3553,78 @@ def parse_ais_json(obj):
     return out
 
 
+# Taxpayer Information Summary categories, as the AIS names them.
+TIS_CATS = ["Salary", "Rent received", "Dividend", "Interest from savings bank", "Interest from deposit",
+            "Interest from others", "Interest from income tax refund",
+            "Sale of securities and units of mutual fund", "Sale of land or building",
+            "Purchase of securities and units of mutual funds", "Purchase of immovable property",
+            "Business receipts", "Business expenses", "Receipt of transfer of virtual digital asset",
+            "Rent on plant and machinery", "Winnings from lottery or crossword puzzle", "Foreign remittance",
+            "Cash deposits", "Cash withdrawals", "Insurance commission", "Off market credit transactions",
+            "Off market debit transactions", "Purchase of time deposits", "Receipt of accumulated balance of PF",
+            "Income from investment in units of a business trust", "Miscellaneous receipts"]
+TIS_RE = re.compile(r"^\s*\d*\s*(" + "|".join(re.escape(c) for c in sorted(TIS_CATS, key=len, reverse=True))
+                    + r")\b(.*)$", re.I)
+
+
+def parse_tis_lines(lines):
+    """Category and amount from a TIS (or the TIS part of an AIS PDF): the last figure on the line,
+    which is the value accepted by the taxpayer or confirmed by the source."""
+    out = {}
+    for s in lines:
+        m = TIS_RE.match(s)
+        if not m:
+            continue
+        nums = [n for n in (num_cell(x) for x in m.group(2).split()) if n is not None]
+        if nums:
+            cat = next(c for c in TIS_CATS if c.lower() == m.group(1).lower())
+            out.setdefault(cat, nums[-1])
+    return out
+
+
+def parse_ais_pdf_tds(lines):
+    """Part B1 of an AIS PDF: a summary row per deductor (code, description and name, TAN, count,
+    amount paid), then one row per credit with the quarter, date, amount, TDS deducted and deposited."""
+    out, cur = [], None
+    for s in lines:
+        m = re.match(r"^\s*\d+\s+(TDS|TCS)-(\w+)\s+(.*?)\s*\(?([A-Z]{4}\d{5}[A-Z])\)?\s+\d+\s+([\d,]+(?:\.\d+)?)\s*$", s)
+        if m:
+            text = re.sub(r"^.*\)\s*", "", m.group(3)) or m.group(3)  # drop "Salary received (Section 192)"
+            cur = dict(deductor=" ".join(text.split()).title()[:80], tan=m.group(4), section=m.group(2)[:12],
+                       paid=num_cell(m.group(5)) or 0, tds=0.0, source=m.group(1))
+            out.append(cur)
+            continue
+        d = re.search(r"Q[1-4].*?\d{2}/\d{2}/\d{4}\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)", s)
+        if d and cur:
+            cur["tds"] = round(cur["tds"] + (num_cell(d.group(2)) or 0), 2)
+        if re.search(r"(?i)SFT\s+Information|Part\s*B2", s):
+            cur = None
+    return out
+
+
+def parse_ais_json_tis(obj):
+    out = {}
+    names = {c.lower(): c for c in TIS_CATS}
+
+    def walk(o):
+        if isinstance(o, dict):
+            cat = next((names[v.strip().lower()] for v in o.values()
+                        if isinstance(v, str) and v.strip().lower() in names), None)
+            if cat:
+                nums = [_as_num(v) for k, v in o.items() if re.search(r"(?i)deriv|accept|confirm|amount|value", k)
+                        and _as_num(v) is not None]
+                if nums:
+                    out.setdefault(cat, nums[-1])
+                    return
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(obj)
+    return out
+
+
 def parse_26as(name, data, password):
     """Form 26AS (TRACES text or PDF) or AIS (JSON or PDF): who deducted tax and how much.
     Returns (assessment year start or None, rows)."""
@@ -3504,10 +3639,14 @@ def parse_26as(name, data, password):
             raise ValueError("This zip file has no 26AS text, JSON or PDF inside.")
         except (RuntimeError, zipfile.BadZipFile):
             raise ValueError("Could not open the zip. Its password is the date of birth as DDMMYYYY.")
+    tis = {}
     if data[:4] == b"%PDF":
         lines = pdf_text_lines(data, password)
-        rows = parse_26as_lines(lines, None)
         text = "\n".join(lines)
+        if re.search(r"(?i)annual\s+information\s+statement|taxpayer\s+information\s+summary", text):
+            rows, tis = parse_ais_pdf_tds(lines), parse_tis_lines(lines)
+        else:
+            rows = parse_26as_lines(lines, None)
     else:
         text = data.decode("utf-8-sig", "replace")
         try:
@@ -3515,13 +3654,16 @@ def parse_26as(name, data, password):
         except json.JSONDecodeError:
             obj = None
         rows = parse_ais_json(obj) if obj is not None else parse_26as_lines(text.splitlines(), "^")
+        if obj is not None:
+            tis = parse_ais_json_tis(obj)
     ay = re.search(r"(?i)assessment\s*year\W{0,5}(20\d\d)\s*-\s*\d\d", text)
     if not ay:
         ay = re.search(r"(?i)\"?(?:assessmentyear|ay)\"?\s*[:=]\s*\"?(20\d\d)", text)
-    if not rows:
-        raise ValueError("No tax deducted (TDS) found. Upload Form 26AS (TRACES, View Tax Credit, "
-                         "export as Text or PDF) or the AIS JSON/PDF from the income-tax portal.")
-    return (int(ay.group(1)) - 1 if ay else None), rows
+    fy = re.search(r"(?i)financial\s*year\W{0,5}(20\d\d)\s*-\s*\d\d", text)
+    if not rows and not tis:
+        raise ValueError("Nothing found. Upload Form 26AS (TRACES, View Tax Credit, export as Text or PDF) "
+                         "or the AIS / TIS PDF or JSON from the income-tax portal or AIS app.")
+    return (int(ay.group(1)) - 1 if ay else int(fy.group(1)) if fy else None), rows, tis
 
 
 def tds_rows(con, fy, owner):
@@ -5305,19 +5447,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(save_mail_settings(json.loads(self.body() or b"{}")))
             if u.path == "/api/tds/upload":
                 owner = qget(q, "owner") or "Self"
-                fy_file, rows = parse_26as(qget(q, "name"), self.body(), qget(q, "pw"))
+                fy_file, rows, tis = parse_26as(qget(q, "name"), self.body(), qget(q, "pw"))
                 fy = fy_file if fy_file is not None else int(qget(q, "fy"))
                 now = datetime.now().strftime("%Y-%m-%d %H:%M")
                 with LOCK:
                     con = db()
-                    con.execute("DELETE FROM tds WHERE fy=? AND owner=? AND source!='Manual'", (fy, owner))
+                    if rows:
+                        con.execute("DELETE FROM tds WHERE fy=? AND owner=? AND source!='Manual'", (fy, owner))
+                    if tis:
+                        con.execute("DELETE FROM ais WHERE fy=? AND owner=? AND source!='Manual'", (fy, owner))
+                        con.executemany("INSERT INTO ais(owner,fy,category,amount,source,uploaded) VALUES(?,?,?,?,'AIS',?)",
+                                        [(owner, fy, c, v, now) for c, v in tis.items()])
                     con.executemany("INSERT INTO tds(owner,fy,deductor,tan,section,paid,tds,source,uploaded)"
                                     " VALUES(?,?,?,?,?,?,?,?,?)",
                                     [(owner, fy, r["deductor"], r["tan"], r["section"], r["paid"], r["tds"],
                                       r["source"], now) for r in rows])
                     con.commit()
                     con.close()
-                return self.send(dict(fy=fy, found=len(rows), tds=round(sum(r["tds"] for r in rows), 2)))
+                return self.send(dict(fy=fy, found=len(rows), tds=round(sum(r["tds"] for r in rows), 2), tis=len(tis)))
+            if u.path == "/api/ais":
+                d = json.loads(self.body() or b"{}")
+                with LOCK:
+                    con = db()
+                    if d.get("delete"):
+                        con.execute("DELETE FROM ais WHERE id=?", (int(d["delete"]),))
+                    else:
+                        cat = next((c for c in TIS_CATS if c == d.get("category")), None)
+                        if not cat:
+                            raise ValueError("Pick the AIS category.")
+                        con.execute("DELETE FROM ais WHERE owner=? AND fy=? AND category=?",
+                                    (d.get("owner") or "Self", int(d["fy"]), cat))
+                        con.execute("INSERT INTO ais(owner,fy,category,amount,source,uploaded) VALUES(?,?,?,?,'Manual',?)",
+                                    (d.get("owner") or "Self", int(d["fy"]), cat, to_num(d.get("amount")),
+                                     datetime.now().strftime("%Y-%m-%d %H:%M")))
+                    con.commit()
+                    con.close()
+                return self.send({"ok": True})
             if u.path == "/api/tds":
                 d = json.loads(self.body() or b"{}")
                 with LOCK:
@@ -5967,7 +6132,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="card scroll" id="taxcard"></div>
   <div class="card" id="filecard">
     <div class="row"><h3 class="grow" style="margin:0">File on the income-tax portal</h3>
-      <button id="tds_up">Upload Form 26AS / AIS</button>
+      <button id="tds_up">Upload AIS / TIS / 26AS</button>
       <button class="pri" id="itr_xlsx">Download filing sheet (Excel)</button></div>
     <p class="mute" style="margin:6px 0">Upload Form 26AS (TRACES text zip or PDF; the password is your date of birth as
     DDMMYYYY) or the AIS (JSON or PDF) so tax deducted by banks, hospitals and others is counted. The sheet below lists
@@ -5980,6 +6145,10 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
         <input id="tds_tan" placeholder="TAN" size="11"><input id="tds_sec" placeholder="Section" size="6">
         <input id="tds_paid" placeholder="Amount paid" type="number" size="10"><input id="tds_amt" placeholder="TDS" type="number" size="8">
         <button id="tds_add">Add</button></div></details>
+    <details id="file_ais_box" open><summary><b>AIS check: income the department knows about</b> <span class="mute" id="ais_sum"></span></summary>
+      <div class="scroll" id="file_ais"></div>
+      <div class="row" style="margin-top:6px"><select id="ais_cat" class="grow" aria-label="AIS category"></select>
+        <input id="ais_amt" type="number" placeholder="Amount in AIS" size="12"><button id="ais_add">Add</button></div></details>
     <div class="scroll" id="file_rows" style="margin-top:8px"></div>
     <input type="file" id="tdsfile" hidden accept=".txt,.zip,.pdf,.json">
   </div>
@@ -6444,6 +6613,14 @@ async function loadFiling(){
     g.tds.map(r=>'<tr><td>'+esc(r.deductor)+' <span class="mute">'+esc(r.source)+'</span></td><td>'+esc(r.tan)+'</td><td>'+esc(r.section)+
       '</td><td class="num">'+inr(r.paid)+'</td><td class="num">'+inr(r.tds)+'</td><td><button data-tdel="'+r.id+'">Delete</button></td></tr>').join('')+
     '<tr class="tot"><td colspan="3">Total</td><td class="num">'+inr(g.tds.reduce((a,r)=>a+r.paid,0))+'</td><td class="num">'+inr(tt)+'</td><td></td></tr></table>':'';
+  const mark={ok:'<span class="in">matches</span>',check:'<span class="out">check</span>',info:'<span class="mute">info</span>'};
+  $('ais_sum').textContent=g.ais.length?'('+g.ais.filter(r=>r.status==='check').length+' to check)':'(upload the AIS or type its figures)';
+  keepValue('ais_cat',g.tis_cats.map(c=>'<option>'+esc(c)+'</option>').join(''));
+  $('file_ais').innerHTML=g.ais.length?'<table><tr><th style="text-align:left">AIS</th><th>AIS amount</th><th>Books</th><th></th><th style="text-align:left">What to do</th><th></th></tr>'+
+    g.ais.map(r=>'<tr><td style="text-align:left">'+esc(r.category)+'</td><td class="num">'+inr(r.ais)+'</td><td class="num">'+(r.books===null?'':inr(r.books))+
+      '</td><td>'+mark[r.status]+'</td><td class="mute" style="text-align:left;white-space:normal;min-width:200px">'+esc(r.note)+
+      '</td><td><button class="link" data-aisdel="'+r.id+'">Delete</button></td></tr>').join('')+'</table>'
+    :'<p class="mute" style="margin:4px 0">Upload the AIS or TIS (PDF from the AIS app or portal; password is PAN in small letters followed by date of birth as DDMMYYYY) or type each TIS figure below.</p>';
   let h='<table><tr><th style="text-align:left">Field</th><th>Amount</th><th style="text-align:left">Note</th></tr>',last='';
   for(const r of g.rows){
     if(r.schedule!==last){h+='<tr class="grp"><td colspan="3">'+esc(r.schedule)+'</td></tr>';last=r.schedule;}
@@ -7112,10 +7289,14 @@ $('if_q').oninput=showFigures;$('if_close').onclick=()=>$('ifdlg').close();
 $('itr_xlsx').onclick=()=>{location.href='/itr-filing.xlsx?'+qs({fy:$('fy').value,owner:$('who').value||'Self'});};
 $('tds_up').onclick=()=>{$('tdsfile').value='';$('tdsfile').click();};
 $('tdsfile').onchange=run(async()=>{const f=$('tdsfile').files[0];if(!f)return;
-  let pw='';if(/\.(pdf|zip)$/i.test(f.name))pw=prompt('Password, if any. For Form 26AS it is your date of birth as DDMMYYYY.')||'';
+  let pw='';if(/\.(pdf|zip)$/i.test(f.name))pw=prompt('Password, if any. Form 26AS: date of birth as DDMMYYYY. AIS / TIS: PAN in small letters followed by date of birth, e.g. abcde1234f01011980.')||'';
   toast('Reading '+f.name+'...');
   const r=await api('/api/tds/upload?'+qs({name:f.name,pw:pw,owner:$('who').value||'Self',fy:$('fy').value}),f);
-  toast('Read '+r.found+' deductors for '+fyLabel(r.fy)+': TDS '+inr(r.tds));await loadFiling();await loadTax();});
+  toast('Read '+fyLabel(r.fy)+': '+r.found+' deductors, TDS '+inr(r.tds)+(r.tis?', '+r.tis+' AIS figures':''));await loadFiling();await loadTax();});
+$('ais_add').onclick=run(async()=>{if($('ais_amt').value==='')return toast('Enter the AIS amount');
+  await api('/api/ais',{owner:$('who').value||'Self',fy:+$('fy').value,category:$('ais_cat').value,amount:$('ais_amt').value});
+  $('ais_amt').value='';await loadFiling();});
+$('file_ais').onclick=run(async e=>{const id=e.target.dataset.aisdel;if(!id)return;await api('/api/ais',{delete:+id});await loadFiling();});
 $('tds_add').onclick=run(async()=>{const amt=+$('tds_amt').value;if(!amt)return toast('Enter the TDS amount');
   await api('/api/tds',{owner:$('who').value||'Self',fy:+$('fy').value,deductor:$('tds_name').value,tan:$('tds_tan').value,
     section:$('tds_sec').value,paid:+$('tds_paid').value||0,tds:amt});
