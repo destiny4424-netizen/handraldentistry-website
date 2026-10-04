@@ -1562,6 +1562,56 @@ def cash_account(con):
                        (name,)).lastrowid
 
 
+def api_coverage():
+    """For each bank and card account: which periods have entries and where
+    statements are missing. In a bank account each day's balances must follow
+    from the day before; a jump means entries (a statement) are missing there."""
+    con = db()
+    since = setting(con, "mail_since", "2023-04-01")
+    today = Date.today().isoformat()
+    out = []
+    for a in con.execute("SELECT id, name, owner, kind FROM accounts WHERE kind IN ('Bank','Credit card')"
+                         " ORDER BY name").fetchall():
+        days = {}
+        for r in con.execute("SELECT date, debit, credit, balance FROM txns WHERE account_id=?"
+                             " ORDER BY date, seq", (a["id"],)):
+            d = days.setdefault(r["date"], dict(net=0.0, bal=[], n=0))
+            d["net"] += (r["credit"] or 0) - (r["debit"] or 0)
+            d["bal"].append(round(r["balance"] or 0, 2))
+            d["n"] += 1
+        months = {}
+        for k, d in days.items():
+            months[k[:7]] = months.get(k[:7], 0) + d["n"]
+        missing, quiet_note = [], []
+        dates = sorted(days)
+        if not dates:
+            missing.append(dict(start=since, end=today, note="No statement imported yet"))
+        else:
+            first, last = dates[0], dates[-1]
+            if first > (Date.fromisoformat(since) + timedelta(days=10)).isoformat():
+                missing.append(dict(start=since, end=first, note="Before the first entry"))
+            if last < (Date.today() - timedelta(days=40)).isoformat():
+                missing.append(dict(start=last, end=today, note="After the last entry"))
+            for p, n in zip(dates, dates[1:]):
+                quiet = (Date.fromisoformat(n) - Date.fromisoformat(p)).days
+                if a["kind"] == "Bank":
+                    want = [round(x + days[n]["net"], 2) for x in days[p]["bal"]]
+                    if not any(abs(w - y) < 1 for w in want for y in days[n]["bal"]):
+                        gap = min((abs(w - y) for w in want for y in days[n]["bal"]), default=0)
+                        missing.append(dict(start=p, end=n, amount=round(gap, 2),
+                                            note="Balance does not follow on"))
+                    elif quiet > 92:
+                        quiet_note.append(dict(start=p, end=n))
+                elif quiet > 45:  # a card has no running balance; a month without entries is a missed statement
+                    missing.append(dict(start=p, end=n, note="No card entries in between"))
+        out.append(dict(id=a["id"], name=a["name"], owner=a["owner"], kind=a["kind"],
+                        first=dates[0] if dates else "", last=dates[-1] if dates else "",
+                        entries=sum(months.values()), months=months, missing=missing,
+                        quiet=quiet_note))
+    con.close()
+    return dict(since=since, today=today, accounts=out)
+
+
 def api_cash(q):
     """Cash entries for the year with totals by month and treatment."""
     fy = qget(q, "fy")
@@ -3403,6 +3453,8 @@ class Handler(BaseHTTPRequestHandler):
                 fname = re.sub(r"[^A-Za-z0-9._-]+", "_", r["filename"] or "itr")
                 self.send(bytes(r["data"]), "application/octet-stream", extra={
                     "Content-Disposition": f"attachment; filename={fname}"})
+            elif u.path == "/api/coverage":
+                self.send(api_coverage())
             elif u.path == "/api/mail":
                 self.send(api_mail())
             elif u.path == "/api/mail/file":
@@ -3803,6 +3855,8 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="stats" id="cs_stats"></div>
   <div class="card" id="cs_list"></div>
   <h2>Bank accounts</h2><div id="accts"></div>
+  <div class="card" id="covcard"><div class="row"><h3 class="grow" style="margin:0">What's missing</h3>
+    <button class="link" id="cov_go">Check statements</button></div><div id="cov"></div></div>
   <div class="card"><div class="row">
     <input id="newacct" class="grow" type="text" placeholder="New account name, e.g. HDFC 6324">
     <select id="newowner" aria-label="Owner"></select>
@@ -4625,6 +4679,31 @@ $('exp_tally').onclick=()=>{location.href='/export-tally.zip?'+dlq();};
 $('heads').onclick=run(async e=>{const tr=e.target.closest('tr.go');if(!tr)return;
   payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';$('f_q').value='';
   await go('txns');$('f_cat').value=tr.dataset.cat;await loadTxns(true);});
+async function loadCoverage(){
+  const d=await api('/api/coverage');
+  const fmt=s=>{const p=s.split('-');return +p[2]+' '+MON[+p[1]-1]+' '+p[0];};
+  const months=[];let [y,m]=d.since.slice(0,7).split('-').map(Number);const end=d.today.slice(0,7);
+  while((y+'-'+String(m).padStart(2,'0'))<=end){months.push(y+'-'+String(m).padStart(2,'0'));m++;if(m>12){m=1;y++;}}
+  let all=0;
+  $('cov').innerHTML=d.accounts.map(a=>{
+    const bad=new Set();for(const g of a.missing)for(const k of months)if(k>=g.start.slice(0,7)&&k<=g.end.slice(0,7))bad.add(k);
+    all+=a.missing.length;
+    const strip='<div style="display:flex;flex-wrap:wrap;gap:2px;margin:6px 0">'+months.map(k=>{
+      const n=a.months[k]||0,c=bad.has(k)?'var(--warn)':n?'var(--in)':'#ccc';
+      return '<span title="'+MON[+k.slice(5)-1]+' '+k.slice(0,4)+': '+(bad.has(k)?'missing entries':n+' entries')+'" style="width:14px;height:14px;border-radius:3px;background:'+c+'"></span>';}).join('')+'</div>';
+    const list=a.missing.length?'<ul style="margin:4px 0 0 18px;padding:0">'+a.missing.map(g=>'<li>'+
+      (g.note==='Balance does not follow on'?'Entries missing between <b>'+fmt(g.start)+'</b> and <b>'+fmt(g.end)+'</b> (balance jumps by '+inr(g.amount)+')'
+       :g.note==='No statement imported yet'?'No statement imported yet'
+       :g.note==='No card entries in between'?'Card statements missing between <b>'+fmt(g.start)+'</b> and <b>'+fmt(g.end)+'</b>'
+       :'Missing <b>'+fmt(g.start)+'</b> to <b>'+fmt(g.end)+'</b> ('+g.note.toLowerCase()+')')+'</li>').join('')+'</ul>'
+      :'<div class="mute">Complete'+(a.first?' from '+fmt(a.first)+' to '+fmt(a.last):'')+'</div>';
+    const q=(a.quiet||[]).map(g=>'<div class="mute">No entries between '+fmt(g.start)+' and '+fmt(g.end)+
+      '; the balance matches, so probably no transactions then. Check if unsure.</div>').join('');
+    return '<div style="margin-top:12px"><b>'+esc(a.name)+'</b> <span class="chip">'+esc(a.owner)+'</span> <span class="chip">'+esc(a.kind)+'</span>'+
+      (a.entries?' <span class="mute">'+a.entries+' entries, '+fmt(a.first)+' to '+fmt(a.last)+'</span>':'')+strip+list+q+'</div>';}).join('')+
+    '<p class="mute" style="margin-top:10px">Squares are months from '+fmt(d.since)+': green has entries, grey has none, amber is missing. '+
+    (all?'Import the statements for the amber periods; re-importing a period you already have is safe.':'Nothing missing.')+'</p>';}
+$('cov_go').onclick=run(loadCoverage);
 let MT=null;
 async function loadMail(){
   const d=await api('/api/mail');
@@ -4808,7 +4887,7 @@ $('itr_files').onclick=run(async e=>{const d=e.target.dataset;
   if(d.ifig){IF=(await api('/api/itr/figures?id='+d.ifig)).rows;$('if_title').textContent='All figures in the file';
     $('if_q').value='';showFigures();$('ifdlg').showModal();}});
 $('if_q').oninput=showFigures;$('if_close').onclick=()=>$('ifdlg').close();
-run(async()=>{await loadState();await loadCash();await loadMail();})();
+run(async()=>{await loadState();await loadCash();await loadMail();await loadCoverage();})();
 </script></body></html>"""
 
 
