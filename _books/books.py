@@ -2353,6 +2353,7 @@ def api_trading_years(q):
         + (" WHERE a.owner=?" if owner else "") + " ORDER BY t.fy DESC, a.name",
         [owner] if owner else [])]
     con.close()
+    rows = [r for r in rows if any(r[k] for k, _ in TRADE_FIELDS)]  # skip empty years
     for r in rows:
         r["net"] = trade_net(r)
         r["from_mail"] = (r["note"] or "").startswith("From Gmail")
