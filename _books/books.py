@@ -189,6 +189,12 @@ SEED_RULES = [
     ("DENTICITY", "out", "Dental materials"),
 ]
 # Added when an older database is upgraded (and on a fresh one).
+# Card bills paid from the bank by autopay, and autopays the bank returned unpaid.
+CARD_RULES = [
+    ("AUTOPAYSI", "any", "Credit card payment"),
+    ("AUTOPAY SI", "any", "Credit card payment"),
+    ("AUTOPAY RETURNED", "any", "Credit card payment"),
+]
 SEED_RULES_2 = [
     ("RAISE SECURITIES", "any", "Trading transfer"),
     ("RAISESECURITIES", "any", "Trading transfer"),
@@ -436,6 +442,12 @@ def init():
     if version < 9:  # small payments are personal expenses, across all years
         apply_rules(con)
         con.execute("PRAGMA user_version=9")
+    if version < 10:  # card bills paid by autopay are a transfer to the card, not an expense
+        have = {r[0] for r in con.execute("SELECT pattern FROM rules")}
+        con.executemany("INSERT INTO rules(pattern,dir,category,clinic) VALUES(?,?,?,'')",
+                        [r for r in CARD_RULES if r[0] not in have])
+        apply_rules(con)
+        con.execute("PRAGMA user_version=10")
     con.commit()
     con.close()
 
