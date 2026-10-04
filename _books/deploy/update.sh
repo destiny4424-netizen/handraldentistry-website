@@ -40,10 +40,16 @@ main() {
 
 # Python packages the app imports lazily; installed here so no one has to log in.
 ensure_packages() {
-  python3 -c "import xlrd" 2>/dev/null && return
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-xlrd >/dev/null 2>&1 \
-    || pip3 install -q --break-system-packages xlrd >/dev/null 2>&1 \
-    || log "Could not install xlrd (needed for old .xls files)."
+  need xlrd python3-xlrd xlrd "old .xls files"
+  need cryptography python3-cryptography cryptography "statements from Gmail"
+}
+
+# need <module> <apt package> <pip package> <what it is for>
+need() {
+  python3 -c "import $1" 2>/dev/null && return
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$2" >/dev/null 2>&1 \
+    || pip3 install -q --break-system-packages "$3" >/dev/null 2>&1 \
+    || log "Could not install $3 (needed for $4)."
 }
 
 log() { echo "$*"; }

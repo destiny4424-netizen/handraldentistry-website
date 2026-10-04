@@ -76,6 +76,16 @@ portal, or the ITR / ITR-V PDF). It shows a year-by-year comparison with this ye
 books and checks for anything missed: deductions claimed before, income heads, bank
 accounts not added, the 44ADA scheme and advance tax.
 
+### Statements from Gmail
+Banking → **Statements from Gmail** reads HDFC statement emails every 6 hours over IMAP
+with a Gmail App Password (myaccount.google.com/apppasswords) and imports them:
+combined monthly statements (PDF attached; split by account), single-account
+SmartStatements (the link is opened with the saved password; HDFC keeps these for about
+3 months), and credit card statements (PDF attached). Statement passwords are typed into
+the app, one per line, and stay on the droplet. Only the accounts listed are imported;
+the daughter's account numbers are added under Daughter. Statements that fail are listed
+with the reason and the PDF, and are tried again on every check.
+
 ### For the CA (Tally terms)
 Heads are Tally ledgers under Tally groups (Direct/Indirect Incomes and Expenses, Purchase
 Accounts, Capital Account with Drawings, Secured/Unsecured Loans, Current Liabilities,

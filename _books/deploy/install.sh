@@ -29,6 +29,7 @@ main() {
   apt-get update -qq
   apt-get install -y -qq git python3 curl ca-certificates >/dev/null
   apt-get install -y -qq python3-xlrd >/dev/null 2>&1 || true
+  apt-get install -y -qq python3-cryptography >/dev/null 2>&1 || true
   if ! python3 -c "import pdfplumber" 2>/dev/null; then
     apt-get install -y -qq python3-pdfplumber >/dev/null 2>&1 || {
       apt-get install -y -qq python3-pip >/dev/null

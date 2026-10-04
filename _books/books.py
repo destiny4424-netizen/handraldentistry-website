@@ -5,16 +5,25 @@ Python 3 standard library only. pdfplumber is optional (needed for PDF import).
 Data lives in books.db next to this file unless BOOKS_DB points elsewhere.
 Listens on 127.0.0.1:3020 by default.
 """
+import base64
 import calendar
 import csv
+import email.header
+import email.utils
+import html as htmllib
+import http.cookiejar
+import imaplib
 import hashlib
 import io
 import json
 import os
+import random
 import re
 import sqlite3
 import threading
 import time
+import urllib.parse
+import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import date as Date, timedelta
@@ -236,6 +245,11 @@ CREATE TABLE IF NOT EXISTS assets(
   bought TEXT DEFAULT '', cost REAL DEFAULT 0, value REAL DEFAULT 0,
   valued TEXT DEFAULT '', sold TEXT DEFAULT '', sale REAL DEFAULT 0,
   note TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS mail_log(
+  id INTEGER PRIMARY KEY, msgid TEXT UNIQUE, date TEXT, subject TEXT, account TEXT DEFAULT '',
+  status TEXT, found INTEGER DEFAULT 0, added INTEGER DEFAULT 0, detail TEXT DEFAULT '',
+  checked TEXT, file BLOB, filename TEXT DEFAULT '');
 """
 
 
@@ -667,9 +681,11 @@ def lines_to_txns(text):
                 r"date|narration|particulars|withdraw|deposit|balance|statement|account|:", line, re.I):
             out[-1]["narration"] += " " + line  # a narration running onto the next line
             follow -= 1
-    if len(out) < 2:
-        return []
     near = lambda a, b: abs(a - b) < 0.02
+    # One entry is trusted only when the opening balance backs it up.
+    if len(out) < 2 and not (out and opening is not None
+                             and near(abs(out[0]["balance"] - opening), out[0]["amount"])):
+        return []
     fwd = sum(near(abs(out[i]["balance"] - out[i - 1]["balance"]), out[i]["amount"])
               for i in range(1, len(out)))
     back = sum(near(abs(out[i - 1]["balance"] - out[i]["balance"]), out[i - 1]["amount"])
@@ -969,6 +985,437 @@ def import_txns(account_id, txns):
     return dict(found=len(txns), added=added, duplicates=len(txns) - added,
                 auto=auto, first=txns[0]["date"] if txns else "",
                 last=txns[-1]["date"] if txns else "")
+
+
+# ---------- statements from Gmail ----------
+#
+# HDFC sends three kinds of statement email:
+#   - "HDFC Bank Combined Email Statement for <month>": a PDF of every account of one
+#     customer attached (password: Customer ID). These never expire.
+#   - "Email Account Statement of your HDFC Bank Account ***1234 ...": only a link to
+#     the SmartStatement site, which keeps each statement for about three months.
+#   - "... Credit Card Statement - <month>": the card statement PDF attached
+#     (password: first 4 letters of the name in capitals + date of birth as DDMM).
+# The app reads the mailbox over IMAP with a Gmail App Password, opens each statement
+# with the passwords saved in the app, and imports it into the matching account.
+
+MAIL_QUERY = ('from:hdfcbank after:{since} (subject:"Account Statement" OR '
+              'subject:"Combined Email Statement" OR subject:"Credit Card Statement") '
+              '-subject:"Year End"')
+SMART_HOSTS = ("smartstatements.hdfc.bank.in", "smartstatements.hdfcbank.com")
+SMART_LINK = (r"https://smartstatements\.hdfc(?:\.bank\.in|bank\.com)/HDFCRestFulService/"
+              r"GetStatement\.jsp\?jobkey=[^\"'\s<>]+")
+BROWSER = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+ACCT_LINE = r"\b(?:A/?C|Account)\s*(?:No|Number)\b\.?\s*:?\s*([X\*\d][X\*\d\s-]{6,24})"
+MAIL = {"running": False, "message": ""}
+MAIL_LOCK = threading.Lock()
+
+
+def setting(con, key, default=""):
+    r = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return r[0] if r and r[0] is not None else default
+
+
+def digits_list(text):
+    return [d[-4:] for d in re.findall(r"\d{2,}", text or "")]
+
+
+def mail_settings(con):
+    return dict(
+        user=setting(con, "mail_user"), password=setting(con, "mail_pass"),
+        pdf_passwords=[p.strip() for p in setting(con, "pdf_passwords").splitlines() if p.strip()],
+        accounts=digits_list(setting(con, "mail_accounts", "6324 7177 9867")),
+        daughter=digits_list(setting(con, "mail_daughter", "9867")),
+        since=setting(con, "mail_since", "2023-04-01"))
+
+
+def smart_encrypt(text):
+    """The SmartStatement page scrambles the password this way before sending it."""
+    key = "toUpperCase"
+    prev = random.randint(1, 255)
+    out = [f"{prev:02X}"]
+    for i, c in enumerate(text):
+        prev = ((ord(c) + prev) % 255) ^ ord(key[i % len(key)])
+        out.append(f"{prev:02X}")
+    return "".join(out)
+
+
+def aes_ecb_decrypt(key, data):
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    d = Cipher(algorithms.AES(key), modes.ECB()).decryptor()
+    raw = d.update(data) + d.finalize()
+    if raw and 1 <= raw[-1] <= 16 and raw.endswith(bytes([raw[-1]]) * raw[-1]):
+        raw = raw[:-raw[-1]]
+    return raw
+
+
+class _HdfcOnly(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlparse(newurl).hostname not in SMART_HOSTS:
+            raise ValueError("The statement link sent us to another website; stopped.")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _get(opener, url, data=None, headers=None):
+    if urllib.parse.urlparse(url).hostname not in SMART_HOSTS:
+        raise ValueError("Not an HDFC SmartStatement address.")
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": BROWSER, **(headers or {})})
+    with opener.open(req, timeout=90) as r:
+        return r.read()
+
+
+def _input_value(page, name):
+    tag = re.search(rf'<input[^>]*\bid=["\']{name}["\'][^>]*>', page, re.I)
+    v = tag and re.search(r'\bvalue=["\']([^"\']*)["\']', tag.group(), re.I)
+    return htmllib.unescape(v.group(1)) if v else ""
+
+
+def smart_statement(link, passwords):
+    """Open a SmartStatement link. Returns ("pdf", bytes) or ("html", text)."""
+    link = htmllib.unescape(link)
+    u = urllib.parse.urlparse(link)
+    jobkey = urllib.parse.parse_qs(u.query).get("jobkey", [""])[0]
+    base = f"{u.scheme}://{u.netloc}/HDFCRestFulService/"
+    page_url = base + "GetStatement.jsp?jobkey=" + urllib.parse.quote(jobkey)
+    if not passwords:
+        raise ValueError("Add the statement passwords first.")
+    for pw in passwords:
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), _HdfcOnly())
+        page = _get(opener, page_url).decode("utf-8", "replace")
+        ke, seq = _input_value(page, "ke"), _input_value(page, "seqence")
+        if not ke:
+            raise ValueError("HDFC no longer has this statement (links work for about 3 "
+                             "months). Get it again from NetBanking or WhatsApp banking.")
+        token = _get(opener, base + "CRSGetToken?jobkey=" + urllib.parse.quote(jobkey)).decode().strip()
+        body = urllib.parse.urlencode(dict(ke=ke, seqence=seq, pwd=smart_encrypt(token + pw))).encode()
+        resp = _get(opener, base + "webresources/app/htmlformat", body, {
+            "Content-Type": "application/x-www-form-urlencoded", "Referer": page_url}).decode("utf-8", "replace")
+        m = re.search(r'Data\("([A-Za-z0-9+/=]+)"\s*,\s*"([^"]+)"\)', resp)
+        if not m:
+            continue  # wrong password; try the next one
+        cipher = base64.b64decode(m.group(2).replace("\\n", "").replace("\n", ""))
+        text = aes_ecb_decrypt(base64.b64decode(m.group(1)), cipher).decode("utf-8", "replace")
+        b = re.search(r'(?is)id=["\']P_PRINT_BUTTON["\'][^>]*formaction=["\']([^"\']+)["\']', text) or \
+            re.search(r'(?is)formaction=["\']([^"\']+)["\'][^>]*id=["\']P_PRINT_BUTTON["\']', text)
+        if b:
+            action = htmllib.unescape(b.group(1))
+            for root in (page_url, base + "webresources/app/htmlformat"):
+                try:
+                    pdf = _get(opener, urllib.parse.urljoin(root, action), b"",
+                               {"Content-Type": "text/plain", "Referer": page_url})
+                except Exception:
+                    continue
+                if pdf[:4] == b"%PDF":
+                    return "pdf", pdf
+        return "html", text
+    raise ValueError("None of the saved passwords opened this statement.")
+
+
+def html_rows(text):
+    rows = []
+    for tr in re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", text):
+        cells = [" ".join(htmllib.unescape(re.sub(r"(?s)<[^>]+>", " ", c)).split())
+                 for c in re.findall(r"(?is)<t[dh][^>]*>(.*?)</t[dh]>", tr)]
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
+def pdf_password(data, passwords):
+    """The saved password that opens this PDF ("" if it is not locked)."""
+    import pdfplumber
+    for pw in [""] + list(passwords):
+        try:
+            with pdfplumber.open(io.BytesIO(data), password=pw or None) as pdf:
+                pdf.pages[0].extract_text()
+            return pw
+        except Exception:
+            continue
+    raise ValueError("None of the saved passwords opened this PDF.")
+
+
+def statement_sections(lines):
+    """Split a combined statement into {last 4 digits of account: lines}."""
+    out, cur = {}, None
+    for ln in lines:
+        s = " ".join(ln.split())
+        m = re.search(ACCT_LINE, s, re.I)
+        if m and not re.match(STMT_DATE, s):
+            d = re.sub(r"\D", "", m.group(1))
+            if len(d) >= 4:
+                cur = d[-4:]
+        out.setdefault(cur, []).append(s)
+    return out
+
+
+def mail_account(con, last4, kind, cfg, label=""):
+    """Account id for these last digits; adds the account the first time."""
+    pat = re.compile(rf"(?<!\d){re.escape(last4)}(?!\d)")
+    rows = con.execute("SELECT id, name, kind FROM accounts").fetchall()
+    for r in rows:
+        if pat.search(r["name"]) and (r["kind"] == "Credit card") == (kind == "Credit card"):
+            return r["id"]
+    if kind == "Credit card" and len(last4) < 4:  # only the last 2 digits are known
+        cards = [r for r in rows if r["kind"] == "Credit card"
+                 and re.search(rf"{last4}(?!\d)", r["name"])]
+        if len(cards) == 1:
+            return cards[0]["id"]
+    name = f"HDFC {label + ' ' if label else ''}{'card ' if kind == 'Credit card' else ''}{last4}"
+    owner = "Daughter" if last4 in cfg["daughter"] else "Self"
+    with LOCK:
+        con.execute("INSERT OR IGNORE INTO accounts(name,owner,kind) VALUES(?,?,?)",
+                          (name, owner, kind))
+        con.commit()
+    return con.execute("SELECT id FROM accounts WHERE name=?", (name,)).fetchone()[0]
+
+
+def mail_import(con, last4, kind, txns, cfg, label=""):
+    txns = [t for t in txns if t["date"] >= cfg["since"]]
+    if not txns:
+        return dict(found=0, added=0)
+    return import_txns(mail_account(con, last4, kind, cfg, label), txns)
+
+
+def _decode(v):
+    try:
+        return str(email.header.make_header(email.header.decode_header(v or "")))
+    except Exception:
+        return v or ""
+
+
+def handle_statement(con, msg, subject, cfg):
+    """Import one statement email. Returns (account label, found, added, detail, file, filename)."""
+    pdfs, body = [], ""
+    for part in msg.walk():
+        name = _decode(part.get_filename() or "")
+        data = part.get_payload(decode=True) if not part.is_multipart() else None
+        if not data:
+            continue
+        if data[:4] == b"%PDF" or name.lower().endswith(".pdf"):
+            pdfs.append((name or "statement.pdf", data))
+        elif part.get_content_type() in ("text/html", "text/plain"):
+            body += data.decode(part.get_content_charset() or "utf-8", "replace")
+    pws = cfg["pdf_passwords"]
+
+    if re.search(r"credit card", subject, re.I):
+        if not pdfs:
+            raise ValueError("No statement PDF attached.")
+        name, data = pdfs[0]
+        pw = pdf_password(data, pws)
+        text = " ".join(pdf_text_lines(data, pw)[:80])
+        c = re.search(r"Card\s*No\.?\s*:?\s*([\dX\* ]{12,23}\d)", text, re.I)
+        last = re.sub(r"\D", "", c.group(1))[-4:] if c else ""
+        if len(last) < 2:
+            f = re.search(r"\d{4}X+(\d{2,4})", name)
+            last = f.group(1) if f else "card"
+        res = mail_import(con, last, "Credit card", parse_statement(name, data, pw, "Credit card"), cfg)
+        return f"Card {last}", res["found"], res["added"], "", data, name
+
+    one = re.search(r"\*{2,}\s*(\d{4})", subject)
+    if one:  # a single account
+        last4 = one.group(1)
+        if last4 not in cfg["accounts"]:
+            return f"A/c {last4}", 0, 0, "skipped: not in your list of accounts to import", None, ""
+        if pdfs:
+            name, data = pdfs[0]
+        else:
+            link = re.search(SMART_LINK, body)
+            if not link:
+                raise ValueError("No statement link or PDF in this email.")
+            kind, data = smart_statement(link.group(), pws)
+            if kind == "html":
+                res = mail_import(con, last4, "Bank", rows_to_txns(html_rows(data)), cfg)
+                return f"A/c {last4}", res["found"], res["added"], "", None, ""
+            name = f"hdfc-{last4}.pdf"
+        pw = pdf_password(data, pws)
+        res = mail_import(con, last4, "Bank", parse_statement(name, data, pw), cfg)
+        return f"A/c {last4}", res["found"], res["added"], "", data, name
+
+    # Combined statement: one PDF holding several accounts.
+    if not pdfs:
+        link = re.search(SMART_LINK, body)
+        if not link:
+            raise ValueError("No statement PDF or link in this email.")
+        kind, data = smart_statement(link.group(), pws)
+        if kind == "html":
+            raise ValueError("Combined statement came back as a web page only.")
+        pdfs = [("combined.pdf", data)]
+    name, data = pdfs[0]
+    pw = pdf_password(data, pws)
+    sections = statement_sections(pdf_text_lines(data, pw))
+    labels, found, added, notes = [], 0, 0, []
+    for last4, lines in sections.items():
+        if last4 is None:
+            continue
+        if last4 not in cfg["accounts"]:
+            notes.append(f"{last4} skipped")
+            continue
+        txns = lines_to_txns(lines)
+        if not txns:
+            notes.append(f"{last4}: no entries")
+            continue
+        res = mail_import(con, last4, "Bank", txns, cfg)
+        labels.append(f"A/c {last4}")
+        found += res["found"]
+        added += res["added"]
+    if not labels and not any("skipped" in n for n in notes):
+        raise ValueError("Could not find the accounts in this combined statement. "
+                         + "; ".join(notes))
+    return ", ".join(labels) or "-", found, added, "; ".join(notes), data, name
+
+
+def gmail_folder(M):
+    """The All Mail folder (its name depends on the Gmail language)."""
+    typ, folders = M.list()
+    for f in folders or []:
+        line = f.decode("utf-8", "replace") if isinstance(f, bytes) else str(f)
+        if "\\All" in line:
+            return '"' + re.findall(r'"([^"]+)"\s*$', line)[0] + '"' if '"' in line else line.split()[-1]
+    return "INBOX"
+
+
+def fetch_statements():
+    con = db()
+    cfg = mail_settings(con)
+    if not cfg["user"] or not cfg["password"]:
+        con.close()
+        raise ValueError("Enter your Gmail address and App Password first.")
+    since = cfg["since"].replace("-", "/")
+    M = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=90)
+    done = errors = 0
+    try:
+        try:
+            M.login(cfg["user"], cfg["password"].replace(" ", ""))
+        except imaplib.IMAP4.error:
+            raise ValueError("Gmail did not accept the address and App Password. Make a new "
+                             "App Password at myaccount.google.com/apppasswords and save it here.")
+        M.select(gmail_folder(M), readonly=True)
+        q = MAIL_QUERY.format(since=since)
+        typ, data = M.uid("SEARCH", "X-GM-RAW", '"' + q.replace("\\", "\\\\").replace('"', '\\"') + '"')
+        uids = (data[0] or b"").split()
+        for i, uid in enumerate(uids):
+            MAIL["message"] = f"Checking email {i + 1} of {len(uids)}"
+            typ, meta = M.uid("FETCH", uid, "(X-GM-MSGID)")
+            mid = re.search(rb"X-GM-MSGID (\d+)", meta[0] if meta and meta[0] else b"")
+            msgid = mid.group(1).decode() if mid else uid.decode()
+            old = con.execute("SELECT status FROM mail_log WHERE msgid=?", (msgid,)).fetchone()
+            if old and old[0] != "error":
+                continue
+            typ, raw = M.uid("FETCH", uid, "(BODY.PEEK[])")
+            msg = email.message_from_bytes(raw[0][1])
+            subject = " ".join(_decode(msg.get("Subject")).split())
+            try:
+                sent = email.utils.parsedate_to_datetime(msg.get("Date")).strftime("%Y-%m-%d")
+            except Exception:
+                sent = ""
+            file, fname = None, ""
+            try:
+                acct, found, added, detail, file, fname = handle_statement(con, msg, subject, cfg)
+                status = "skipped" if detail.startswith("skipped") else "ok"
+                file = None  # keep files only for statements that failed
+                done += 1
+            except Exception as e:
+                acct, found, added, detail, status = "", 0, 0, str(e) or e.__class__.__name__, "error"
+                errors += 1
+                for part in msg.walk():
+                    d = None if part.is_multipart() else part.get_payload(decode=True)
+                    if d and d[:4] == b"%PDF":
+                        file, fname = d, _decode(part.get_filename() or "statement.pdf")
+                        break
+            with LOCK:
+                con.execute(
+                    "INSERT INTO mail_log(msgid,date,subject,account,status,found,added,detail,checked,file,filename)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(msgid) DO UPDATE SET account=excluded.account,"
+                    " status=excluded.status, found=excluded.found, added=excluded.added,"
+                    " detail=excluded.detail, checked=excluded.checked, file=excluded.file,"
+                    " filename=excluded.filename",
+                    (msgid, sent, subject, acct, status, found, added, detail,
+                     datetime.now().strftime("%Y-%m-%d %H:%M"), file, fname))
+                con.commit()
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass
+        con.close()
+    return done, errors
+
+
+def start_mail_fetch():
+    if not MAIL_LOCK.acquire(blocking=False):
+        return False
+
+    def work():
+        MAIL["running"] = True
+        MAIL["message"] = "Connecting to Gmail"
+        try:
+            done, errors = fetch_statements()
+            MAIL["message"] = (f"Last checked {datetime.now().strftime('%d %b %H:%M')}: "
+                               f"{done} new statement emails read"
+                               + (f", {errors} need attention" if errors else ""))
+        except Exception as e:
+            MAIL["message"] = f"Last check failed: {e}"
+        finally:
+            MAIL["running"] = False
+            MAIL_LOCK.release()
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
+
+
+def mail_scheduler():
+    time.sleep(120)
+    while True:
+        try:
+            con = db()
+            ready = setting(con, "mail_user") and setting(con, "mail_pass")
+            con.close()
+            if ready:
+                start_mail_fetch()
+        except Exception:
+            pass
+        time.sleep(6 * 3600)
+
+
+def api_mail():
+    con = db()
+    cfg = mail_settings(con)
+    log = [dict(r) for r in con.execute(
+        "SELECT id, date, subject, account, status, found, added, detail, checked,"
+        " file IS NOT NULL has_file FROM mail_log ORDER BY date DESC, id DESC")]
+    con.close()
+    counts = {}
+    for r in log:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    return dict(user=cfg["user"], has_password=bool(cfg["password"]),
+                pdf_passwords=len(cfg["pdf_passwords"]),
+                accounts=" ".join(cfg["accounts"]), daughter=" ".join(cfg["daughter"]),
+                since=cfg["since"], running=MAIL["running"], message=MAIL["message"],
+                counts=counts, log=log)
+
+
+def save_mail_settings(d):
+    con = db()
+    with LOCK:
+        for key, field in (("mail_user", "user"), ("mail_accounts", "accounts"),
+                           ("mail_daughter", "daughter"), ("mail_since", "since")):
+            if field in d:
+                v = str(d[field]).strip()
+                if field == "since":
+                    v = check_date(v) or "2023-04-01"
+                con.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, v))
+        # Passwords are only replaced when something new is typed in.
+        if str(d.get("password") or "").strip():
+            con.execute("INSERT OR REPLACE INTO settings VALUES('mail_pass',?)",
+                        (str(d["password"]).strip(),))
+        if str(d.get("pdf_passwords") or "").strip():
+            con.execute("INSERT OR REPLACE INTO settings VALUES('pdf_passwords',?)",
+                        (str(d["pdf_passwords"]).strip(),))
+        con.commit()
+    con.close()
+    return api_mail()
 
 
 # ---------- queries ----------
@@ -2956,6 +3403,18 @@ class Handler(BaseHTTPRequestHandler):
                 fname = re.sub(r"[^A-Za-z0-9._-]+", "_", r["filename"] or "itr")
                 self.send(bytes(r["data"]), "application/octet-stream", extra={
                     "Content-Disposition": f"attachment; filename={fname}"})
+            elif u.path == "/api/mail":
+                self.send(api_mail())
+            elif u.path == "/api/mail/file":
+                con = db()
+                r = con.execute("SELECT filename, file FROM mail_log WHERE id=?",
+                                (int(qget(q, "id")),)).fetchone()
+                con.close()
+                if not r or r["file"] is None:
+                    return self.send({"error": "Not found"}, code=404)
+                fname = re.sub(r"[^A-Za-z0-9._-]+", "_", r["filename"] or "statement.pdf")
+                self.send(bytes(r["file"]), "application/pdf", extra={
+                    "Content-Disposition": f"attachment; filename={fname}"})
             elif u.path == "/api/groups":
                 self.send(api_groups(q))
             elif u.path == "/api/trading":
@@ -2994,6 +3453,11 @@ class Handler(BaseHTTPRequestHandler):
                 res = import_statement(int(q["account"][0]), q["name"][0],
                                        self.body(), (q.get("pw") or [""])[0])
                 return self.send(res)
+            if u.path == "/api/mail/settings":
+                return self.send(save_mail_settings(json.loads(self.body() or b"{}")))
+            if u.path == "/api/mail/fetch":
+                started = start_mail_fetch()
+                return self.send(dict(api_mail(), started=started))
             if u.path == "/api/rules/import":
                 return self.send(import_rules(self.body()))
             if u.path == "/api/mf/upload":
@@ -3344,6 +3808,25 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <select id="newowner" aria-label="Owner"></select>
     <select id="newkind" aria-label="Account type"></select>
     <button class="pri" id="addacct">Add account</button></div></div>
+  <h2>Statements from Gmail</h2>
+  <div class="card" id="mailcard">
+    <p class="mute" style="margin:0 0 8px">Reads HDFC account and credit card statements from your Gmail every
+    6 hours and imports them into the matching account. Statements already imported are skipped.</p>
+    <div class="filters" style="margin:0">
+      <input type="email" id="m_user" placeholder="Gmail address" autocomplete="off">
+      <input type="password" id="m_pass" placeholder="Gmail App Password" autocomplete="new-password">
+      <label class="mute">Accounts to import <input type="text" id="m_accts" placeholder="e.g. 6324 7177 9867" title="Last 4 digits of the bank accounts to import"></label>
+      <label class="mute">Daughter's <input type="text" id="m_daughter" placeholder="e.g. 9867" size="8" title="Accounts with these digits are marked as Daughter's"></label>
+      <label class="mute">From <input type="date" id="m_since" aria-label="Import from"></label></div>
+    <textarea id="m_pdfpw" rows="3" style="width:100%;margin-top:8px;font:inherit;-webkit-text-security:disc"
+      placeholder="Statement passwords, one per line (Customer ID; NAME + first 4 digits of Customer ID; NAME + DDMM for the card; your daughter's too)" autocomplete="off"></textarea>
+    <div class="row" style="margin-top:8px"><span class="mute grow" id="m_status"></span>
+      <button id="m_save">Save</button><button class="pri" id="m_fetch">Fetch now</button></div>
+    <details style="margin-top:8px"><summary class="mute">How to get a Gmail App Password</summary>
+      <p class="mute">Open myaccount.google.com/apppasswords on your phone or laptop (2-Step Verification
+      must be on), type the name Handral Books, press Create and copy the 16-letter password here.
+      It only lets this app read mail; you can remove it there at any time.</p></details>
+    <div id="m_log" style="margin-top:8px"></div></div>
   <input type="file" id="file" hidden accept=".csv,.txt,.pdf,.xls,.xlsx">
   <input type="file" id="pfile" hidden accept=".csv,.txt,.pdf,.xls,.xlsx">
 </section>
@@ -4142,6 +4625,41 @@ $('exp_tally').onclick=()=>{location.href='/export-tally.zip?'+dlq();};
 $('heads').onclick=run(async e=>{const tr=e.target.closest('tr.go');if(!tr)return;
   payeeFilter='';$('f_account').value='';$('f_month').value='';$('f_dir').value='';$('f_q').value='';
   await go('txns');$('f_cat').value=tr.dataset.cat;await loadTxns(true);});
+let MT=null;
+async function loadMail(){
+  const d=await api('/api/mail');
+  if(document.activeElement!==$('m_user'))$('m_user').value=d.user||'';
+  $('m_pass').placeholder=d.has_password?'App Password saved (type to change)':'Gmail App Password';
+  $('m_pdfpw').placeholder=d.pdf_passwords?d.pdf_passwords+' statement passwords saved (type all of them again to change)':
+    'Statement passwords, one per line (Customer ID; NAME + first 4 digits of Customer ID; NAME + DDMM for the card; your daughter\'s too)';
+  if(document.activeElement!==$('m_accts'))$('m_accts').value=d.accounts;
+  if(document.activeElement!==$('m_daughter'))$('m_daughter').value=d.daughter;
+  if(document.activeElement!==$('m_since'))$('m_since').value=d.since;
+  const c=d.counts||{};
+  $('m_status').textContent=[(d.running?'Working: ':'')+(d.message||(d.log.length?'':d.user?'Not checked yet':'Not set up yet')),
+    d.log.length?(c.ok||0)+' imported, '+(c.skipped||0)+' skipped, '+(c.error||0)+' need attention':''].filter(Boolean).join(' · ');
+  $('m_fetch').disabled=d.running;
+  const badge=s=>s==='ok'?'<span class="chip">Imported</span>':s==='skipped'?'<span class="chip">Skipped</span>':'<span class="chip none">Needs attention</span>';
+  const errs=d.log.filter(r=>r.status==='error'),rest=d.log.filter(r=>r.status!=='error');
+  const row=r=>'<div class="tx" style="cursor:default"><div class="grow"><b>'+esc(r.date)+'</b> '+badge(r.status)+' '+esc(r.account||'')+
+    '<div class="mute">'+esc(r.subject)+(r.detail?' — '+esc(r.detail):'')+'</div></div>'+
+    '<div class="num">'+(r.status==='ok'?r.added+' new of '+r.found:'')+
+    (r.has_file?' <a class="link" href="/api/mail/file?id='+r.id+'">PDF</a>':'')+'</div></div>';
+  $('m_log').innerHTML=(errs.length?'<h3>Needs attention ('+errs.length+')</h3>'+errs.map(row).join('')+
+    '<p class="mute">These are tried again on every check. Wrong password: add the right one above. Expired link: '+
+    'get that period again from NetBanking or WhatsApp banking (it arrives by email and is imported by itself).</p>':'')+
+    (rest.length?'<details><summary class="mute">Imported emails ('+rest.length+')</summary>'+rest.map(row).join('')+'</details>':'');
+  clearTimeout(MT);if(d.running)MT=setTimeout(run(loadMail),4000);
+  else if(loadMail.was)await loadState();
+  loadMail.was=d.running;
+  return d;}
+function mailBody(){return {user:$('m_user').value,password:$('m_pass').value,pdf_passwords:$('m_pdfpw').value,
+  accounts:$('m_accts').value,daughter:$('m_daughter').value,since:$('m_since').value};}
+$('m_save').onclick=run(async()=>{await api('/api/mail/settings',mailBody());$('m_pass').value='';$('m_pdfpw').value='';
+  toast('Saved');await loadMail();});
+$('m_fetch').onclick=run(async()=>{await api('/api/mail/settings',mailBody());$('m_pass').value='';$('m_pdfpw').value='';
+  const d=await api('/api/mail/fetch',{});toast(d.started?'Checking Gmail for statements…':'Already checking');
+  await loadMail();await loadState();});
 $('addacct').onclick=run(async()=>{await api('/api/account',{name:$('newacct').value,owner:$('newowner').value,kind:$('newkind').value});$('newacct').value='';await loadState();});
 $('accts').onclick=run(async e=>{const d=e.target.dataset;
   if(d.edit){editAcct=S.accounts.find(a=>a.id==d.edit);$('a_name').value=editAcct.name;$('a_owner').value=editAcct.owner;$('a_kind').value=editAcct.kind;$('adlg').showModal();}
@@ -4290,11 +4808,12 @@ $('itr_files').onclick=run(async e=>{const d=e.target.dataset;
   if(d.ifig){IF=(await api('/api/itr/figures?id='+d.ifig)).rows;$('if_title').textContent='All figures in the file';
     $('if_q').value='';showFigures();$('ifdlg').showModal();}});
 $('if_q').oninput=showFigures;$('if_close').onclick=()=>$('ifdlg').close();
-run(async()=>{await loadState();await loadCash();})();
+run(async()=>{await loadState();await loadCash();await loadMail();})();
 </script></body></html>"""
 
 
 if __name__ == "__main__":
     init()
+    threading.Thread(target=mail_scheduler, daemon=True).start()
     print(f"Handral Books running on http://{HOST}:{PORT}  (data: {DB})", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
