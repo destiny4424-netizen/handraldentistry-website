@@ -402,6 +402,10 @@ def init():
     if version < 7:  # payments from anyone else are patient receipts, across all years
         apply_rules(con)
         con.execute("PRAGMA user_version=7")
+    if version < 8:  # version 7 also filed money into the daughter's accounts; take that back
+        con.execute("UPDATE txns SET category='', clinic='' WHERE category='Patient receipts' AND"
+                    " account_id IN (SELECT id FROM accounts WHERE owner='Daughter')")
+        con.execute("PRAGMA user_version=8")
     con.commit()
     con.close()
 
@@ -912,9 +916,11 @@ def apply_rules(con):
         " ORDER BY LENGTH(match) DESC")]
     pay = patient_rule(con)
     n = 0
-    kind = "a.kind" if any(c[1] == "kind" for c in con.execute("PRAGMA table_info(accounts)")) else "NULL"
+    acols = [c[1] for c in con.execute("PRAGMA table_info(accounts)")]
+    kind = "a.kind" if "kind" in acols else "NULL"
+    owner = "a.owner" if "owner" in acols else "'Self'"
     for t in con.execute(
-            f"SELECT t.id, t.narration, t.payee, t.debit, t.credit, {kind} kind FROM txns t"
+            f"SELECT t.id, t.narration, t.payee, t.debit, t.credit, {kind} kind, {owner} owner FROM txns t"
             " LEFT JOIN accounts a ON a.id=t.account_id WHERE t.category=''").fetchall():
         low = t["narration"].lower()
         loan = next((typ for m, typ in loans if m in low), None) or (
@@ -975,6 +981,8 @@ def patient_rule(con):
 
 
 def is_patient_payment(t, low, rule):
+    if t["owner"] == "Daughter":  # her account's money is not the practice's income
+        return False
     if t["kind"] not in (None, "Bank") or not (t["credit"] or 0) > 0 or (t["debit"] or 0) > 0:
         return False
     if rule["limit"] and t["credit"] > rule["limit"] + 0.005:
@@ -4104,7 +4112,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
     <select id="r_cat"></select><select id="r_clinic"></select>
     <button class="pri" id="r_add">Add rule</button></div></div>
   <div class="card" id="pr_card"><div class="row"><div class="grow"><b>Payments from patients</b>
-    <div class="mute">Money coming into any bank account, in every year, from anyone not listed below is filed as
+    <div class="mute">Money coming into any of your bank accounts (not your daughter's), in every year, from anyone not listed below is filed as
     Patient receipts (professional income), up to the amount given. Entries you sorted yourself and those caught by
     the rules below are left alone, as are cash deposits, interest, refunds, loans and dividends.</div></div>
     <label class="mute"><input type="checkbox" id="pr_on"> On</label></div>
