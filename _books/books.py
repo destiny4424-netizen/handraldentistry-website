@@ -399,6 +399,9 @@ def init():
         con.executemany("UPDATE txns SET payee=? WHERE id=?", [(p, i) for i, p in new.items()])
         apply_rules(con)
         con.execute("PRAGMA user_version=6")
+    if version < 7:  # payments from anyone else are patient receipts, across all years
+        apply_rules(con)
+        con.execute("PRAGMA user_version=7")
     con.commit()
     con.close()
 
@@ -907,9 +910,12 @@ def apply_rules(con):
     policies = [(r["match"].lower(), policy_category(r["type"], r["purpose"])) for r in con.execute(
         "SELECT match, type, purpose FROM policies WHERE LENGTH(match) >= 3"
         " ORDER BY LENGTH(match) DESC")]
+    pay = patient_rule(con)
     n = 0
+    kind = "a.kind" if any(c[1] == "kind" for c in con.execute("PRAGMA table_info(accounts)")) else "NULL"
     for t in con.execute(
-            "SELECT id,narration,payee,debit FROM txns WHERE category=''").fetchall():
+            f"SELECT t.id, t.narration, t.payee, t.debit, t.credit, {kind} kind FROM txns t"
+            " LEFT JOIN accounts a ON a.id=t.account_id WHERE t.category=''").fetchall():
         low = t["narration"].lower()
         loan = next((typ for m, typ in loans if m in low), None) or (
             t["debit"] > 0 and next((c for m, c in policies if m in low), None))
@@ -938,7 +944,45 @@ def apply_rules(con):
                         (r["category"], r["clinic"] or "", t["id"]))
             n += 1
             break
+        else:
+            if pay and is_patient_payment(t, low, pay):
+                con.execute("UPDATE txns SET category=? WHERE id=?", ("Patient receipts", t["id"]))
+                n += 1
     return n
+
+
+# Money in that is not from a patient, whatever the payer's name.
+NOT_PATIENT = (r"\binterest\b|\bint\.?\s*p(ai)?d\b|\bint\s+cr|refund|revers|\brev\b|cashback|dividend|"
+               r"\breturn|cash\s*dep|by\s+cash|\bcdm\b|\bself\b|\bloan\b|disburs|\bemi\b|"
+               r"\bmutual\s+fund|redemption|\bsalary\b|\bchit\b")
+PATIENT_DEFAULT_EXCLUDE = "HANDRAL, RAVICHANDRA K, SUPRIYA H, SUPRIYA ENT, KIRAN HAN, VIDYA HAN, HARISH HAN"
+
+
+def patient_rule(con):
+    """Settings of the "payments from anyone else are patient receipts" rule, or None when off."""
+    if setting(con, "patient_rule", "1") != "1":
+        return None
+    try:
+        limit = float(setting(con, "patient_max", "50000") or 0)
+    except ValueError:
+        limit = 50000.0
+    names = [x.strip().lower() for x in re.split(r"[,\n]", setting(con, "patient_exclude",
+             PATIENT_DEFAULT_EXCLUDE)) if x.strip()]
+    own = {d[-4:] for r in con.execute("SELECT name FROM accounts")
+           for d in re.findall(r"\d{4,}", r["name"])}
+    own_re = re.compile(r"(?:x|\*|\d){2,}(?:%s)\b" % "|".join(sorted(own))) if own else None
+    return dict(limit=limit, names=names, own=own_re)
+
+
+def is_patient_payment(t, low, rule):
+    if t["kind"] not in (None, "Bank") or not (t["credit"] or 0) > 0 or (t["debit"] or 0) > 0:
+        return False
+    if rule["limit"] and t["credit"] > rule["limit"] + 0.005:
+        return False
+    if any(n in low for n in rule["names"]) or re.search(NOT_PATIENT, low) or (
+            rule["own"] and rule["own"].search(low)):
+        return False
+    return True
 
 
 def import_statement(account_id, name, data, password):
@@ -1590,6 +1634,16 @@ def cash_account(con):
         name = f"Cash collections {i}"
     return con.execute("INSERT INTO accounts(name,owner,kind) VALUES(?,'Self','Cash')",
                        (name,)).lastrowid
+
+
+def api_patient_rule():
+    con = db()
+    r = dict(on=setting(con, "patient_rule", "1") == "1", max=setting(con, "patient_max", "50000"),
+             exclude=setting(con, "patient_exclude", PATIENT_DEFAULT_EXCLUDE))
+    r["count"], r["total"] = con.execute(
+        "SELECT COUNT(*), COALESCE(SUM(credit),0) FROM txns WHERE category='Patient receipts'").fetchone()
+    con.close()
+    return r
 
 
 def api_coverage():
@@ -3483,6 +3537,8 @@ class Handler(BaseHTTPRequestHandler):
                 fname = re.sub(r"[^A-Za-z0-9._-]+", "_", r["filename"] or "itr")
                 self.send(bytes(r["data"]), "application/octet-stream", extra={
                     "Content-Disposition": f"attachment; filename={fname}"})
+            elif u.path == "/api/patient-rule":
+                self.send(api_patient_rule())
             elif u.path == "/api/coverage":
                 self.send(api_coverage())
             elif u.path == "/api/mail":
@@ -3540,6 +3596,20 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/mail/fetch":
                 started = start_mail_fetch()
                 return self.send(dict(api_mail(), started=started))
+            if u.path == "/api/patient-rule":
+                d = json.loads(self.body() or b"{}")
+                with LOCK:
+                    con = db()
+                    for key, field in (("patient_rule", "on"), ("patient_max", "max"),
+                                       ("patient_exclude", "exclude")):
+                        if field in d:
+                            v = d[field]
+                            v = ("1" if v else "0") if field == "on" else str(v).strip()
+                            con.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, v))
+                    n = apply_rules(con)
+                    con.commit()
+                    con.close()
+                return self.send(dict(api_patient_rule(), sorted=n))
             if u.path == "/api/rules/import":
                 return self.send(import_rules(self.body()))
             if u.path == "/api/mf/upload":
@@ -4033,6 +4103,16 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
       <option value="in">Money in only</option><option value="out">Money out only</option></select>
     <select id="r_cat"></select><select id="r_clinic"></select>
     <button class="pri" id="r_add">Add rule</button></div></div>
+  <div class="card" id="pr_card"><div class="row"><div class="grow"><b>Payments from patients</b>
+    <div class="mute">Money coming into any bank account, in every year, from anyone not listed below is filed as
+    Patient receipts (professional income), up to the amount given. Entries you sorted yourself and those caught by
+    the rules below are left alone, as are cash deposits, interest, refunds, loans and dividends.</div></div>
+    <label class="mute"><input type="checkbox" id="pr_on"> On</label></div>
+    <div class="filters" style="margin:8px 0 0">
+      <label class="mute">Up to ₹ <input type="number" id="pr_max" min="0" step="1" style="width:9em"></label>
+      <label class="mute grow">Not from (family, own accounts) <input type="text" id="pr_ex" style="width:100%"></label>
+      <button class="pri" id="pr_save">Save and apply</button></div>
+    <div class="mute" id="pr_stat" style="margin-top:6px"></div></div>
   <div class="card"><div class="row"><div class="grow"><b>Share rules</b><div class="mute">Save all rules, staff and
     consultants to a file, or add the ones in a file you were given. Adding sorts matching unsorted entries
     straight away; nothing already sorted is changed.</div></div>
@@ -4734,6 +4814,12 @@ async function loadCoverage(){
     '<p class="mute" style="margin-top:10px">Squares are months from '+fmt(d.since)+': green has entries, grey has none, amber is missing. '+
     (all?'Import the statements for the amber periods; re-importing a period you already have is safe.':'Nothing missing.')+'</p>';}
 $('cov_go').onclick=run(loadCoverage);
+async function loadPatientRule(d){
+  d=d||await api('/api/patient-rule');
+  $('pr_on').checked=d.on;$('pr_max').value=d.max;$('pr_ex').value=d.exclude;
+  $('pr_stat').textContent=d.count+' entries filed as Patient receipts in all, '+inr(d.total)+'.';}
+$('pr_save').onclick=run(async()=>{const d=await api('/api/patient-rule',{on:$('pr_on').checked,max:$('pr_max').value,exclude:$('pr_ex').value});
+  toast(d.sorted+' more entries sorted');await loadPatientRule(d);await loadState();});
 let MT=null;
 async function loadMail(){
   const d=await api('/api/mail');
@@ -4918,7 +5004,7 @@ $('itr_files').onclick=run(async e=>{const d=e.target.dataset;
   if(d.ifig){IF=(await api('/api/itr/figures?id='+d.ifig)).rows;$('if_title').textContent='All figures in the file';
     $('if_q').value='';showFigures();$('ifdlg').showModal();}});
 $('if_q').oninput=showFigures;$('if_close').onclick=()=>$('ifdlg').close();
-run(async()=>{await loadState();await loadCash();await loadMail();await loadCoverage();})();
+run(async()=>{await loadState();await loadCash();await loadMail();await loadCoverage();await loadPatientRule();})();
 </script></body></html>"""
 
 
