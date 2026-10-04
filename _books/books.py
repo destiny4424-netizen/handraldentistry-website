@@ -1106,10 +1106,20 @@ def smart_statement(link, passwords):
         ke, seq = _input_value(page, "ke"), _input_value(page, "seqence")
         if not ke:
             raise LinkExpired(EXPIRED)
-        token = _get(opener, base + "CRSGetToken?jobkey=" + urllib.parse.quote(jobkey)).decode().strip()
+        try:
+            token = _get(opener, base + "CRSGetToken?jobkey=" + urllib.parse.quote(jobkey)).decode().strip()
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403, 404, 410):
+                raise LinkExpired(EXPIRED)
+            raise
         body = urllib.parse.urlencode(dict(ke=ke, seqence=seq, pwd=smart_encrypt(token + pw))).encode()
-        resp = _get(opener, base + "webresources/app/htmlformat", body, {
-            "Content-Type": "application/x-www-form-urlencoded", "Referer": page_url}).decode("utf-8", "replace")
+        try:
+            resp = _get(opener, base + "webresources/app/htmlformat", body, {
+                "Content-Type": "application/x-www-form-urlencoded", "Referer": page_url}).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                continue  # this password was refused; try the next one
+            raise
         m = re.search(r'Data\("([A-Za-z0-9+/=]+)"\s*,\s*"([^"]+)"\)', resp)
         if not m:
             continue  # wrong password; try the next one
