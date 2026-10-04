@@ -76,7 +76,8 @@ CATS = [
     ("Bank overdraft", "assets"),
     ("Car loan", "loans"), ("Jewel loan", "loans"), ("Personal loan", "loans"),
     ("Home loan", "loans"), ("Education loan", "loans"), ("Business loan", "loans"),
-    ("Other loan", "loans"), ("Hand loans given", "loans"), ("Credit card payment", "loans"),
+    ("Other loan", "loans"), ("Hand loans given", "loans"),
+    ("Hand loans taken", "loans"), ("Credit card payment", "loans"),
     ("Own account transfer", "personal"),
     ("Cash deposit or withdrawal", "personal"),
     ("Vehicle insurance", "personal"), ("Other insurance", "personal"),
@@ -126,6 +127,7 @@ TALLY = {
     "Other loan": ("Other Loans", "Unsecured Loans"),
     "Credit card payment": ("Credit Card", "Current Liabilities"),
     "Hand loans given": ("Loans & Advances - Friends", "Loans & Advances (Asset)"),
+    "Hand loans taken": ("Loans from Friends & Relatives", "Unsecured Loans"),
     "Fixed assets (equipment, furniture)": ("Dental Equipment & Furniture", "Fixed Assets"),
     "Deposits paid (rent, electricity)": ("Security Deposits", "Deposits (Asset)"),
     "Sundry creditors (suppliers, labs)": ("Sundry Creditors", "Sundry Creditors"),
@@ -156,6 +158,10 @@ TALLY_GROUPS = list(TALLY_PARENT)
 BOOK_LEDGERS = {v[0] for v in TALLY.values()} | {"Cash"}
 # Heads whose entries are posted to a party ledger named after the payer or payee.
 PARTY_GROUPS = ("Sundry Creditors", "Sundry Debtors")
+# Heads kept person by person: each payer or payee gets an account of their own.
+PARTY_CATS = ("Hand loans given", "Hand loans taken", "Sundry creditors (suppliers, labs)",
+              "Sundry debtors (insurance, corporates)")
+HAND_LOANS = ("Hand loans given", "Hand loans taken")
 PNL_GROUPS = ("Direct Incomes", "Purchase Accounts", "Direct Expenses", "Indirect Incomes",
               "Indirect Expenses")
 KIND_GROUP = {"Bank": "Bank Accounts", "Credit card": "Current Liabilities",
@@ -770,6 +776,13 @@ def init():
                         " ('', 'Patient receipts', 'Personal') AND narration LIKE ?", (f"%{x}%",))
         apply_rules(con)
         con.execute("PRAGMA user_version=20")
+    if version < 21:  # repayments from people you lent to, taken as patients or small spends
+        for p, cat in con.execute("SELECT TRIM(payee), category FROM txns WHERE category IN (?,?)"
+                                  " AND TRIM(payee)!='' GROUP BY 1", HAND_LOANS).fetchall():
+            con.execute("UPDATE txns SET category=? WHERE TRIM(payee)=? AND category IN"
+                        " ('Patient receipts','Personal')", (cat, p))
+        apply_rules(con)
+        con.execute("PRAGMA user_version=21")
     con.commit()
     con.close()
 
@@ -1287,6 +1300,14 @@ def apply_rules(con):
     except sqlite3.OperationalError:
         big_equip = float("inf")
     n = match_contras(con)
+    # Money to or from someone you lend to (or borrow from) is that loan, both ways:
+    # a borrower paying you back is not a patient.
+    lenders = {r[0]: r[1] for r in con.execute(
+        "SELECT TRIM(payee), category FROM txns WHERE category IN (?,?) AND TRIM(payee)!=''"
+        " GROUP BY 1 ORDER BY MAX(date)", HAND_LOANS)}
+    for p, cat in lenders.items():  # repayments the patient or small-payment rules took earlier
+        n += con.execute("UPDATE txns SET category=? WHERE TRIM(payee)=? AND category IN"
+                         " ('Patient receipts','Personal')", (cat, p)).rowcount
     acols = [c[1] for c in con.execute("PRAGMA table_info(accounts)")]
     kind = "a.kind" if "kind" in acols else "NULL"
     owner = "a.owner" if "owner" in acols else "'Self'"
@@ -1294,6 +1315,11 @@ def apply_rules(con):
             f"SELECT t.id, t.account_id, t.narration, t.payee, t.debit, t.credit, {kind} kind, {owner} owner FROM txns t"
             " LEFT JOIN accounts a ON a.id=t.account_id WHERE t.category=''").fetchall():
         low = t["narration"].lower()
+        mate = lenders.get((t["payee"] or "").strip())
+        if mate:
+            con.execute("UPDATE txns SET category=? WHERE id=?", (mate, t["id"]))
+            n += 1
+            continue
         hits = [(typ, emi) for m, typ, emi in loans if m in low]
         loan = next((typ for typ, emi in hits if emi and abs(emi - (t["debit"] or 0)) < 1),
                     hits[0][0] if hits else None) or (
@@ -2496,6 +2522,36 @@ def api_tax(q):
     return dict(fy=fy, owner=owner, figures=f, options=options, best=best, notes=notes,
                 can_44ada=can_44ada, cash_share=round(cash_share, 4))
 
+
+
+def api_parties(q):
+    """Everyone with a personal account: hand loans given or taken, creditors and debtors.
+    For each, what went out, what came back and who owes whom, across all years."""
+    owner = qget(q, "owner")
+    con = db()
+    w, args = f"t.category IN ({','.join('?' * len(PARTY_CATS))}) AND TRIM(t.payee)!=''", list(PARTY_CATS)
+    if owner:
+        w += " AND a.owner=?"
+        args.append(owner)
+    rows = [dict(r) for r in con.execute(
+        f"SELECT TRIM(t.payee) name, t.category, COUNT(*) n, SUM(t.debit) paid, SUM(t.credit) received,"
+        f" MIN(t.date) first, MAX(t.date) last FROM txns t JOIN accounts a ON a.id=t.account_id"
+        f" WHERE {w} GROUP BY 1, 2 ORDER BY ABS(SUM(t.debit)-SUM(t.credit)) DESC", args)]
+    name = qget(q, "name")
+    entries = []
+    if name:
+        bal = 0.0
+        for r in con.execute(
+                f"SELECT t.date, t.narration, t.debit, t.credit, t.category, a.name acct FROM txns t"
+                f" JOIN accounts a ON a.id=t.account_id WHERE {w} AND TRIM(t.payee)=? ORDER BY t.date, t.seq",
+                args + [name]):
+            bal += (r["debit"] or 0) - (r["credit"] or 0)
+            entries.append(dict(r, balance=round(bal, 2)))
+    con.close()
+    for r in rows:
+        r["balance"] = round((r["paid"] or 0) - (r["received"] or 0), 2)
+        r["key"], r["name"] = r["name"], r["name"].title()
+    return dict(rows=rows, entries=entries)
 
 
 def api_coverage():
@@ -4167,7 +4223,7 @@ def tally_vouchers(q):
     for r in rows:
         bank, bgroup = account_ledger(r["acct"], r["kind"])
         led, group = tally_ledger(r["category"])
-        if group in PARTY_GROUPS and (r["payee"] or "").strip():
+        if (group in PARTY_GROUPS or r["category"] in PARTY_CATS) and (r["payee"] or "").strip():
             party = r["payee"].strip().title()
             if party not in BOOK_LEDGERS:  # never merge a party into one of the fixed ledgers
                 led = party
@@ -4624,6 +4680,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(page.encode(), "text/html; charset=utf-8")
             elif u.path == "/api/tax":
                 self.send(api_tax(q))
+            elif u.path == "/api/parties":
+                self.send(api_parties(q))
             elif u.path == "/api/coverage":
                 self.send(api_coverage())
             elif u.path == "/api/mail":
@@ -5125,6 +5183,7 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="stats" id="ln_stats"></div>
   <div class="card scroll" id="ln_order" hidden></div>
   <div id="ln_list"></div>
+  <div class="card scroll" id="ln_people"></div>
   <div class="card scroll" id="ln_types" hidden></div>
 </section>
 <section id="insurance">
@@ -5915,6 +5974,7 @@ function openPolicy(r){pCur=r||null;
   $('po_senior').checked=!!v.senior;$('podlg').showModal();}
 let L=null,lCur=null;
 async function loadLoans(){
+  loadParties().catch(e=>toast(e.message));
   const y=$('fy').value;L=await api('/api/loans?'+qs({owner:$('who').value,fy:y}));
   const sum=k=>L.rows.reduce((a,r)=>a+(r[k]||0),0),fyName=fyLabel(+y).split(' (')[0];
   $('ln_stats').innerHTML=L.rows.length?stat('Outstanding',sum('outstanding'))+stat('Interest, '+fyName,sum('interest'))+
@@ -6074,6 +6134,21 @@ $('sc_add').onclick=run(async()=>{
   const r=await api('/api/cash-salary',{staff:$('sc_staff').value,date:$('sc_date').value,month:$('sc_month').value,
     amount:$('sc_amt').value,clinic:$('sc_clinic').value,note:$('sc_note').value});
   $('sc_amt').value='';$('sc_note').value='';toast('Saved as voucher '+r.ref);await loadStaff();});
+async function loadParties(){
+  const d=await api('/api/parties?'+qs({owner:$('who').value})),box=$('ln_people');
+  if(!d.rows.length){box.innerHTML='<h3>People: money lent and borrowed</h3><p class="mute">Nobody yet. In Sort, put a person\'s payment under '+
+    'Hand loans given (money you lent) or Hand loans taken (money you borrowed); they get their own account here, and what they pay back is matched to it.</p>';return;}
+  const who=r=>r.balance>0.5?'<span class="in">owes you '+inr(r.balance)+'</span>':r.balance<-0.5?'<span class="out">you owe '+inr(-r.balance)+'</span>':'<span class="mute">settled</span>';
+  box.innerHTML='<h3>People: money lent and borrowed (all years)</h3><table><tr><th>Name</th><th>Account</th><th>Paid to them</th><th>Received from them</th><th>Balance</th><th>Last</th></tr>'+
+    d.rows.map((r,i)=>'<tr class="go" data-party="'+i+'"><td><b>'+esc(r.name)+'</b></td><td class="mute">'+esc(r.category)+'</td><td class="num">'+inr(r.paid||0)+
+      '</td><td class="num">'+inr(r.received||0)+'</td><td class="num">'+who(r)+'</td><td>'+esc(r.last)+'</td></tr>').join('')+'</table>'+
+    '<p class="mute">Tap a name for their account, entry by entry. Each person is a separate ledger in Tally too.</p><div id="ln_party"></div>';
+  box.querySelectorAll('[data-party]').forEach(tr=>tr.onclick=run(async()=>{const r=d.rows[+tr.dataset.party];
+    const e=(await api('/api/parties?'+qs({owner:$('who').value,name:r.key}))).entries;
+    $('ln_party').innerHTML='<h3>'+esc(r.name)+'</h3><table><tr><th>Date</th><th>Bank entry</th><th>Paid</th><th>Received</th><th>Balance</th></tr>'+
+      e.map(x=>'<tr><td>'+x.date+'</td><td>'+esc(x.narration)+' <span class="mute">('+esc(x.acct)+')</span></td><td class="num">'+(x.debit?inr(x.debit):'')+
+        '</td><td class="num">'+(x.credit?inr(x.credit):'')+'</td><td class="num">'+(x.balance>0?inr(x.balance)+' Dr':x.balance<0?inr(-x.balance)+' Cr':'nil')+'</td></tr>').join('')+
+      '</table><p class="mute">Dr: they owe you. Cr: you owe them.</p>';$('ln_party').scrollIntoView({behavior:'smooth'});}));}
 let MT=null;
 async function loadMail(){
   const d=await api('/api/mail');
