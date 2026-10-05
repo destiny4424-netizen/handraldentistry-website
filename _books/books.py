@@ -6959,7 +6959,7 @@ async function loadLoans(){
   const cell=(label,v,est)=>'<div><span class="mute">'+label+'</span><span class="num">'+(v==null?'-':inr(v)+(est?' <i class="mute">est.</i>':''))+'</span></div>';
   $('ln_list').innerHTML=L.rows.length?L.rows.map(l=>'<div class="card"><div class="row"><div class="grow"><b>'+esc(l.name)+'</b> <span class="chip">'+esc(l.type)+
     '</span> <span class="chip">'+esc(l.purpose)+'</span> <span class="chip">'+esc(l.owner)+'</span>'+(l.closed?' <span class="chip">closed '+l.closed+'</span>':'')+
-    '<div class="mute">'+esc([l.lender,l.amount?'borrowed '+inr(l.amount):'',l.start?'on '+l.start:'',l.rate?l.rate+'%':'',l.emi?'EMI '+inr(l.emi):''].filter(Boolean).join(', '))+'</div></div>'+
+    '<div class="mute">'+esc([l.lender,l.amount?'borrowed '+inr(l.amount):'',l.start?'on '+l.start:'',l.emi?'EMI '+inr(l.emi):''].filter(Boolean).join(', '))+'</div></div>'+
     '<div style="text-align:right"><span class="mute">Outstanding</span><br><b class="num">'+(l.outstanding==null?'-':inr(l.outstanding))+'</b>'+(l.outstanding!=null&&!l.outstanding_given?' <i class="mute">est.</i>':'')+'</div></div>'+
     '<div class="figs">'+cell('Received this year',l.received)+cell('Paid this year',l.paid)+cell('Interest',l.interest,!l.interest_given)+cell('Principal repaid',l.principal,!l.interest_given)+'</div>'+
     '<p class="mute" style="margin:8px 0 0">'+esc(l.note_tax)+(l.match?'':' <b>Add the text for this loan in bank entries so its EMIs are picked up.</b>')+'</p>'+
@@ -6971,13 +6971,12 @@ async function loadLoans(){
     .sort((a,b)=>(b.rate||-1)-(a.rate||-1)||(b.outstanding||0)-(a.outstanding||0));
   const ob=$('ln_order');ob.hidden=open.length<2;
   if(open.length>1){const tot=k=>open.reduce((a,r)=>a+(r[k]||0),0);
-    ob.innerHTML='<h3>Which loans to close first</h3><p class="mute" style="margin-top:0">Costliest rate first. Any spare money '+
+    ob.innerHTML='<h3>Which loans to close first</h3><p class="mute" style="margin-top:0">Costliest first. Any spare money '+
       'paid into the loan at the top saves the most interest. Check its foreclosure or part-payment charges first.</p>'+
-      '<table><tr><th>#</th><th>Loan</th><th>Rate</th><th>EMI</th><th>Outstanding</th><th>Interest a month</th></tr>'+
-      open.map((l,i)=>'<tr class="go" data-lopen="'+l.id+'"><td>'+(i+1)+'</td><td>'+esc(l.name)+'</td><td class="num">'+(l.rate?l.rate+'%':'<span class="mute">add rate</span>')+
-        '</td><td class="num">'+(l.emi?inr(l.emi):'<span class="mute">add EMI</span>')+'</td><td class="num">'+(l.outstanding==null?'-':inr(l.outstanding))+
+      '<table><tr><th>#</th><th>Loan</th><th>EMI</th><th>Outstanding</th><th>Interest a month</th></tr>'+
+      open.map((l,i)=>'<tr class="go" data-lopen="'+l.id+'"><td>'+(i+1)+'</td><td>'+esc(l.name)+'</td><td class="num">'+(l.emi?inr(l.emi):'<span class="mute">add EMI</span>')+'</td><td class="num">'+(l.outstanding==null?'-':inr(l.outstanding))+
         '</td><td class="num">'+(l.monthly==null?'-':inr(l.monthly))+'</td></tr>').join('')+
-      '<tr><td></td><td><b>Total</b></td><td></td><td class="num"><b>'+inr(tot('emi'))+'</b></td><td class="num"><b>'+inr(tot('outstanding'))+
+      '<tr><td></td><td><b>Total</b></td><td class="num"><b>'+inr(tot('emi'))+'</b></td><td class="num"><b>'+inr(tot('outstanding'))+
       '</b></td><td class="num"><b>'+inr(tot('monthly'))+'</b></td></tr></table>'+
       '<p class="mute">Outstanding is as of today, or the end of the year picked at the top; estimated from the rate and EMI unless you entered it. '+
       'Tap a loan to edit it.</p>';
