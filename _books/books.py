@@ -3071,7 +3071,7 @@ def api_parties(q):
     if name:
         bal = 0.0
         for r in con.execute(
-                f"SELECT t.date, t.narration, t.debit, t.credit, t.category, a.name acct FROM txns t"
+                f"SELECT t.id, t.date, t.narration, t.debit, t.credit, t.category, a.name acct, a.kind FROM txns t"
                 f" JOIN accounts a ON a.id=t.account_id WHERE {w} AND TRIM(t.payee)=? ORDER BY t.date, t.seq",
                 args + [name]):
             bal += (r["debit"] or 0) - (r["credit"] or 0)
@@ -3081,6 +3081,37 @@ def api_parties(q):
         r["balance"] = round((r["paid"] or 0) - (r["received"] or 0), 2)
         r["key"], r["name"] = r["name"], r["name"].title()
     return dict(rows=rows, entries=entries)
+
+
+HAND_CASH = {  # what happened -> (account, money into cash?)
+    "received": ("Hand loans given", True, "Cash received back from"),
+    "lent": ("Hand loans given", False, "Cash lent to"),
+    "borrowed": ("Hand loans taken", True, "Cash borrowed from"),
+    "repaid": ("Hand loans taken", False, "Cash repaid to"),
+}
+
+
+def add_hand_cash(con, d):
+    """Cash given to or received from a person, posted to their own account and to cash in hand."""
+    name = " ".join(str(d.get("name") or "").split()).upper()[:30]
+    if len(name) < 2:
+        raise ValueError("Enter the person's name.")
+    if d.get("kind") not in HAND_CASH:
+        raise ValueError("Choose what happened.")
+    cat, into, label = HAND_CASH[d["kind"]]
+    date, amount = check_date(d.get("date")), to_num(d.get("amount"))
+    if not date:
+        raise ValueError("Enter the date.")
+    if amount <= 0:
+        raise ValueError("Enter the amount.")
+    note = " ".join(str(d.get("note") or "").split())
+    narr = " - ".join(x for x in (f"{label} {name.title()}", note) if x)
+    seq = con.execute("SELECT COALESCE(MAX(seq),0)+1 FROM txns").fetchone()[0]
+    h = hashlib.sha1(f"handcash|{time.time_ns()}|{narr}|{amount}".encode()).hexdigest()
+    con.execute("INSERT INTO txns(account_id,date,narration,ref,debit,credit,balance,category,clinic,note,seq,hash,payee)"
+                " VALUES(?,?,?,'',?,?,0,?,'',?,?,?,?)",
+                (cash_account(con), date, narr, 0 if into else amount, amount if into else 0, cat, note, seq, h, name))
+    return name
 
 
 def api_coverage():
@@ -3137,7 +3168,7 @@ def api_cash(q):
     """Cash entries for the year with totals by month and treatment."""
     fy = qget(q, "fy")
     con = db()
-    where, args = "a.kind='Cash' AND t.credit>0", []  # collections; cash paid out has its own lists
+    where, args = "a.kind='Cash' AND t.credit>0 AND t.category NOT IN ('Hand loans given','Hand loans taken')", []
     if fy:
         where += " AND date BETWEEN ? AND ?"
         args += list(fy_range(fy))
@@ -3147,7 +3178,8 @@ def api_cash(q):
         f" ORDER BY date DESC, seq DESC", args)]
     patients = sorted({r[0].title() for r in con.execute(
         "SELECT DISTINCT payee FROM txns t JOIN accounts a ON a.id=t.account_id"
-        " WHERE a.kind='Cash' AND t.credit>0 AND payee NOT IN ('', 'CASH')")})
+        " WHERE a.kind='Cash' AND t.credit>0 AND payee NOT IN ('', 'CASH')"
+        " AND t.category NOT IN ('Hand loans given','Hand loans taken')")})
     treats = [r[0] for r in con.execute(
         "SELECT DISTINCT ref FROM txns t JOIN accounts a ON a.id=t.account_id"
         " WHERE a.kind='Cash' AND t.credit>0 AND ref!=''")]
@@ -5643,6 +5675,8 @@ class Handler(BaseHTTPRequestHandler):
                     res["changed"] = con.execute(
                         "UPDATE txns SET debit=? WHERE id=? AND account_id IN (SELECT id FROM accounts WHERE kind='Cash')",
                         (amt, int(d["id"]))).rowcount
+                elif u.path == "/api/hand-cash":
+                    res["name"] = add_hand_cash(con, d)
                 elif u.path == "/api/merge":
                     res.update(merge_names(con, d.get("names") or [], d.get("nickname")))
                 elif u.path == "/api/nicknames/delete":
@@ -5999,6 +6033,21 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="stats" id="ln_stats"></div>
   <div class="card scroll" id="ln_order" hidden></div>
   <div id="ln_list"></div>
+  <div class="card" id="hc_card"><h3 style="margin:0 0 8px">Cash given or received with a person</h3>
+    <div class="filters" style="margin:0">
+      <input type="text" id="hc_name" list="hc_names" placeholder="Person's name" autocomplete="off">
+      <datalist id="hc_names"></datalist>
+      <select id="hc_kind" aria-label="What happened">
+        <option value="received">Received back in cash (loan I gave)</option>
+        <option value="lent">Lent in cash</option>
+        <option value="borrowed">Borrowed in cash</option>
+        <option value="repaid">Repaid in cash (loan I took)</option></select>
+      <input type="date" id="hc_date" aria-label="Date">
+      <input type="number" id="hc_amt" min="0" step="1" placeholder="Amount">
+      <input type="text" id="hc_note" placeholder="Note (optional)">
+      <button class="pri" id="hc_add">Add to their account</button></div>
+    <p class="mute" style="margin:8px 0 0">Pick the name as it appears in the list below so it goes into the same account.
+      The cash goes into cash in hand; it is not counted as a patient receipt.</p></div>
   <div class="card scroll" id="ln_people"></div>
   <div class="card scroll" id="ln_types" hidden></div>
 </section>
@@ -7118,6 +7167,8 @@ $('sc_add').onclick=run(async()=>{
   toast(r.count?r.count+' months saved: vouchers '+r.ref:'Saved as voucher '+r.ref);await loadStaff();});
 async function loadParties(){
   const d=await api('/api/parties?'+qs({owner:$('who').value})),box=$('ln_people');
+  $('hc_names').innerHTML=[...new Set(d.rows.map(r=>r.key))].map(k=>'<option value="'+esc(k)+'">').join('');
+  if(!$('hc_date').value)$('hc_date').value=today();
   if(!d.rows.length){box.innerHTML='<h3>People: money lent and borrowed</h3><p class="mute">Nobody yet. In Sort, put a person\'s payment under '+
     'Hand loans given (money you lent) or Hand loans taken (money you borrowed); they get their own account here, and what they pay back is matched to it.</p>';return;}
   const who=r=>r.balance>0.5?'<span class="in">owes you '+inr(r.balance)+'</span>':r.balance<-0.5?'<span class="out">you owe '+inr(-r.balance)+'</span>':'<span class="mute">settled</span>';
@@ -7127,10 +7178,19 @@ async function loadParties(){
     '<p class="mute">Tap a name for their account, entry by entry. Each person is a separate ledger in Tally too.</p><div id="ln_party"></div>';
   box.querySelectorAll('[data-party]').forEach(tr=>tr.onclick=run(async()=>{const r=d.rows[+tr.dataset.party];
     const e=(await api('/api/parties?'+qs({owner:$('who').value,name:r.key}))).entries;
-    $('ln_party').innerHTML='<h3>'+esc(r.name)+'</h3><table><tr><th>Date</th><th>Bank entry</th><th>Paid</th><th>Received</th><th>Balance</th></tr>'+
-      e.map(x=>'<tr><td>'+x.date+'</td><td>'+esc(x.narration)+' <span class="mute">('+esc(x.acct)+')</span></td><td class="num">'+(x.debit?inr(x.debit):'')+
+    $('ln_party').innerHTML='<div class="row"><h3 class="grow">'+esc(r.name)+'</h3><button id="hc_for">Add cash for '+esc(r.name)+'</button></div>'+
+      '<table><tr><th>Date</th><th>Entry</th><th>Paid</th><th>Received</th><th>Balance</th></tr>'+
+      e.map(x=>'<tr><td>'+x.date+'</td><td>'+esc(x.narration)+' <span class="mute">('+esc(x.acct)+')</span>'+
+        (x.kind==='Cash'?' <button class="link" data-hcdel="'+x.id+'">Delete</button>':'')+'</td><td class="num">'+(x.debit?inr(x.debit):'')+
         '</td><td class="num">'+(x.credit?inr(x.credit):'')+'</td><td class="num">'+(x.balance>0?inr(x.balance)+' Dr':x.balance<0?inr(-x.balance)+' Cr':'nil')+'</td></tr>').join('')+
-      '</table><p class="mute">Dr: they owe you. Cr: you owe them.</p>';$('ln_party').scrollIntoView({behavior:'smooth'});}));}
+      '</table><p class="mute">Dr: they owe you. Cr: you owe them.</p>';$('ln_party').scrollIntoView({behavior:'smooth'});
+    $('hc_for').onclick=()=>{$('hc_name').value=r.key;$('hc_kind').value=r.category==='Hand loans taken'?'repaid':'received';
+      $('hc_card').scrollIntoView({behavior:'smooth'});$('hc_amt').focus();};
+    $('ln_party').querySelectorAll('[data-hcdel]').forEach(b=>b.onclick=run(async ev=>{ev.stopPropagation();
+      if(!confirm('Delete this cash entry?'))return;await api('/api/cash/delete',{id:+b.dataset.hcdel});await loadParties();}));}));}
+$('hc_add').onclick=run(async()=>{
+  const r=await api('/api/hand-cash',{name:$('hc_name').value,kind:$('hc_kind').value,date:$('hc_date').value,amount:$('hc_amt').value,note:$('hc_note').value});
+  $('hc_amt').value='';$('hc_note').value='';toast('Added to '+r.name+'\'s account');await loadParties();});
 let MT=null;
 async function loadMail(){
   const d=await api('/api/mail');
