@@ -6020,6 +6020,9 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <div class="card"><div class="row">
     <div class="grow mute" id="tsum"></div>
     <button id="bulk">Categorise all shown</button></div></div>
+  <div class="card"><div class="row"><div class="grow"><b>Loan repaid to you in cash?</b>
+    <div class="mute">Record cash a person gave back against the loan you gave them; it goes into their account.</div></div>
+    <button class="pri" id="hc_open">Cash received back</button></div></div>
   <div class="card" id="tlist"></div>
   <button id="more" hidden>Show more</button>
 </section>
@@ -6292,10 +6295,26 @@ color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:92vw;
   <label for="d_cat">Ledger</label><select id="d_cat"></select>
   <label for="d_clinic">Clinic</label><select id="d_clinic"></select>
   <label for="d_note">Note</label><input id="d_note" type="text">
+  <button id="d_hc" type="button" hidden style="margin-top:10px">Cash received back from this person</button>
   <label><input type="checkbox" id="d_mk"> Also make a rule for narrations containing</label>
   <input id="d_pat" type="text">
   <div class="row" style="margin-top:14px;justify-content:flex-end">
     <button id="d_cancel">Cancel</button><button class="pri" id="d_save">Save</button></div>
+</dialog>
+<dialog id="hcdlg">
+  <b>Cash with a person</b>
+  <label for="hd_name">Person (as in their loan account)</label>
+  <input id="hd_name" type="text" list="hc_names" autocomplete="off">
+  <label for="hd_kind">What happened</label>
+  <select id="hd_kind"><option value="received">Received back in cash (loan I gave)</option>
+    <option value="lent">Lent in cash</option><option value="borrowed">Borrowed in cash</option>
+    <option value="repaid">Repaid in cash (loan I took)</option></select>
+  <label for="hd_date">Date</label><input id="hd_date" type="date">
+  <label for="hd_amt">Amount</label><input id="hd_amt" type="number" min="0" step="1">
+  <label for="hd_note">Note</label><input id="hd_note" type="text">
+  <p class="mute" id="hd_bal" style="margin:8px 0 0"></p>
+  <div class="row" style="margin-top:14px;justify-content:flex-end">
+    <button id="hd_cancel">Cancel</button><button class="pri" id="hd_save">Add to their account</button></div>
 </dialog>
 <dialog id="adlg">
   <h3>Edit account</h3>
@@ -6564,7 +6583,19 @@ function openTxn(t){cur=t;
   $('d_amt').className='grow num '+(t.credit>0?'in':'out');
   $('d_date').textContent=t.date+', '+t.account;$('d_narr').textContent=t.narration;
   $('d_cat').value=t.category;$('d_clinic').value=t.clinic;$('d_note').value=t.note||'';
-  $('d_mk').checked=false;$('d_pat').value=t.payee&&t.payee!=='OTHER'?t.payee:t.narration.slice(0,24);$('dlg').showModal();}
+  $('d_mk').checked=false;$('d_pat').value=t.payee&&t.payee!=='OTHER'?t.payee:t.narration.slice(0,24);showHcBtn();$('dlg').showModal();}
+function showHcBtn(){const c=$('d_cat').value;$('d_hc').hidden=!(cur&&(c==='Hand loans given'||c==='Hand loans taken'));
+  $('d_hc').textContent=c==='Hand loans taken'?'Cash repaid to this person':'Cash received back from this person';}
+let PARTIES=[];
+async function openHandCash(name,kind){
+  try{PARTIES=(await api('/api/parties?'+qs({owner:$('who').value}))).rows;}catch(e){PARTIES=[];}
+  $('hc_names').innerHTML=[...new Set(PARTIES.map(r=>r.key))].map(k=>'<option value="'+esc(k)+'">').join('');
+  $('hd_name').value=name||'';$('hd_kind').value=kind||'received';$('hd_date').value=today();$('hd_amt').value='';$('hd_note').value='';
+  hdBal();$('hcdlg').showModal();(name?$('hd_amt'):$('hd_name')).focus();}
+function hdBal(){const k=$('hd_name').value.trim().toUpperCase(),rs=PARTIES.filter(r=>r.key.toUpperCase()===k);
+  const b=rs.reduce((a,r)=>a+r.balance,0);
+  $('hd_bal').textContent=!k?'':!rs.length?'New person: a new account is opened for them.':
+    b>0.5?'They owe you '+inr(b)+' now.':b<-0.5?'You owe them '+inr(-b)+' now.':'Their account is settled.';}
 
 async function loadReport(){
   const y=+$('fy').value,f={owner:$('who').value,fy:y,clinic:$('rp_clinic').value};
@@ -7188,6 +7219,15 @@ async function loadParties(){
       $('hc_card').scrollIntoView({behavior:'smooth'});$('hc_amt').focus();};
     $('ln_party').querySelectorAll('[data-hcdel]').forEach(b=>b.onclick=run(async ev=>{ev.stopPropagation();
       if(!confirm('Delete this cash entry?'))return;await api('/api/cash/delete',{id:+b.dataset.hcdel});await loadParties();}));}));}
+$('hd_name').oninput=hdBal;
+$('hc_open').onclick=run(()=>openHandCash('','received'));
+$('d_cat').addEventListener('change',showHcBtn);
+$('d_hc').onclick=run(async()=>{const t=cur;$('dlg').close();
+  await openHandCash(t.payee&&t.payee!=='OTHER'?t.payee:'',$('d_cat').value==='Hand loans taken'?'repaid':'received');});
+$('hd_cancel').onclick=()=>$('hcdlg').close();
+$('hd_save').onclick=run(async()=>{
+  const r=await api('/api/hand-cash',{name:$('hd_name').value,kind:$('hd_kind').value,date:$('hd_date').value,amount:$('hd_amt').value,note:$('hd_note').value});
+  $('hcdlg').close();toast('Added to '+r.name+'\'s account');await loadState();await refresh();});
 $('hc_add').onclick=run(async()=>{
   const r=await api('/api/hand-cash',{name:$('hc_name').value,kind:$('hc_kind').value,date:$('hc_date').value,amount:$('hc_amt').value,note:$('hc_note').value});
   $('hc_amt').value='';$('hc_note').value='';toast('Added to '+r.name+'\'s account');await loadParties();});
