@@ -1639,10 +1639,45 @@ def digits_list(text):
     return [d[-4:] for d in re.findall(r"\d{2,}", text or "")]
 
 
+WORKED = []  # statement passwords that opened something during this check
+
+
+def password_candidates(con, saved):
+    """The saved statement passwords, then the ones HDFC's 2026 format makes from them: first 4 letters
+    of the account holder's name in capitals + date of birth (DDMM) or + first 4 digits of the
+    Customer ID. Names come from your own and your family's names in the app; digits from the saved
+    Customer IDs and card passwords. The ones that worked before go first."""
+    words = []
+    for p in saved:
+        m = re.fullmatch(r"([A-Za-z]{4})(\d{4})", p)
+        if m:
+            words.append(m.group(1).upper())
+    texts = [r[0] for r in con.execute("SELECT pattern FROM rules WHERE category IN "
+                                        "('Own account transfer','Family and friends')")]
+    texts += re.split(r"[,\n]", setting(con, "patient_exclude", PATIENT_DEFAULT_EXCLUDE))
+    for t in texts:
+        for w in re.findall(r"[A-Za-z]{4,}", t):
+            if w.upper() not in ("ENTERPRISES", "BANK", "SALARY"):
+                words.append(w[:4].upper())
+    digits = []
+    for p in saved:
+        d = re.sub(r"\D", "", p)
+        if len(d) >= 6 and d == p.strip():
+            digits.append(d[:4])            # Customer ID: its first 4 digits
+        m = re.fullmatch(r"[A-Za-z]{4}(\d{4})", p)
+        if m:
+            digits.append(m.group(1))       # NAME + DDMM: the date of birth
+    words, digits = list(dict.fromkeys(words))[:6], list(dict.fromkeys(digits))[:4]
+    good = [p for p in setting(con, "pdf_pw_good").splitlines() if p]
+    made = [w + d for w in words for d in digits]
+    return list(dict.fromkeys(good + saved + [p.upper() for p in saved if re.fullmatch(r"[a-z]{4}\d{4}", p)] + made))
+
+
 def mail_settings(con):
+    saved = [p.strip() for p in setting(con, "pdf_passwords").splitlines() if p.strip()]
     return dict(
         user=setting(con, "mail_user"), password=setting(con, "mail_pass"),
-        pdf_passwords=[p.strip() for p in setting(con, "pdf_passwords").splitlines() if p.strip()],
+        pdf_passwords=password_candidates(con, saved), pdf_saved=len(saved),
         accounts=digits_list(setting(con, "mail_accounts", "6324 7177 9867")),
         daughter=digits_list(setting(con, "mail_daughter", "9867")),
         since=setting(con, "mail_since", "2023-04-01"))
@@ -1734,12 +1769,13 @@ def smart_statement(link, passwords):
             resp = _get(opener, base + "webresources/app/htmlformat", body, {
                 "Content-Type": "application/x-www-form-urlencoded", "Referer": page_url}).decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
-            if e.code in (401, 403):
+            if e.code in (400, 401, 403, 417):
                 continue  # this password was refused; try the next one
             raise
         m = re.search(r'Data\("([A-Za-z0-9+/=]+)"\s*,\s*"([^"]+)"\)', resp)
         if not m:
             continue  # wrong password; try the next one
+        WORKED.append(pw)
         cipher = base64.b64decode(m.group(2).replace("\\n", "").replace("\n", ""))
         text = aes_ecb_decrypt(base64.b64decode(m.group(1)), cipher).decode("utf-8", "replace")
         b = re.search(r'(?is)id=["\']P_PRINT_BUTTON["\'][^>]*formaction=["\']([^"\']+)["\']', text) or \
@@ -1775,6 +1811,8 @@ def pdf_password(data, passwords):
         try:
             with pdfplumber.open(io.BytesIO(data), password=pw or None) as pdf:
                 pdf.pages[0].extract_text()
+            if pw:
+                WORKED.append(pw)
             return pw
         except Exception:
             continue
@@ -2042,6 +2080,12 @@ def fetch_statements():
                     if d and d[:4] == b"%PDF":
                         file, fname = d, _decode(part.get_filename() or "statement.pdf")
                         break
+            if WORKED:  # try the password that just worked first from now on
+                good = list(dict.fromkeys(WORKED[::-1] + [p for p in setting(con, "pdf_pw_good").splitlines() if p]))[:6]
+                WORKED.clear()
+                with LOCK:
+                    con.execute("INSERT OR REPLACE INTO settings VALUES('pdf_pw_good',?)", ("\n".join(good),))
+                cfg["pdf_passwords"] = list(dict.fromkeys(good + cfg["pdf_passwords"]))
             with LOCK:
                 con.execute(
                     "INSERT INTO mail_log(msgid,date,subject,account,status,found,added,detail,checked,file,filename)"
@@ -2108,7 +2152,7 @@ def api_mail():
     for r in log:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     return dict(user=cfg["user"], has_password=bool(cfg["password"]),
-                pdf_passwords=len(cfg["pdf_passwords"]),
+                pdf_passwords=cfg["pdf_saved"],
                 accounts=" ".join(cfg["accounts"]), daughter=" ".join(cfg["daughter"]),
                 since=cfg["since"], running=MAIL["running"], message=MAIL["message"],
                 counts=counts, log=log)
@@ -7298,7 +7342,7 @@ async function loadMail(){
   if(document.activeElement!==$('m_user'))$('m_user').value=d.user||'';
   $('m_pass').placeholder=d.has_password?'App Password saved (type to change)':'Gmail App Password';
   $('m_pdfpw').placeholder=d.pdf_passwords?d.pdf_passwords+' statement passwords saved (type all of them again to change)':
-    'Statement passwords, one per line (Customer ID; NAME + first 4 digits of Customer ID; NAME + DDMM for the card; your daughter\'s too)';
+    'Statement passwords, one per line: your Customer ID, and NAME + DDMM (first 4 letters of the name in capitals + date of birth), for you and your daughter. The 2026 HDFC format is made from these by itself.';
   if(document.activeElement!==$('m_accts'))$('m_accts').value=d.accounts;
   if(document.activeElement!==$('m_daughter'))$('m_daughter').value=d.daughter;
   if(document.activeElement!==$('m_since'))$('m_since').value=d.since;
