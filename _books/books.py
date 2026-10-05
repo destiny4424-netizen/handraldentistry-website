@@ -2990,6 +2990,12 @@ def ais_compare(con, fy, owner, f):
     out = []
     for cat, r in sorted(ais.items(), key=lambda x: TIS_CATS.index(x[0]) if x[0] in TIS_CATS else 99):
         v, books, note = r["amount"], None, ""
+        if cat == "Salary" and not con.execute("SELECT 1 FROM tds WHERE fy=? AND owner=? AND section LIKE '192%'",
+                                                  (fy, owner)).fetchone():
+            books = f.get("books_salary", f["salary"])
+            out.append(dict(id=0, category="TDS on salary", ais=0, books=None, status="check", source="",
+                            note="No TDS on salary was read. If the employer deducted tax, add it under Tax deducted "
+                                 "by others: deductor, section 192, salary and TDS from the AIS or Form 16."))
         if cat == "Salary":
             books = f.get("books_salary", f["salary"])
             note = ("" if books >= v - 1 else
@@ -3643,24 +3649,72 @@ def parse_tis_lines(lines):
     return out
 
 
-def parse_ais_pdf_tds(lines):
-    """Part B1 of an AIS PDF: a summary row per deductor (code, description and name, TAN, count,
-    amount paid), then one row per credit with the quarter, date, amount, TDS deducted and deposited."""
-    out, cur = [], None
-    for s in lines:
-        m = re.match(r"^\s*\d+\s+(TDS|TCS)-(\w+)\s+(.*?)\s*\(?([A-Z]{4}\d{5}[A-Z])\)?\s+\d+\s+([\d,]+(?:\.\d+)?)\s*$", s)
-        if m:
-            text = re.sub(r"^.*\)\s*", "", m.group(3)) or m.group(3)  # drop "Salary received (Section 192)"
-            cur = dict(deductor=" ".join(text.split()).title()[:80], tan=m.group(4), section=m.group(2)[:12],
-                       paid=num_cell(m.group(5)) or 0, tds=0.0, source=m.group(1))
-            out.append(cur)
+AIS_DATE = r"\d{1,2}[/-](?:\d{1,2}|[A-Za-z]{3})[/-]\d{4}"
+
+
+def parse_ais_pdf_tds(items):
+    """Part B1 (TDS/TCS) of an AIS PDF, from table rows (lists of cells) or text lines. Each deductor
+    starts with its code (TDS-192, TDS-194J...), its TAN appears in brackets, possibly on a later line
+    when the name wraps, and each credit is a row with the quarter, date, amount paid, TDS deducted
+    and TDS deposited. Line breaks and the date style do not matter."""
+    out, cur, on = [], None, True
+    for it in items:
+        cells = [str(c or "") for c in it] if isinstance(it, (list, tuple)) else [str(it)]
+        line = " ".join(" ".join(cells).split())
+        if not line:
             continue
-        d = re.search(r"Q[1-4].*?\d{2}/\d{2}/\d{4}\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)", s)
-        if d and cur:
-            cur["tds"] = round(cur["tds"] + (num_cell(d.group(2)) or 0), 2)
-        if re.search(r"(?i)SFT\s+Information|Part\s*B2", s):
-            cur = None
-    return out
+        if re.search(r"(?i)\bSFT\b|Part\s*B2|Payment\s+of\s+Taxes|Part\s*B3", line):
+            on, cur = False, None
+            continue
+        if re.search(r"(?i)Part\s*B1|TDS/TCS\s+Information", line):
+            on = True
+        if not on:
+            continue
+        code = re.search(r"\b(TDS|TCS)-(\d{3}[A-Z]{0,3})\b", line)
+        tan = TAN_RE.search(line)
+        if code:
+            cur = dict(deductor="", tan="", section=code.group(2), paid=0.0, tds=0.0, source=code.group(1),
+                       summary=0.0, detail=False)
+            out.append(cur)
+            rest = TAN_RE.sub(" ", re.sub(r"(?i)\(section\s*\w+\)", " ", line[code.end():]))
+            tail = [n for n in (num_cell(x) for x in re.findall(r"(?<![\w-])[\d,]+(?:\.\d+)?(?![\w-])", rest)) if n]
+            if tail:
+                cur["summary"] = tail[-1]  # count, then the amount paid
+            lead = re.sub(r"(?i)^.*?\(section\s*", "", line[code.end():]) if "(section" in line.lower() else ""
+            lead = re.sub(r"[\d,]+(?:\.\d+)?\s*$", "", re.sub(r"\s\d+\s+[\d,]+(?:\.\d+)?\s*$", "", lead)).strip()
+            if lead and not tan and not re.search(r"\)", lead):
+                cur["lead"] = lead
+        if cur and tan and not cur["tan"]:
+            cur["tan"] = tan.group()
+            cell = next((c for c in cells if tan.group() in c), line)
+            name = cell[:cell.find(tan.group())]
+            name = re.sub(r"(?i)^.*?\b(TDS|TCS)-\w+\s*", "", name)
+            name = re.sub(r"(?i)^.*\(section\s*\w+\)\s*", "", name)
+            name = re.sub(r"^\s*\w{0,4}\)\s*", "", name)  # the end of a wrapped "(Section 192)"
+            name = re.sub(r"(?i)^(salary received|interest other than 'interest on securities'|interest on securities|"
+                          r"interest from deposits?|fees for professional (or technical )?services?|"
+                          r"payment to contractors?|rent( on [\w ]+)?|dividend|commission or brokerage|"
+                          r"insurance commission)\s*", "", name.strip(" ("))
+            if cur.get("lead") and len(name.split()) < 4:  # the name began on the code line
+                name = cur["lead"] + " " + name
+            cur["deductor"] = " ".join(name.strip(" (").split()).title()[:80]
+        q = re.search(r"\bQ[1-4]\b", line)
+        d = re.search(AIS_DATE, line)
+        if cur and q and d and d.start() > q.start():
+            nums = [n for n in (num_cell(x) for x in re.findall(r"[\d,]+(?:\.\d+)?", line[d.end():]))
+                    if n is not None]
+            if len(nums) >= 2:
+                cur["paid"] = round(cur["paid"] + nums[0], 2)
+                cur["tds"] = round(cur["tds"] + nums[1], 2)
+                cur["detail"] = True
+    rows = []
+    for r in out:
+        if not r["detail"]:
+            r["paid"] = r["summary"]
+        r["deductor"] = r["deductor"] or ("Deductor " + r["tan"] if r["tan"] else "")
+        if r["tan"] or r["tds"]:
+            rows.append({k: r[k] for k in ("deductor", "tan", "section", "paid", "tds", "source")})
+    return rows
 
 
 def parse_ais_json_tis(obj):
@@ -3705,7 +3759,14 @@ def parse_26as(name, data, password):
         lines = pdf_text_lines(data, password)
         text = "\n".join(lines)
         if re.search(r"(?i)annual\s+information\s+statement|taxpayer\s+information\s+summary", text):
-            rows, tis = parse_ais_pdf_tds(lines), parse_tis_lines(lines)
+            tis = parse_tis_lines(lines)
+            rows = parse_ais_pdf_tds(lines)
+            try:  # the same part read from the PDF's tables; keep whichever found more tax
+                by_table = parse_ais_pdf_tds(pdf_rows(data, password)[0])
+            except ValueError:
+                by_table = []
+            if sum(r["tds"] for r in by_table) > sum(r["tds"] for r in rows):
+                rows = by_table
         else:
             rows = parse_26as_lines(lines, None)
     else:
@@ -6735,7 +6796,7 @@ async function loadFiling(){
   $('file_ais').innerHTML=g.ais.length?'<table><tr><th style="text-align:left">AIS</th><th>AIS amount</th><th>Books</th><th></th><th style="text-align:left">What to do</th><th></th></tr>'+
     g.ais.map(r=>'<tr><td style="text-align:left">'+esc(r.category)+'</td><td class="num">'+inr(r.ais)+'</td><td class="num">'+(r.books===null?'':inr(r.books))+
       '</td><td>'+mark[r.status]+'</td><td class="mute" style="text-align:left;white-space:normal;min-width:200px">'+esc(r.note)+
-      '</td><td><button class="link" data-aisdel="'+r.id+'">Delete</button></td></tr>').join('')+'</table>'
+      '</td><td>'+(r.id?'<button class="link" data-aisdel="'+r.id+'">Delete</button>':'')+'</td></tr>').join('')+'</table>'
     :'<p class="mute" style="margin:4px 0">Upload the AIS or TIS (PDF from the AIS app or portal; password is PAN in small letters followed by date of birth as DDMMYYYY) or type each TIS figure below.</p>';
   let h='<table><tr><th style="text-align:left">Field</th><th>Amount</th><th style="text-align:left">Note</th></tr>',last='';
   for(const r of g.rows){
