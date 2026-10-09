@@ -463,11 +463,17 @@ function walkParts(p, out){
 const header = (msg, h) => ((msg.payload.headers || []).find(x => x.name.toLowerCase() === h) || {}).value || '';
 
 async function importGmail(){
-  const clientId = $('gClient').value.trim();
+  const clientId = $('gClient').value.replace(/\s+/g, '');
   const query = $('gQuery').value.trim();
   const status = t => { $('gStatus').textContent = t; };
   const prog = f => { $('gProg').classList.toggle('hidden', f == null); $('gProg').firstElementChild.style.width = ((f || 0) * 100) + '%'; };
   if (!clientId){ $('gSetup').open = true; $('gClient').focus(); return status('Paste your Google Client ID first (see the setup steps you were given).'); }
+  // Google answers a malformed ID with a confusing "Client missing a project id" page, so check it here.
+  if (!/^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(clientId)){
+    $('gSetup').open = true; $('gClient').focus();
+    return status('That is not a Client ID. In Google Cloud → Google Auth Platform → Clients, open your Web client and copy the "Client ID" ' +
+      '(numbers, a dash, letters, ending in .apps.googleusercontent.com). Not the API key, project ID or client secret.');
+  }
   if (!query) return status('Type which emails to import, for example from:someone@gmail.com');
   lsSet('gmailClientId', clientId); lsSet('gmailQuery', query);
   const tags = {category: $('gCat').value, patient: $('gPat').value.trim().replace(/\s+/g, ' '), treatment: '', notes: ''};
