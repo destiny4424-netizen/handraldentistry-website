@@ -6,6 +6,9 @@
 - `photos/` — Clinic Photos: organise clinic and patient photos on the iPhone (handraldentistry.com/photos).
   Open it in Safari, Share → Add to Home Screen. Photos are picked from the Photo Library and kept only on
   that phone (nothing is uploaded); use ⋯ → Save backup to keep a copy in Files / iCloud Drive.
+  **From Gmail** imports photos and PDFs from matching emails (and Google Drive links in them) straight
+  to the phone after a Google sign-in; it needs a Google OAuth Client ID (web app, origin
+  https://handraldentistry.com, Gmail API and Drive API enabled), pasted into the app once.
 
 ## Deploy to GitHub Pages
 

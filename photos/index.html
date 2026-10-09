@@ -82,6 +82,7 @@ label.f input,label.f select,label.f textarea{border:1px solid var(--line);backg
       + Add from iPhone
       <input id="pick" type="file" accept="image/*,application/pdf" multiple class="hidden">
     </label>
+    <button class="btn" id="gmailBtn">From Gmail</button>
     <button class="btn" id="selBtn">Select</button>
   </div>
   <div class="row hidden" id="barSel">
@@ -115,6 +116,36 @@ label.f input,label.f select,label.f textarea{border:1px solid var(--line);backg
     <button class="btn primary" value="ok">Save</button>
   </div>
 </form></dialog>
+
+<!-- Import from Gmail -->
+<dialog id="gmailDlg"><div class="dlg">
+  <h3>Import from Gmail</h3>
+  <p class="note">Brings in the photos and PDFs attached to matching emails, and the photos behind
+  Google Drive links in them. They go straight from Google to this device; nothing passes through
+  any other server. Emails already imported are skipped.</p>
+  <label class="f">Which emails (Gmail search)
+    <input id="gQuery" autocomplete="off" autocapitalize="off" spellcheck="false">
+  </label>
+  <label class="f">Folder
+    <select id="gCat"></select>
+  </label>
+  <label class="f">Patient name (optional, for when all these emails are one patient)
+    <input id="gPat" list="patList" autocomplete="off" autocapitalize="words">
+  </label>
+  <label class="row" style="font-size:14px"><input type="checkbox" id="gDrive" checked> Also fetch Google Drive links in the emails</label>
+  <details id="gSetup">
+    <summary style="cursor:pointer;font-size:14px">Google Client ID (one-time setup)</summary>
+    <label class="f" style="margin-top:8px">Client ID
+      <input id="gClient" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="….apps.googleusercontent.com">
+    </label>
+  </details>
+  <div class="progress hidden" id="gProg"><i></i></div>
+  <p class="note" id="gStatus" aria-live="polite"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button class="btn" id="gClose">Close</button>
+    <button class="btn primary" id="gGo">Import</button>
+  </div>
+</div></dialog>
 
 <!-- Menu -->
 <dialog id="menuDlg"><div class="dlg">
@@ -287,7 +318,7 @@ function render(){
   if (!items.length){
     $('main').innerHTML = `<div class="empty"><h2>No photos yet</h2>
       <p>Tap <b>+ Add from iPhone</b>, then choose <b>Photo Library</b> to pick clinic and patient photos,
-      or <b>Choose Files</b> for PDFs and reports saved from Gmail.</p>
+      or <b>Choose Files</b> for PDFs and reports. Tap <b>From Gmail</b> to bring in photos emailed to you.</p>
       <p>Everything stays on this phone. Nothing is uploaded.</p></div>`;
     return;
   }
@@ -351,20 +382,170 @@ async function addFiles(files){
     {category: guess, patient: filterPat || ''});
   if (!tags) return;
   toast(`Adding ${files.length}…`);
-  const now = Date.now();
-  let n = 0;
-  for (const f of files){
-    const id = now.toString(36) + '-' + (n++).toString(36) + '-' + Math.random().toString(36).slice(2, 7);
-    const item = {
-      id, name: f.name || 'photo.jpg', type: f.type || 'application/octet-stream', size: f.size,
-      taken: (await exifDate(f)) || f.lastModified || now, added: now,
-      ...tags, category: tags.category, thumb: await makeThumb(f),
-    };
-    await putItem(item, f);
-    items.push(item);
-  }
+  for (const f of files) await storeFile(f, f.name, f.lastModified, tags);
   render();
   toast(`Added ${files.length}`);
+}
+let idSeq = 0;
+async function storeFile(blob, name, fallbackDate, tags, extra){
+  const now = Date.now();
+  const item = {
+    id: now.toString(36) + '-' + (idSeq++).toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+    name: name || 'photo.jpg', type: blob.type || 'application/octet-stream', size: blob.size,
+    taken: (await exifDate(blob)) || fallbackDate || now, added: now,
+    ...tags, ...extra, thumb: await makeThumb(blob),
+  };
+  await putItem(item, blob);
+  items.push(item);
+  return item;
+}
+
+/* ---------- Import from Gmail ----------
+   Runs entirely in the browser: Google sign-in gives a short-lived read-only token, and the
+   files are fetched from the Gmail and Drive APIs straight into this device's storage. */
+const G_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly';
+const G_DEFAULT_QUERY = 'label:patient-photos-ortho-patients';
+const lsGet = k => { try{ return localStorage.getItem(k) || ''; }catch(_){ return ''; } };
+const lsSet = (k, v) => { try{ localStorage.setItem(k, v); }catch(_){} };
+let gToken = null, gTokenExp = 0;
+
+function loadGis(){
+  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = () => res(); s.onerror = () => rej(new Error('Could not reach Google. Check the internet connection.'));
+    document.head.appendChild(s);
+  });
+}
+async function googleToken(clientId){
+  if (gToken && Date.now() < gTokenExp) return gToken;
+  await loadGis();
+  return new Promise((res, rej) => {
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: clientId, scope: G_SCOPES,
+      callback: r => {
+        if (r.error) return rej(new Error('Google sign-in failed: ' + (r.error_description || r.error)));
+        gToken = r.access_token; gTokenExp = Date.now() + (r.expires_in - 60) * 1000; res(gToken);
+      },
+      error_callback: e => rej(new Error(e && e.type === 'popup_closed' ? 'Google sign-in was closed.' : 'Google sign-in failed. Allow pop-ups for this site and try again.')),
+    });
+    client.requestAccessToken();
+  });
+}
+async function gFetch(url, asBlob){
+  const r = await fetch(url, {headers: {Authorization: 'Bearer ' + gToken}});
+  if (r.status === 401){ gToken = null; throw new Error('Google sign-in expired. Tap Import again.'); }
+  if (!r.ok){
+    let msg = r.status + '';
+    try{ msg = (await r.json()).error.message || msg; }catch(_){}
+    const e = new Error(msg); e.status = r.status; throw e;
+  }
+  return asBlob ? r.blob() : r.json();
+}
+function b64urlBytes(s){
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+function mimeFor(name, type){
+  if (type && type !== 'application/octet-stream') return type;
+  const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+  return ({jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', heic:'image/heic', heif:'image/heif', gif:'image/gif', webp:'image/webp', pdf:'application/pdf'})[ext.toLowerCase()] || type || 'application/octet-stream';
+}
+const wanted = (name, type) => /^image\//.test(mimeFor(name, type)) || mimeFor(name, type) === 'application/pdf';
+function walkParts(p, out){
+  out.push(p);
+  (p.parts || []).forEach(c => walkParts(c, out));
+  return out;
+}
+const header = (msg, h) => ((msg.payload.headers || []).find(x => x.name.toLowerCase() === h) || {}).value || '';
+
+async function importGmail(){
+  const clientId = $('gClient').value.trim();
+  const query = $('gQuery').value.trim();
+  const status = t => { $('gStatus').textContent = t; };
+  const prog = f => { $('gProg').classList.toggle('hidden', f == null); $('gProg').firstElementChild.style.width = ((f || 0) * 100) + '%'; };
+  if (!clientId){ $('gSetup').open = true; $('gClient').focus(); return status('Paste your Google Client ID first (see the setup steps you were given).'); }
+  if (!query) return status('Type which emails to import, for example from:someone@gmail.com');
+  lsSet('gmailClientId', clientId); lsSet('gmailQuery', query);
+  const tags = {category: $('gCat').value, patient: $('gPat').value.trim().replace(/\s+/g, ' '), treatment: '', notes: ''};
+  const withDrive = $('gDrive').checked;
+  $('gGo').disabled = true;
+  try{
+    status('Signing in to Google…');
+    await googleToken(clientId);
+    status('Finding emails…');
+    const ids = [];
+    let page = '';
+    do{
+      const r = await gFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100&q=' + encodeURIComponent(query) + (page ? '&pageToken=' + page : ''));
+      (r.messages || []).forEach(m => ids.push(m.id));
+      page = r.nextPageToken || '';
+    } while (page && ids.length < 1000);
+    if (!ids.length){ status('No emails match that search.'); return; }
+    const have = new Set(items.map(i => i.source).filter(Boolean));
+    let added = 0, skipped = 0, failed = 0, done = 0;
+    for (const mid of ids){
+      prog(done++ / ids.length);
+      status(`Email ${done} of ${ids.length}… ${added} added`);
+      const msg = await gFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${mid}?format=full`);
+      const when = +msg.internalDate || Date.now();
+      const extra = src => ({source: src, notes: tags.notes || `From Gmail: ${header(msg, 'from')}${header(msg, 'subject') ? ' – ' + header(msg, 'subject') : ''}`});
+      const parts = walkParts(msg.payload, []);
+      // Attachments (and inline images) of this email.
+      for (const p of parts){
+        if (!p.filename || !wanted(p.filename, p.mimeType)) continue;
+        const src = `gmail:${mid}:${p.partId}`;
+        if (have.has(src)){ skipped++; continue; }
+        try{
+          const data = p.body.data || (await gFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${mid}/attachments/${p.body.attachmentId}`)).data;
+          const blob = new Blob([b64urlBytes(data)], {type: mimeFor(p.filename, p.mimeType)});
+          await storeFile(blob, p.filename, when, tags, extra(src));
+          have.add(src); added++;
+        }catch(e){ failed++; }
+      }
+      // Google Drive links in the email text.
+      if (!withDrive) continue;
+      const text = parts.filter(p => /^text\/(html|plain)$/.test(p.mimeType) && p.body && p.body.data)
+        .map(p => new TextDecoder().decode(b64urlBytes(p.body.data))).join('\n');
+      const driveIds = new Set();
+      for (const m of text.matchAll(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:[^"'\s]*&)?id=)([\w-]{20,})/g)) driveIds.add(m[1]);
+      for (const fid of driveIds){
+        const src = `drive:${fid}`;
+        if (have.has(src)){ skipped++; continue; }
+        try{
+          const meta = await gFetch(`https://www.googleapis.com/drive/v3/files/${fid}?fields=name,mimeType,createdTime,imageMediaMetadata/time&supportsAllDrives=true`);
+          if (!wanted(meta.name, meta.mimeType)) continue;
+          const raw = await gFetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media&supportsAllDrives=true`, true);
+          const blob = new Blob([raw], {type: mimeFor(meta.name, meta.mimeType)});
+          await storeFile(blob, meta.name, Date.parse(meta.createdTime) || when, tags, extra(src));
+          have.add(src); added++;
+        }catch(e){ failed++; }
+      }
+      if (added) render();
+    }
+    prog(null);
+    render();
+    status(`Done: ${added} added from ${ids.length} email${ids.length === 1 ? '' : 's'}` +
+      (skipped ? `, ${skipped} already here` : '') + (failed ? `, ${failed} could not be fetched` : '') + '.');
+  }catch(e){
+    prog(null);
+    status(e.message);
+  }finally{
+    $('gGo').disabled = false;
+  }
+}
+function openGmail(){
+  $('gClient').value = lsGet('gmailClientId');
+  $('gQuery').value = lsGet('gmailQuery') || G_DEFAULT_QUERY;
+  const cat = filterCat !== ALL ? filterCat : 'Ortho patients';
+  $('gCat').innerHTML = CATEGORIES.map(c => `<option${c === cat ? ' selected' : ''}>${esc(c)}</option>`).join('');
+  $('gPat').value = filterPat || '';
+  $('gSetup').open = !$('gClient').value;
+  $('gStatus').textContent = '';
+  $('gmailDlg').showModal();
 }
 
 /* ---------- Share / save ---------- */
@@ -561,6 +742,9 @@ $('menuBtn').onclick = async () => {
 };
 $('menuClose').onclick = () => $('menuDlg').close();
 $('backupBtn').onclick = backup;
+$('gmailBtn').onclick = openGmail;
+$('gGo').onclick = importGmail;
+$('gClose').onclick = () => $('gmailDlg').close();
 $('restore').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) restore(f); });
 
 (async () => {
