@@ -3,6 +3,9 @@
 ## Files
 - `index.html` — Public patient website (handraldentistry.com)
 - `clinic/` — Staff clinic management app (handraldentistry.com/clinic)
+- `photos/` — Clinic Photos: organise clinic and patient photos on the iPhone (handraldentistry.com/photos).
+  Open it in Safari, Share → Add to Home Screen. Photos are picked from the Photo Library and kept only on
+  that phone (nothing is uploaded); use ⋯ → Save backup to keep a copy in Files / iCloud Drive.
 
 ## Deploy to GitHub Pages
 
