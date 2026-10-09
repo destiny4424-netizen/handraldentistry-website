@@ -147,8 +147,10 @@ label.f input,label.f select,label.f textarea{border:1px solid var(--line);backg
 
 <script>
 'use strict';
-const CATEGORIES = ['Patient photos','Before / After','X-rays & scans','Records & documents','Clinic','Team & events','Unsorted'];
+const CATEGORIES = ['Ortho patients','Patient photos','Before / After','X-rays & scans','Records & documents','Clinic','Team & events','Unsorted'];
 const ALL = 'All';
+// Suggested in the treatment box, alongside anything typed before.
+const ORTHO_STAGES = ['Ortho records (pre-treatment)','Extraoral','Intraoral','OPG / ceph','Bonding','Progress','Debonding','Retainer','Aligners'];
 
 /* ---------- IndexedDB ---------- */
 const DB_NAME = 'clinic-photos', DB_VER = 1;
@@ -267,7 +269,7 @@ function renderChips(){
   items.forEach(it => counts[it.category] = (counts[it.category] || 0) + 1);
   $('cats').innerHTML = [ALL, ...CATEGORIES].map(c => {
     const n = c === ALL ? items.length : (counts[c] || 0);
-    if (c !== ALL && !n && c !== 'Unsorted') return '';
+    if (c !== ALL && !n && c !== 'Unsorted' && c !== 'Ortho patients') return '';
     return `<button class="chip" data-cat="${esc(c)}" aria-pressed="${c === filterCat}">${esc(c)}<span class="n">${n}</span></button>`;
   }).join('');
   const pats = [...new Set(items.filter(i => i.patient && (filterCat === ALL || i.category === filterCat)).map(i => i.patient))].sort((a, b) => a.localeCompare(b));
@@ -275,7 +277,7 @@ function renderChips(){
     ...pats.map(p => `<button class="chip" data-pat="${esc(p)}" aria-pressed="${p === filterPat}">${esc(p)}</button>`)].join('') : '';
   $('pats').classList.toggle('hidden', !pats.length);
   $('patList').innerHTML = [...new Set(items.map(i => i.patient).filter(Boolean))].map(p => `<option value="${esc(p)}">`).join('');
-  $('txList').innerHTML = [...new Set(items.map(i => i.treatment).filter(Boolean))].map(p => `<option value="${esc(p)}">`).join('');
+  $('txList').innerHTML = [...new Set([...items.map(i => i.treatment).filter(Boolean), ...ORTHO_STAGES])].map(p => `<option value="${esc(p)}">`).join('');
   $('count').textContent = items.length ? `${items.length} item${items.length === 1 ? '' : 's'}` : '';
 }
 
