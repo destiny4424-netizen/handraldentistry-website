@@ -1,0 +1,8 @@
+[Unit]
+Description=OrderBlock Scanner: pull updates from GitHub and keep the server healthy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/orderblock-scanner-update
