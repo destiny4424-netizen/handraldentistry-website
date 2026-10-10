@@ -1,0 +1,33 @@
+[Unit]
+Description=OrderBlock Scanner (F&O order block and breakout scanner)
+After=network-online.target
+Wants=network-online.target
+# Never give up restarting, however often it crashes.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=scanner
+Group=scanner
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OBS_CLOUD=1
+Environment=OBS_HOST=127.0.0.1
+Environment=OBS_PORT=3030
+Environment=OBS_SETTINGS_DIR=/var/lib/orderblock-scanner
+# OBS_PASSWORD and OBS_PUBLIC_URL are written here by web.sh; the file survives updates.
+EnvironmentFile=-/etc/default/orderblock-scanner
+ExecStart=/usr/bin/python3 /opt/orderblock-scanner/repo/_scanner/app.py --no-browser
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+# Hardening: the app can only write to its data folder.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/orderblock-scanner
+
+[Install]
+WantedBy=multi-user.target

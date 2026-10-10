@@ -146,3 +146,37 @@ add `BOOKS_NEW_PASSWORD=1` after `sudo` for a new one.
 
 If something ever looks wrong: `systemctl status handral-books` or
 `journalctl -u handral-books -u handral-books-update -n 50`.
+
+## OrderBlock Scanner (F&O scanner on the droplet)
+
+`_scanner/` is a scanner for NSE F&O stocks using Dhan market data (it never places orders):
+order blocks, HTF key level breakouts on 15-minute candles, and **Top Picks**, the best 5–6
+trades after sector, risk:reward and futures-OI filters, each with entry, stop-loss and targets.
+Like `_books/`, the folder is not published by GitHub Pages. Details: `_scanner/README.md`.
+
+### One-time setup on the droplet
+Open the droplet's console (DigitalOcean → the droplet → **Access → Launch Droplet Console**)
+and run:
+```
+curl -fsSL https://raw.githubusercontent.com/destiny4424-netizen/handraldentistry-website/main/_scanner/deploy/install.sh | sudo bash
+```
+At the end it prints the scanner's address (`https://scanner.<droplet-ip>.sslip.io`, or
+`scanner.handraldentistry.com` if a DNS **A** record `scanner` points at the droplet) and its
+password. To see them again: `sudo cat /etc/orderblock-scanner/login.txt`.
+It sits next to Handral Books in the same Caddy web server and doesn't touch Books.
+
+### After that
+- Runs 24/7 on the droplet, whether your PC is on or off. It scans every 5 minutes during
+  market hours (9:15–15:30 IST, Mon–Fri), starts on boot and restarts itself if it ever stops.
+- Open the address on the iPhone in Safari, sign in with the password (it stays signed in for
+  90 days), then **Share → Add to Home Screen** for an app icon.
+- **Dhan token:** tap **Settings** (or **Connect Dhan**) and paste the Client ID and access token.
+  Dhan's access tokens expire after 24 hours, so paste a fresh one each trading day. The button
+  turns green and says **Update token** when it has expired.
+- Every 5 minutes the droplet checks GitHub. Changes to `_scanner/` are installed by themselves,
+  and if a new version fails to start, the previous one comes back automatically.
+- New password: `curl -fsSL .../_scanner/deploy/install.sh | sudo SCANNER_NEW_PASSWORD=1 bash`
+  (signs every device out).
+
+If something ever looks wrong: `systemctl status orderblock-scanner` or
+`journalctl -u orderblock-scanner -u orderblock-scanner-update -n 50`.
