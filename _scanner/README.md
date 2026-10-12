@@ -16,8 +16,7 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
 - **HTF Key Level Breakouts (15 min):** a second tab lists stocks whose 15-minute candle has closed
   through a higher-timeframe level. The levels are the previous day high/low, the previous week high/low,
   and daily swing highs/lows from the last 60 days.
-- **Auto-scan:** runs 20 seconds after every 5-minute candle closes, 9:15–15:30 IST, Mon–Fri, so new
-  15-minute breakouts show up right after their candle closes. The header shows the time of the next scan.
+- **Auto-scan:** runs 20 seconds after every 15-minute candle closes (9:30, 9:45 … 15:30 IST, Mon–Fri). The header shows the time of the next scan.
   Use **Scan now** to rescan straight away.
 - **Breakout alerts:** turn on **🔔 Breakout alerts** and allow notifications. Each new breakout then
   pops up on your screen with a beep, and its card flashes.
@@ -91,23 +90,32 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Bearish setups must be in a sector that is down and in the bottom half.
    - Sectors come from a built-in list. Stocks not on it follow the overall market.
 4. **Good R:R:** the trade plan must work.
-   - **Entry:** the top of the order block (bottom for shorts), or the broken key level.
+   - **Level:** the top of the order block (bottom for shorts), or the broken key level.
    - **Stop-loss:** just beyond the zone, or beyond the breakout candle.
    - **Targets:** the next key levels (swing high, previous day/week high, and so on), or 2R and 3R if
      there aren't any.
    - Target 1 must be at least 1.5R away. Price must not already be more than 1R past the entry.
-5. **OI confirms:** futures open interest today, checked for the 30 best candidates.
+5. **Held level (price action):** the trade is only given after price has **come back to the level
+   and held it**:
+   - Price touches the zone again, after the order block or breakout formed.
+   - A **closed 15-minute candle** then finishes back on the right side of the level. For a buy, it
+     closes above the zone top with a green body or a long lower wick, without closing below the zone.
+   - **Entry** is the break of that candle: **buy above its high** (sell below its low).
+   - **Stop-loss** goes just beyond that candle and the zone. Targets are the next key levels.
+   - If a candle closes through the far side of the zone, the setup is dropped.
+   - Setups that haven't held yet go on the **Watchlist**, with what to wait for. They are never picks.
+6. **OI confirms:** futures open interest today, checked for the 30 best candidates.
    - Bullish trades need **long build-up** (price up, OI up).
    - Bearish trades need **short build-up** (price down, OI up).
    - Short covering or long unwinding only fills in if there aren't enough picks.
    - OI against the trade removes the stock.
-6. **Top picks:** the best 6 by a score that combines setup strength, sector rank, OI and R:R.
+7. **Top picks:** the best 6 by a score that combines setup strength, sector rank, OI and R:R.
 
 Each pick has a status:
-- **At entry:** price is at the entry now.
-- **Wait for pullback:** price is above the entry (below it for shorts). Wait for it to come back.
+- **Buy above / Sell below …:** the level has held. Enter when price breaks that 15-minute candle.
+- **Triggered:** price has broken the candle, so the trade is on. The card shows the time and the stop.
 
-"Since" shows when the stock first became a pick today.
+"Picked" shows when the stock first became a pick today.
 
 ## How an HTF key level breakout is found
 1. **Key levels** come from daily candles:

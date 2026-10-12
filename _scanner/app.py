@@ -106,7 +106,7 @@ CLIENT_ID = SETTINGS.get("client_id") or _env_id
 TOKEN = SETTINGS.get("access_token") or _env_tok
 DEMO = not (CLIENT_ID and TOKEN) or ENV.get("DEMO", "").lower() in ("1", "true", "yes")
 TIMEFRAME = ENV.get("TIMEFRAME", "5")                  # 1, 5, 15, 25 or 60 minutes
-SCAN_EVERY = int(ENV.get("SCAN_EVERY_MIN", "5"))      # auto-scan, lined up with candle closes
+SCAN_EVERY = int(ENV.get("SCAN_EVERY_MIN", "15"))     # auto-scan, right after each 15-min candle closes
 BREAKOUT_TF = int(ENV.get("BREAKOUT_TF", "15"))        # HTF key level breakout candles
 DAYS = int(ENV.get("DAYS", "5"))                       # calendar days of candles
 SWING = int(ENV.get("SWING", "3"))
@@ -307,7 +307,7 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
          "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
-         "picks": {"funnel": [], "flow": [], "sectors": [], "picks": []}}
+         "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
 CANDLES = {}
 BREAKOUTS = {}                                         # symbol -> (15m candles, setup, levels, result)
 PICKS = {}                                             # symbol -> pick (with its 5m candles)
@@ -376,7 +376,8 @@ def scan_once():
             setup, levels = breakout.detect(c15, daily, now_ts, res["price"])
             if setup:
                 bo[sym] = (c15, setup, levels, res)
-            funnel_in[sym] = {"res": res, "bo": setup, "levels": levels}
+            funnel_in[sym] = {"res": res, "bo": setup, "levels": levels,
+                              "c15": [c for c in c15 if c["end"] <= now_ts]}
         set_state(scanned=n)
 
     def row(sym, side):
