@@ -181,7 +181,7 @@ def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr, c15=None, atr15=Non
                       f"Wait for a 15m candle to close {'above' if side == 'bull' else 'below'} {(hi if side == 'bull' else lo):.2f} after touching it"}
 
 
-def build(stocks, min_rr=1.5, n_picks=6, min_setup=55):
+def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_from="10:00"):
     """stocks: {symbol: {"res": order-block analysis, "bo": breakout setup or None,
     "levels": HTF levels, "c15": closed 15-minute candles}}.
     Returns (candidates needing OI, finish function)."""
@@ -260,14 +260,24 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55):
         weak.sort(key=lambda c: -c["score"])
         picks = (strong + weak)[:n_picks]              # OI-confirmed first, then the rest if needed
         picks.sort(key=lambda c: -c["score"])
+        early = []
+        if not picks_open:                             # before the cutoff: held setups wait on the watchlist
+            early, picks = picks, []
+            for c in early:
+                flow[c["symbol"]]["stage"] = 5
+        def watch_row(c, status=None, action=None):
+            return {"symbol": c["symbol"], "side": c["side"], "price": c["price"], "pct": c["pct"],
+                    "basis": c["plan"]["basis"], "status": status or c["plan"]["status"],
+                    "action": action or c["plan"]["action"], "level": c["plan"]["entry"]}
         for c in picks:
             flow[c["symbol"]]["stage"] = 6
         counts = [sum(1 for f in flow.values() if f["stage"] >= i) for i in range(len(STAGES))]
         return {"funnel": [{"name": n, "count": counts[i]} for i, n in enumerate(STAGES)],
                 "flow": sorted(flow.values(), key=lambda f: -f["pct"]),
-                "sectors": sectors, "picks": picks,
-                "watch": [{"symbol": c["symbol"], "side": c["side"], "price": c["price"], "pct": c["pct"],
-                           "basis": c["plan"]["basis"], "status": c["plan"]["status"],
-                           "action": c["plan"]["action"], "level": c["plan"]["entry"]} for c in watch]}
+                "sectors": sectors, "picks": picks, "picks_open": picks_open, "picks_from": picks_from,
+                "watch": [watch_row(c, "Held · waits for " + picks_from,
+                                    f'Level held. Becomes a pick at {picks_from} if it still holds: '
+                                    f'{c["plan"]["action"].lower()}') for c in early]
+                         + [watch_row(c) for c in watch]}
 
     return cands, finish

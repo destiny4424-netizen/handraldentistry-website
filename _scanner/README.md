@@ -110,6 +110,8 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Short covering or long unwinding only fills in if there aren't enough picks.
    - OI against the trade removes the stock.
 7. **Top picks:** the best 6 by a score that combines setup strength, sector rank, OI and R:R.
+   **No picks before 10:00 IST** (change it in Settings → Top Picks). Earlier holds wait on the
+   Watchlist and become picks at 10:00 if the level still holds.
 
 Each pick has a status:
 - **Buy above / Sell below …:** the level has held. Enter when price breaks that 15-minute candle.

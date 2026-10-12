@@ -397,7 +397,12 @@ def scan_once():
     scores = [{"side": "bull", "score": results[s]["bull"]["score"]} for s in bull] + \
              [{"side": "bear", "score": results[s]["bear"]["score"]} for s in bear]
     # Top picks: funnel, then futures OI for the shortlisted stocks only.
-    cands, finish = picks.build(funnel_in, MIN_RR, N_PICKS, MIN_SETUP)
+    # No picks before the cutoff (default 10:00): early holds wait on the watchlist.
+    picks_from = SETTINGS.get("picks_from") or "10:00"
+    clock = max((d["c15"][-1]["end"] for d in funnel_in.values() if d["c15"]), default=time.time())
+    session_time = datetime.fromtimestamp(clock, IST).strftime("%H:%M")
+    cands, finish = picks.build(funnel_in, MIN_RR, N_PICKS, MIN_SETUP,
+                                picks_open=session_time >= picks_from, picks_from=picks_from)
     oi = {}
     checks = cands[:OI_CHECKS]
     for n, c in enumerate(checks, 1):
@@ -737,6 +742,7 @@ class Handler(BaseHTTPRequestHandler):
                             "saved_where": str(SETTINGS_FILE), "phone": bool(SETTINGS.get("phone")),
                             "has_pin": bool(SETTINGS.get("pin_hash")), "listening": HOST == "0.0.0.0",
                             "cloud": CLOUD, "public_url": PUBLIC_URL,
+                            "picks_from": SETTINGS.get("picks_from") or "10:00",
                             "urls": [] if CLOUD else local_addresses()})
         elif url.path == "/api/pick":
             p = pick_payload(q.get("symbol", [""])[0].upper())
@@ -767,6 +773,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_cookie("", 0)
         if not self.can_admin():                        # everything below changes settings
             return self.send(403, {"error": "Settings can only be changed on the PC."})
+        if path == "/api/prefs":
+            t = str(body.get("picks_from") or "").strip()
+            ok = len(t) == 5 and t[2] == ":" and t[:2].isdigit() and t[3:].isdigit() \
+                and "09:15" <= t <= "15:30" and int(t[3:]) < 60
+            if not ok:
+                return self.send(400, {"error": "Pick a time between 09:15 and 15:30."})
+            save_settings(picks_from=t)
+            WAKE.set()                                  # rescan so the change shows now
+            return self.send(200, {"ok": True})
         if path == "/api/forget":
             forget_keys()
             self.send(200, {"ok": True})
