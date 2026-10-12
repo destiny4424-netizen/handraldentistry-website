@@ -166,8 +166,11 @@ password. To see them again: `sudo cat /etc/orderblock-scanner/login.txt`.
 It sits next to Handral Books in the same Caddy web server and doesn't touch Books.
 
 ### After that
-- Runs 24/7 on the droplet, whether your PC is on or off. It scans every 5 minutes during
+- Runs 24/7 on the droplet, whether your PC is on or off. It scans every 15 minutes during
   market hours (9:15–15:30 IST, Mon–Fri), starts on boot and restarts itself if it ever stops.
+- A trade is only listed after price has come back to its level and a 15-minute candle has closed
+  holding it. It then says "Buy above …" (the high of that candle) with the stop beyond the level.
+  Setups still waiting for that go on the Watchlist.
 - Open the address on the iPhone in Safari, sign in with the password (it stays signed in for
   90 days), then **Share → Add to Home Screen** for an app icon.
 - **Dhan token:** tap **Settings** (or **Connect Dhan**) and paste the Client ID and access token.

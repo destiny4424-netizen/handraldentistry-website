@@ -89,6 +89,7 @@ def _block(candles, a, idx, broke_at, side):
         move = ob["h"] - brk["c"]
     return {
         "side": side, "index": idx, "created": broke_at, "active": True, "tests": 0,
+        "time": candles[broke_at]["t"],                 # when the break that made it happened
         "top": ob["h"], "bottom": ob["l"],
         "impulse": move / (a[broke_at] or 1),          # size of the move in ATRs
         "vol_ratio": peak_vol / avg_vol,                # volume during the move

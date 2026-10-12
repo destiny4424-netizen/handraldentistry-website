@@ -139,7 +139,15 @@
   .nums b { display: block; font: 600 13px var(--mono); color: var(--text); margin-top: 1px; letter-spacing: 0; }
   .nums .sl b { color: #ff8193; } .nums .tg b { color: var(--bull); }
   .stx { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 5px; text-transform: uppercase; }
-  .stx.At { background: rgba(245,185,30,.2); color: var(--liq); } .stx.Wait { background: #262d38; color: var(--muted); }
+  .stx.Buy, .stx.Sell { background: rgba(245,185,30,.2); color: var(--liq); }
+  .stx.Triggered { background: rgba(139,124,246,.25); color: #c4b9ff; }
+  .stx.Waiting, .stx.Testing { background: #262d38; color: var(--muted); }
+  .held { font: 700 11px var(--mono); color: var(--bull); }
+  .bear .held { color: #ff8193; }
+  .action { margin-top: 8px; font: 700 13px var(--mono); padding: 7px 10px; border-radius: 8px; background: rgba(0,0,0,.3); }
+  .watch { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: center; padding: 9px 12px;
+           border: 1px dashed #343c49; border-radius: 12px; margin-bottom: 8px; font-size: 13px; }
+  .watch .nm { font-weight: 800; } .watch .why { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
   @media (max-width: 520px) { .flowlegend { display: block; } .nums { grid-template-columns: repeat(3, 1fr); } .pick .mid { grid-template-columns: 1fr; } #flow { height: 300px; } }
   header { padding-top: max(14px, env(safe-area-inset-top)); }
   main { padding-bottom: max(40px, env(safe-area-inset-bottom)); }
@@ -243,6 +251,8 @@
   <section class="panel" id="picksPanel" hidden>
     <div class="ptitle"><h2>Top picks</h2><small id="pickNote"></small></div>
     <div id="pickList"></div>
+    <div class="ptitle" style="margin-top:18px"><h2>Watchlist</h2><small>good setups that have not held their level yet — not trades until they do</small></div>
+    <div id="watchList"></div>
   </section>
 
   <section class="panel strength" id="strengthPanel">
@@ -305,7 +315,7 @@ function setLive(cls, text) { $("live").className = "live " + cls; $("liveText")
 
 function render() {
   const s = state;
-  $("tf").textContent = mode === "bo" ? s.breakout_tf + " min" : s.timeframe + " min";
+  $("tf").textContent = mode === "ob" ? s.timeframe + " min" : s.breakout_tf + " min";
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
   ["flowPanel", "sectorPanel", "picksPanel"].forEach(id => $(id).hidden = mode !== "pk");
@@ -537,7 +547,12 @@ function renderPicks() {
       <span class="pv" style="color:${up ? css("--bull") : css("--bear")}">${pct(r.pct)}</span></div>`;
   }).join("") || `<div class="empty">Waiting for scan…</div>`;
   $("secNote").textContent = pk.sectors.length ? "average move of the F&O stocks in each sector today" : "";
-  $("pickNote").textContent = pk.picks.length ? `best ${pk.picks.length} after all filters · min R:R ${state.min_rr || 1.5}` : "";
+  $("pickNote").textContent = pk.picks.length ? `price held the level on a 15m close · best ${pk.picks.length} after all filters · min R:R ${state.min_rr || 1.5}` : "";
+  const hm = t => new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
+  $("watchList").innerHTML = (pk.watch || []).map(w => `<div class="watch ${w.side}">
+      <span class="badge" style="font-size:11px;padding:2px 7px">${w.side === "bull" ? "BULL" : "BEAR"}</span>
+      <span><span class="nm">${w.symbol}</span> <span style="font-family:var(--mono)">${fmt(w.price)}</span> · ${w.basis} · <span class="stx ${w.status.split(" ")[0]}">${w.status}</span></span>
+      <span class="why">${w.action}</span></div>`).join("") || `<div class="empty">Nothing waiting right now.</div>`;
   const list = $("pickList"), sig = pk.picks.map(c => c.symbol + c.side).join();
   const changed = list.dataset.sig !== sig; list.dataset.sig = sig;
   if (!pk.picks.length) {
@@ -550,12 +565,14 @@ function renderPicks() {
           <span class="px">${fmt(c.price)} <span style="color:${c.pct >= 0 ? css("--bull") : css("--bear")}">${pct(c.pct)}</span></span>
           <span class="oi">${oi ? `${oi.kind} · OI ${pct(oi.oi_pct)}` : "OI n/a"}</span></div>
         <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)} · ${c.sector} (${pct(c.sector_pct)}, rank ${c.sector_rank})<br>
-          ${c.sources.join(" + ")} · <span class="stx ${p.status.split(" ")[0]}">${p.status}</span> · since ${c.since}</div>
+          ${c.sources.join(" + ")} · <span class="held">✓ held the level ${hm(p.held_at)}</span><br>
+          <span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since}</div>
           <canvas data-spark="${i}"></canvas></div>
         <div class="nums">
-          <div>ENTRY<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
+          <div>${bull ? "BUY ABOVE" : "SELL BELOW"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
           <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
           <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
+        <div class="action">${p.triggered_at ? `In trade since ${hm(p.triggered_at)} · stop ${fmt(p.sl)}` : `${p.action} (break of the 15m candle that held the level) · stop ${fmt(p.sl)}`}</div>
       </div>`;
     }).join("");
     list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, pk.picks[+cv.dataset.spark]));
@@ -666,7 +683,7 @@ function flowFrame(t) {
 
   // lines
   for (const L of m.lines) {
-    ctx.strokeStyle = `rgba(${L.rgb},${[.09, .15, .26, .42, .65, 1][L.stage]})`;
+    ctx.strokeStyle = `rgba(${L.rgb},${L.final ? 1 : .09 + .6 * Math.pow(L.stage / m.last, 1.6)})`;
     ctx.lineWidth = L.final ? 2 : 1;
     ctx.beginPath();
     L.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, wy(x, y, L.phase)) : ctx.moveTo(x, wy(x, y, L.phase)));
@@ -721,6 +738,7 @@ function drawPick(d, ctx, w, h) {
   $("dPrice").innerHTML = `${fmt(d.price)} <span style="color:${d.pct >= 0 ? css("--bull") : css("--bear")}">${pct(d.pct)}</span>`;
   $("dTag").className = "tag " + c.side;
   $("dTag").textContent = `${bull ? "BUY" : "SELL"} · ${c.oi ? c.oi.kind : "OI n/a"} · score ${Math.round(c.score)}`;
+  $("n1").textContent = bull ? "Buy above" : "Sell below";
   $("lZone").textContent = fmt(p.entry); $("lSup").textContent = fmt(p.sl);
   $("lRes").textContent = `${fmt(p.t1)} (1:${p.rr})`; $("lLiq").textContent = `${fmt(p.t2)} (1:${p.rr2})`;
   const k = d.candles, padR = 70, padT = 14, padB = 14, plotW = w - padR;
@@ -742,7 +760,7 @@ function drawPick(d, ctx, w, h) {
   };
   line(p.t2, css("--bull"), "Target 2", [6, 4]);
   line(p.t1, css("--bull"), "Target 1", [6, 4]);
-  line(p.entry, "#ffffff", `Entry · ${p.basis}`, [], 1.5);
+  line(p.entry, "#ffffff", `${bull ? "Buy above" : "Sell below"} · ${p.basis}`, [], 1.5);
   line(p.sl, css("--bear"), "Stop-loss", [4, 3]);
   k.forEach((q, i) => {
     const up = q.c >= q.o, cc = up ? css("--bull") : "#7d8796";
@@ -750,6 +768,16 @@ function drawPick(d, ctx, w, h) {
     ctx.beginPath(); ctx.moveTo(x(i), y(q.h)); ctx.lineTo(x(i), y(q.l)); ctx.stroke();
     const bw = Math.max(1, cw * .62); ctx.fillRect(x(i) - bw / 2, y(Math.max(q.o, q.c)), bw, Math.max(1, Math.abs(y(q.o) - y(q.c))));
   });
+  if (p.held_at) {                                   // the 15m candle that held the level
+    const idx = k.map((q, i) => [q, i]).filter(([q]) => q.t >= p.held_at && q.t < p.held_at + 900).map(([, i]) => i);
+    if (idx.length) {
+      const x0 = x(idx[0]) - cw / 2, x1 = x(idx[idx.length - 1]) + cw / 2;
+      ctx.fillStyle = bull ? "rgba(34,211,138,.16)" : "rgba(240,67,93,.16)";
+      ctx.fillRect(x0, padT, x1 - x0, h - padT - padB);
+      ctx.font = `700 11px ${css("--mono")}`; ctx.fillStyle = col; ctx.textAlign = "center";
+      ctx.fillText("HELD ✓", (x0 + x1) / 2, h - padB - 4); ctx.textAlign = "left";
+    }
+  }
   labels.sort((a, b) => a.y - b.y);
   for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 15);
   ctx.font = `600 11px ${css("--mono")}`;

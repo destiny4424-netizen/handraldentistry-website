@@ -4,7 +4,7 @@ trades with entry, stop-loss and targets.
     Scanned -> Setup (order block / HTF breakout) -> Sector agrees
             -> Good risk:reward -> OI confirms -> Top picks
 """
-from analysis import _clamp, _day
+from analysis import _clamp, _day, atr
 
 SECTORS = {
     "Banks": "HDFCBANK ICICIBANK SBIN KOTAKBANK AXISBANK INDUSINDBK BANKBARODA PNB CANBK FEDERALBNK "
@@ -36,7 +36,7 @@ SECTORS = {
     "Telecom": "BHARTIARTL IDEA INDUSTOWERS TATACOMM HFCL",
 }
 SECTOR_OF = {s: sec for sec, names in SECTORS.items() for s in names.split()}
-STAGES = ["Scanned", "Strong setup", "Sector agrees", "Good R:R", "OI confirms", "Top picks"]
+STAGES = ["Scanned", "Strong setup", "Sector agrees", "Good R:R", "Held level", "OI confirms", "Top picks"]
 
 
 def sector_of(symbol):
@@ -75,28 +75,74 @@ def sector_table(pcts):
     return rows
 
 
-def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr):
+def hold_check(side, hi, lo, since, c15, atr15):
+    """Price action at the level, on closed 15-minute candles after the setup formed.
+    The level is held when price comes back to it (touch) and a 15-minute candle then
+    closes back on the right side of it with a bullish (bearish) body or a long
+    rejection wick, without closing through the far side of the zone.
+    Returns (state, confirmation candle or None): state is "broken", "waiting"
+    (price has not come back yet), "testing" (at the level, no close holding it yet)
+    or "held"."""
+    tol = 0.1 * atr15
+    touched, conf = False, None
+    for c in (c for c in c15 if c["t"] > since):
+        rng = (c["h"] - c["l"]) or 1e-9
+        if side == "bull":
+            if c["c"] < lo - tol:
+                return "broken", None
+            if c["l"] <= hi + tol:
+                touched = True
+            wick = (min(c["o"], c["c"]) - c["l"]) / rng
+            holds = c["c"] > hi and (c["c"] >= c["o"] or wick >= 0.4) and c["l"] >= lo - tol
+        else:
+            if c["c"] > hi + tol:
+                return "broken", None
+            if c["h"] >= lo - tol:
+                touched = True
+            wick = (c["h"] - max(c["o"], c["c"])) / rng
+            holds = c["c"] < lo and (c["c"] <= c["o"] or wick >= 0.4) and c["h"] <= hi + tol
+        if touched and holds:
+            conf, touched = c, False                   # the latest hold counts
+    if conf:
+        return "held", conf
+    return ("testing" if touched else "waiting"), None
+
+
+def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr, c15=None, atr15=None):
     """Entry, stop and targets from the order block and/or the broken HTF level.
-    Returns None when there is no valid plan (stop hit, target already reached,
-    or not enough room to the next level)."""
+    A trade is only "confirmed" once a 15-minute candle has held the level (see
+    hold_check); the entry is then the break of that candle (above its high for a
+    buy, below its low for a sell) and the stop goes beyond the candle and the zone.
+    Returns None when there is no valid plan (level broken, stop hit, target already
+    reached, ran too far, or not enough room to the next level)."""
     entries = []
     if ob:
-        if side == "bull":
-            entries.append(("Order block", ob["top"], ob["bottom"] - 0.1 * atr, (ob["bottom"], ob["top"])))
-        else:
-            entries.append(("Order block", ob["bottom"], ob["top"] + 0.1 * atr, (ob["bottom"], ob["top"])))
+        entries.append(("Order block", ob["bottom"], ob["top"], ob.get("time", 0)))
     if bo:
         L = bo["level_price"]
-        entries.append((f'{bo["level"]} breakout', L, bo["stop"], (min(L, bo["stop"]), max(L, bo["stop"]))))
+        lo, hi = (min(L, bo["stop"]), L) if side == "bull" else (L, max(L, bo["stop"]))
+        entries.append((f'{bo["level"]} breakout', lo, hi, bo["time"]))
     if not entries:
         return None
-    # Use the entry nearest to the current price (the one most likely to fill).
-    name, entry, sl, zone = min(entries, key=lambda e: abs(price - e[1]))
     sign = 1 if side == "bull" else -1
+    edge = lambda e: e[2] if side == "bull" else e[1]  # the level price has to hold
+    # Use the zone nearest to the current price (the one most likely to be traded).
+    name, lo, hi, since = min(entries, key=lambda e: abs(price - edge(e)))
+    a15 = atr15 or atr
+    state, conf = hold_check(side, hi, lo, since, c15 or [], a15)
+    if state == "broken":
+        return None
+
+    if conf:
+        entry = conf["h"] if side == "bull" else conf["l"]
+        sl = (min(conf["l"], lo) - 0.1 * a15) if side == "bull" else (max(conf["h"], hi) + 0.1 * a15)
+    else:                                              # not confirmed yet: plan from the level
+        entry = hi if side == "bull" else lo
+        sl = lo - 0.1 * a15 if side == "bull" else hi + 0.1 * a15
     risk = (entry - sl) * sign
-    if risk <= 0.05 * atr:
-        sl = entry - sign * 0.5 * atr                  # zone too thin: give the stop some room
-        risk = 0.5 * atr
+    if risk <= 0.05 * a15:
+        sl = entry - sign * 0.5 * a15                  # zone too thin: give the stop some room
+        risk = 0.5 * a15
     if (price - sl) * sign <= 0:
         return None                                     # already through the stop
 
@@ -115,15 +161,29 @@ def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr):
         return None
     if (price - entry) * sign > 1.0 * risk:
         return None                                     # already ran more than 1R: missed it
-    status = "At entry" if (price - entry) * sign <= 0.3 * risk else "Wait for pullback"
-    return {"basis": name, "entry": entry, "zone": zone, "sl": sl, "t1": t1, "t2": t2,
+
+    word = "Buy above" if side == "bull" else "Sell below"
+    after = [c for c in (c15 or []) if conf and c["t"] > conf["t"]]
+    hit = next((c for c in after if (c["h"] >= entry if side == "bull" else c["l"] <= entry)), None)
+    if conf and hit:
+        status = "Triggered"
+    elif conf:
+        status = f"{word} {entry:.2f}"
+    elif state == "testing":
+        status = "Testing level"
+    else:
+        status = "Waiting for retest"
+    return {"basis": name, "entry": entry, "zone": (lo, hi), "sl": sl, "t1": t1, "t2": t2,
             "r1_level": r1 is not None, "rr": round(rr, 2), "rr2": round((t2 - entry) * sign / risk, 2),
-            "risk_pct": round(risk / entry * 100, 2), "status": status}
+            "risk_pct": round(risk / entry * 100, 2), "status": status, "confirmed": bool(conf),
+            "held_at": conf["t"] if conf else None, "triggered_at": hit["t"] if hit else None,
+            "action": f"{word} {entry:.2f}" if conf else
+                      f"Wait for a 15m candle to close {'above' if side == 'bull' else 'below'} {(hi if side == 'bull' else lo):.2f} after touching it"}
 
 
 def build(stocks, min_rr=1.5, n_picks=6, min_setup=55):
     """stocks: {symbol: {"res": order-block analysis, "bo": breakout setup or None,
-    "levels": HTF levels, "oi": oi_build() result or None (filled in later)}}.
+    "levels": HTF levels, "c15": closed 15-minute candles}}.
     Returns (candidates needing OI, finish function)."""
     pcts = {s: d["res"]["pct"] for s, d in stocks.items()}
     sectors = sector_table(pcts)
@@ -158,7 +218,9 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55):
         if not agrees:
             continue
         row["stage"] = 2
-        plan = trade_plan(side, res["price"], res["atr"], ob, b, d["levels"], min_rr)
+        c15 = d.get("c15") or []
+        atr15 = atr(c15)[-1] if len(c15) > 2 else None
+        plan = trade_plan(side, res["price"], res["atr"], ob, b, d["levels"], min_rr, c15, atr15)
         if not plan:
             continue
         row["stage"] = 3
@@ -166,11 +228,16 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55):
         cands.append({"symbol": sym, "side": side, "base": base, "sector": sector_of(sym),
                       "sector_pct": s["pct"], "sector_rank": s["rank"], "price": res["price"],
                       "pct": res["pct"], "plan": plan, "sources": sources})
-    cands.sort(key=lambda c: -c["base"])
+    cands.sort(key=lambda c: (not c["plan"]["confirmed"], -c["base"]))   # confirmed first for OI checks
+    held = [c for c in cands if c["plan"]["confirmed"]]
+    for c in held:
+        flow[c["symbol"]]["stage"] = 4
+    # Setups that have not held their level yet: shown as a watchlist, never as picks.
+    watch = sorted((c for c in cands if not c["plan"]["confirmed"]), key=lambda c: -c["base"])[:8]
 
     def finish(oi_by_symbol):
         strong, weak = [], []
-        for c in cands:
+        for c in held:
             oi = oi_by_symbol.get(c["symbol"])
             c["oi"] = oi
             want = "LONG BUILD-UP" if c["side"] == "bull" else "SHORT BUILD-UP"
@@ -188,16 +255,19 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55):
             c["score"] = round(0.5 * c["base"] + sector_pts + oi_pts + 10 * _clamp((c["plan"]["rr"] - 1) / 2), 1)
             bucket.append(c)
             if bucket is strong:
-                flow[c["symbol"]]["stage"] = 4
+                flow[c["symbol"]]["stage"] = 5
         strong.sort(key=lambda c: -c["score"])
         weak.sort(key=lambda c: -c["score"])
         picks = (strong + weak)[:n_picks]              # OI-confirmed first, then the rest if needed
         picks.sort(key=lambda c: -c["score"])
         for c in picks:
-            flow[c["symbol"]]["stage"] = 5
+            flow[c["symbol"]]["stage"] = 6
         counts = [sum(1 for f in flow.values() if f["stage"] >= i) for i in range(len(STAGES))]
         return {"funnel": [{"name": n, "count": counts[i]} for i, n in enumerate(STAGES)],
                 "flow": sorted(flow.values(), key=lambda f: -f["pct"]),
-                "sectors": sectors, "picks": picks}
+                "sectors": sectors, "picks": picks,
+                "watch": [{"symbol": c["symbol"], "side": c["side"], "price": c["price"], "pct": c["pct"],
+                           "basis": c["plan"]["basis"], "status": c["plan"]["status"],
+                           "action": c["plan"]["action"], "level": c["plan"]["entry"]} for c in watch]}
 
     return cands, finish
