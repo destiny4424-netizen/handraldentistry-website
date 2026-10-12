@@ -209,6 +209,15 @@
     </div>
     <div class="err" id="keysErr"></div>
 
+    <div class="sect">
+      <b style="font-size:14px">Top Picks</b>
+      <label for="pickFrom">Show Top Picks from (IST)</label>
+      <input id="pickFrom" type="time" min="09:15" max="15:30" step="900" value="10:00">
+      <div class="hint">Before this time, setups whose level has already held wait on the Watchlist. They become
+      picks at this time if the level still holds. 10:00 gives cleaner confirmations.</div>
+      <div class="actions" style="margin-top:10px"><button type="button" id="prefSave">Save</button></div>
+      <div class="err" id="prefErr"></div>
+    </div>
     <div class="sect" id="cloudSect" hidden>
       <b style="font-size:14px">Running in the cloud</b>
       <div class="hint">This scanner runs on your server around the clock, whether your PC is on or off.
@@ -556,7 +565,9 @@ function renderPicks() {
   const list = $("pickList"), sig = pk.picks.map(c => c.symbol + c.side).join();
   const changed = list.dataset.sig !== sig; list.dataset.sig = sig;
   if (!pk.picks.length) {
-    list.innerHTML = `<div class="empty">${state.last_scan ? "No stock passes every filter right now. The next scan may find some." : "Waiting for scan…"}</div>`;
+    list.innerHTML = `<div class="empty">${!state.last_scan ? "Waiting for scan…"
+      : pk.picks_open === false ? `Top Picks open at ${pk.picks_from}. Until then, setups whose level holds wait on the Watchlist below.`
+      : "No stock passes every filter right now. The next scan may find some."}</div>`;
   } else {
     list.innerHTML = pk.picks.map((c, i) => {
       const p = c.plan, bull = c.side === "bull", oi = c.oi;
@@ -909,6 +920,7 @@ async function loadSettings() {
     ? `✓ Saved · client ${st.client_id} · token ••••${st.token_tail} · ${st.saved_at || ""}`
     : "No Dhan keys saved yet.";
   if (st.cloud) $("savedWhere").textContent = "Everything here is saved on the server, so it stays across updates and restarts.";
+  $("pickFrom").value = st.picks_from || "10:00";
   $("cloudSect").hidden = !st.cloud; $("phoneSect").hidden = !!st.cloud;
   $("cloudUrl").textContent = st.public_url || location.origin;
   $("phoneOn").checked = st.phone;
@@ -949,6 +961,14 @@ $("keysForm").onsubmit = async e => {
 $("forget").onclick = async () => {
   if (!confirm("Remove the saved Dhan keys from this PC? The scanner goes back to demo data.")) return;
   try { await post("/api/forget", {}); await loadSettings(); refresh(); } catch (err) { $("keysErr").textContent = err.message; }
+};
+$("prefSave").onclick = async () => {
+  $("prefErr").style.color = ""; $("prefErr").textContent = "";
+  try {
+    await post("/api/prefs", { picks_from: $("pickFrom").value });
+    $("prefErr").style.color = "var(--bull)"; $("prefErr").textContent = `Saved. Top Picks start at ${$("pickFrom").value}. Rescanning…`;
+    setTimeout(refresh, 800);
+  } catch (err) { $("prefErr").textContent = err.message; }
 };
 $("logout").onclick = async () => { await post("/api/logout", {}).catch(() => {}); location.reload(); };
 $("phoneSave").onclick = async () => {
