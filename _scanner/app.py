@@ -31,13 +31,14 @@ from urllib.parse import parse_qs, urlparse
 
 import analysis
 import breakout
+import market
 import picks
 
 HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "13 Oct · hover fix"                         # shown at the bottom of the page
+VERSION = "13 Oct · market panel"                         # shown at the bottom of the page
 
 
 def load_env():
@@ -188,6 +189,14 @@ def fno_stocks():
                 futures[under] = (expiry, row["SEM_SMST_SECURITY_ID"])   # nearest expiry
         elif row.get("SEM_SEGMENT") == "E" and row.get("SEM_SERIES") == "EQ":
             equity[sym] = row["SEM_SMST_SECURITY_ID"]
+        elif row.get("SEM_INSTRUMENT_NAME") == "INDEX":
+            key = sym.upper().replace(" ", "")
+            if key in ("NIFTY", "NIFTY50", "BANKNIFTY", "NIFTYBANK", "INDIAVIX"):
+                INDEXES[{"NIFTY50": "NIFTY", "NIFTYBANK": "BANKNIFTY"}.get(key, key)] = row["SEM_SMST_SECURITY_ID"]
+        elif row.get("SEM_INSTRUMENT_NAME") == "OPTIDX" and sym.split("-")[0] == "NIFTY":
+            expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
+            if expiry >= today and (not EXPIRY.get("nifty") or expiry < EXPIRY["nifty"]):
+                EXPIRY["nifty"] = expiry
     f.close()
     stocks = {s: equity[s] for s in sorted(underlyings) if s in equity}
     if ONLY:
@@ -200,6 +209,9 @@ def fno_stocks():
 
 
 FUTURES = {}                                           # symbol -> current-month futures security id
+# Dhan security ids of the indices (IDX_I); read from the scrip master, these are fallbacks.
+INDEXES = {"NIFTY": "13", "BANKNIFTY": "25", "INDIAVIX": "21"}
+EXPIRY = {}                                            # "nifty" -> nearest NIFTY option expiry, YYYY-MM-DD
 
 
 def _rows(d):
@@ -224,20 +236,20 @@ def dhan_futures_oi(fut_id):
     return _rows(dhan_post("/charts/intraday", body))
 
 
-def dhan_daily(security_id):
+def dhan_daily(security_id, segment="NSE_EQ", instrument="EQUITY"):
     """About 4 months of daily candles, for the HTF key levels."""
     now = datetime.now(IST)
-    body = {"securityId": str(security_id), "exchangeSegment": "NSE_EQ", "instrument": "EQUITY",
+    body = {"securityId": str(security_id), "exchangeSegment": segment, "instrument": instrument,
             "expiryCode": 0, "oi": False,
             "fromDate": (now - timedelta(days=120)).strftime("%Y-%m-%d"),
             "toDate": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
     return _rows(dhan_post("/charts/historical", body))
 
 
-def dhan_candles(security_id, interval=TIMEFRAME):
+def dhan_candles(security_id, interval=TIMEFRAME, segment="NSE_EQ", instrument="EQUITY"):
     now = datetime.now(IST)
-    body = {"securityId": str(security_id), "exchangeSegment": "NSE_EQ",
-            "instrument": "EQUITY", "interval": str(interval), "oi": False,
+    body = {"securityId": str(security_id), "exchangeSegment": segment,
+            "instrument": instrument, "interval": str(interval), "oi": False,
             "fromDate": (now - timedelta(days=DAYS)).strftime("%Y-%m-%d 09:15:00"),
             "toDate": now.strftime("%Y-%m-%d %H:%M:%S")}
     return _rows(dhan_post("/charts/intraday", body))
@@ -307,7 +319,7 @@ def demo_daily(symbol, intraday):
 STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO,
          "timeframe": TIMEFRAME, "scanned": 0, "total": 0, "last_scan": None,
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
-         "version": VERSION,
+         "version": VERSION, "market": None,
          "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
@@ -353,12 +365,44 @@ def fetch_stock(sym, sid, demo):
     return candles, c15, DAILY[sid][1]
 
 
+def fetch_market(demo):
+    """5-minute candles for NIFTY, BANK NIFTY and India VIX (plus VIX daily, once a day)."""
+    out = {}
+    for key in ("NIFTY", "BANKNIFTY", "INDIAVIX"):
+        try:
+            if demo:
+                c = demo_candles(key)
+                if key == "INDIAVIX":                  # make the demo VIX look like a VIX
+                    f = 14 / c[0]["o"]
+                    c = [dict(x, o=x["o"] * f, h=x["h"] * f, l=x["l"] * f, c=x["c"] * f) for x in c]
+                out[key] = (c, demo_daily(key, c) if key == "INDIAVIX" else None)
+                continue
+            sid = INDEXES[key]
+            c = dhan_candles(sid, "5", "IDX_I", "INDEX")
+            time.sleep(0.25)
+            daily = None
+            if key == "INDIAVIX":
+                today = datetime.now(IST).date()
+                cached = DAILY.get("IDX" + sid)
+                if not cached or cached[0] != today:
+                    DAILY["IDX" + sid] = (today, dhan_daily(sid, "IDX_I", "INDEX"))
+                    time.sleep(0.25)
+                daily = DAILY["IDX" + sid][1]
+            out[key] = (c, daily)
+        except DhanError as e:
+            if e.fatal:
+                raise
+            print(f"  {key}: {e}", file=sys.stderr)
+    return out
+
+
 def scan_once():
     demo = DEMO                                      # keys can be added mid-scan
     stocks = {s: s for s in DEMO_SYMBOLS} if demo else fno_stocks()
     set_state(status="scanning", total=len(stocks), scanned=0,
               message=f"Scanning {len(stocks)} F&O stocks…")
     results, candles_by, bo, funnel_in = {}, {}, {}, {}
+    idx = fetch_market(demo)
     for n, (sym, sid) in enumerate(stocks.items(), 1):
         try:
             if demo != DEMO:
@@ -374,6 +418,8 @@ def scan_once():
             continue
         res = analysis.analyse(candles, SWING)
         if res:
+            res["vwap"] = market.vwap(candles)
+            res["rvol"] = market.rvol(candles, daily)
             results[sym], candles_by[sym] = res, candles
             now_ts = c15[-1]["end"] if demo else time.time()
             setup, levels = breakout.detect(c15, daily, now_ts, res["price"])
@@ -439,6 +485,28 @@ def scan_once():
         o = oi.get(f["symbol"])
         if o:
             f["oi"] = f'{o["kind"]} · OI {o["oi_pct"]:+.2f}%'
+    # Market context: index direction, VIX, breadth, movers, and how each pick sits against it.
+    nifty = market.index_view("NIFTY 50", idx["NIFTY"][0]) if "NIFTY" in idx else None
+    bank = market.index_view("BANK NIFTY", idx["BANKNIFTY"][0]) if "BANKNIFTY" in idx else None
+    vix = market.vix_view(*idx["INDIAVIX"]) if "INDIAVIX" in idx else None
+    br = market.breadth([r["pct"] for r in results.values()])
+    mv = market.movers([{"symbol": s, "price": r["price"], "pct": r["pct"], "rvol": r.get("rvol"),
+                         "sector": picks.sector_of(s)} for s, r in results.items()])
+    today_s = datetime.now(IST).strftime("%Y-%m-%d")
+    mkt = {"nifty": nifty, "bank": bank, "vix": vix, "breadth": br, "movers": mv,
+           "verdict": market.verdict(nifty, bank, vix, br),
+           "expiry": EXPIRY.get("nifty"), "expiry_today": EXPIRY.get("nifty") == today_s}
+    for c in top["picks"] + [f for f in top["flow"] if f.get("stage")]:
+        r = results.get(c["symbol"]) or {}
+        is_bull = c["side"] == "bull"
+        if r.get("vwap"):
+            c["vwap"] = round(r["vwap"], 2)
+            c["vwap_ok"] = (r["price"] >= r["vwap"]) if is_bull else (r["price"] <= r["vwap"])
+        c["rvol"] = r.get("rvol")
+        if nifty:
+            c["market"] = ("with" if nifty["trend"] == ("Bullish" if is_bull else "Bearish")
+                           else "neutral" if nifty["trend"] == "Sideways" else "against")
+            c["rs"] = round(r.get("pct", 0) - nifty["pct"], 2)   # strength vs NIFTY today
     day = datetime.now(IST).date()
     for c in top["picks"]:
         key = (day, c["symbol"], c["side"])
@@ -467,7 +535,7 @@ def scan_once():
         BREAKOUTS.update(bo)
         PICKS.clear()
         PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"]})
-        STATE.update(status="live", message="", scores=scores, breakouts=breakouts, picks=top,
+        STATE.update(status="live", message="", scores=scores, breakouts=breakouts, picks=top, market=mkt,
                      last_scan=datetime.now(IST).strftime("%H:%M"),
                      bullish=[row(s, "bull") for s in bull[:TOP_N]],
                      bearish=[row(s, "bear") for s in bear[:TOP_N]])

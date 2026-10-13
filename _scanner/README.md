@@ -10,6 +10,16 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
 - **Top Picks (opens first):** after every scan, all F&O stocks go through a series of filters and the
   best 5–6 trades are shown with **entry, stop-loss, target 1, target 2, R:R and risk %**. A flow chart
   shows how many stocks passed each filter, next to a sector strength table.
+- **Market panel (top of Top Picks):**
+  - **NIFTY 50 and BANK NIFTY** each get a **Bullish / Bearish / Sideways** verdict with the reasons: above or below
+    today's open and yesterday's close, the 20-EMA on 5-minute candles, and breaks of the first-15-minute range.
+  - **India VIX** is shown against its own 20-day average. **Breadth** is how many F&O stocks are up vs down.
+  - The **top 5 F&O gainers and losers** come with relative volume.
+  - A one-line verdict says which side to favour.
+  - Reminders: NIFTY weekly expiry day (from Dhan's contract list), the first 15 minutes, and no new entries after 3 PM.
+  - The header shows NIFTY's direction on every tab.
+  - Each pick card shows whether it is **with or against NIFTY**, above or below **VWAP**, its **relative volume**
+    and its move **vs NIFTY** today.
 - **Ranked lists:** the top 20 bullish and top 20 bearish stocks, strongest first.
 - **Strength map:** how many stocks are choppy and how many are strong, on each side.
 - **Chart:** recent candles with the order block zone, support, resistance and the liquidity level.
