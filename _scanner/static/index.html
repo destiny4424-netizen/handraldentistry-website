@@ -915,10 +915,14 @@ async function loadSettings() {
   if (!r.ok) return;
   const st = await r.json();
   $("cid").value = st.client_id || "";
-  $("savedInfo").className = "saved" + (st.token_tail ? "" : " none");
-  $("savedInfo").textContent = st.token_tail
-    ? `✓ Saved · client ${st.client_id} · token ••••${st.token_tail} · ${st.saved_at || ""}`
-    : "No Dhan keys saved yet.";
+  const tk = st.token || {};
+  $("savedInfo").className = "saved" + (st.token_tail && !tk.expired ? "" : " none");
+  $("savedInfo").innerHTML = !st.token_tail ? "No Dhan keys saved yet."
+    : tk.expired ? `Token expired ${tk.expires}. Paste a new one below once; after that it renews by itself.`
+    : `✓ Client ${st.client_id} · token ••••${st.token_tail}` +
+      (tk.expires ? `<br>Valid until ${tk.expires} · <b>renews automatically</b> before it expires` : "") +
+      (tk.last_renewed ? ` · last renewed ${tk.last_renewed}` : "") +
+      (tk.note ? `<br><span style="color:#ffb3bf">${tk.note}</span>` : "");
   if (st.cloud) $("savedWhere").textContent = "Everything here is saved on the server, so it stays across updates and restarts.";
   $("pickFrom").value = st.picks_from || "10:00";
   $("cloudSect").hidden = !st.cloud; $("phoneSect").hidden = !!st.cloud;

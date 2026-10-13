@@ -5,6 +5,7 @@ Run:  python app.py        (needs Python 3.9+, no extra packages)
 Keys: put DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN in a .env file next to this one.
       With no keys it starts in DEMO mode with made-up prices.
 """
+import base64
 import csv
 import hashlib
 import hmac
@@ -481,7 +482,11 @@ def scanner():
             try:
                 scan_once()
             except DhanError as e:
-                set_state(status="error", message=str(e))
+                if "access token" in str(e) and keep_token_once(force=True):
+                    WAKE.set()                         # renewed: scan again right away
+                    set_state(status="starting", message="Dhan token renewed automatically. Scanning…")
+                else:
+                    set_state(status="error", message=str(e))
             except Exception as e:
                 set_state(status="error", message=f"Scan failed: {e}")
             first = False
@@ -514,6 +519,96 @@ def forget_keys():
     set_state(demo=True, status="starting", message="Dhan keys removed. Showing demo data.",
               bullish=[], bearish=[], scores=[], last_scan=None)
     WAKE.set()
+
+
+# ── Keeping the Dhan token alive ────────────────────────────────────────────
+# Dhan tokens last 24 hours. GET /v2/RenewToken swaps a still-valid token for a new
+# 24-hour one, so the scanner renews it whenever less than RENEW_BEFORE is left:
+# a token pasted once keeps going for as long as the scanner keeps running.
+RENEW_BEFORE = 4 * 3600
+TOKEN_STATUS = {"note": "", "last_renewed": None}
+
+
+def token_expiry(token):
+    """Expiry (epoch seconds) from the token's JWT payload, or None."""
+    try:
+        part = token.split(".")[1]
+        payload = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+        return int(payload["exp"])
+    except (IndexError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _token_from(resp):
+    """Find the new token in Dhan's reply, whatever the field is called."""
+    if isinstance(resp, dict):
+        for k in ("accessToken", "access_token", "token"):
+            if isinstance(resp.get(k), str) and len(resp[k]) > 20:
+                return resp[k]
+        for v in resp.values():
+            t = _token_from(v)
+            if t:
+                return t
+    return None
+
+
+def renew_token():
+    req = urllib.request.Request(API + "/RenewToken", method="GET",
+                                 headers={"access-token": TOKEN, "dhanClientId": CLIENT_ID,
+                                          "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return _token_from(json.loads(r.read() or b"{}"))
+    except urllib.error.HTTPError as e:
+        raise DhanError(f"Dhan said {e.code}: {e.read().decode(errors='replace')[:200]}") from None
+    except urllib.error.URLError as e:
+        raise DhanError(f"Can't reach Dhan: {e.reason}") from None
+
+
+def keep_token_once(force=False):
+    """Renew the token when it is close to expiring. Returns True if a new token is in use."""
+    global TOKEN
+    if DEMO or not TOKEN:
+        return False
+    exp = token_expiry(TOKEN)
+    left = (exp - time.time()) if exp else None
+    if not force and left is not None and left > RENEW_BEFORE:
+        return False
+    if left is not None and left <= 0:
+        TOKEN_STATUS["note"] = "The token has already expired; renewing only works on a valid one. Paste a new token once."
+        return False
+    try:
+        new = renew_token()
+    except DhanError as e:
+        TOKEN_STATUS["note"] = f"Renewing failed: {e}"
+        print("  " + TOKEN_STATUS["note"])
+        return False
+    if not new:
+        TOKEN_STATUS["note"] = "Renewing failed: Dhan sent no token back."
+        return False
+    TOKEN = new
+    now = datetime.now(IST).strftime("%d %b %H:%M")
+    save_settings(access_token=new, saved_at=now)
+    TOKEN_STATUS.update(note="", last_renewed=now)
+    print(f"  Dhan token renewed at {now}")
+    return True
+
+
+def token_keeper():
+    while True:
+        try:
+            if keep_token_once():
+                WAKE.set()                             # rescan straight away with the new token
+        except Exception as e:                         # never let the keeper die
+            TOKEN_STATUS["note"] = f"Renewal check failed: {e}"
+        time.sleep(15 * 60)
+
+
+def token_info():
+    exp = token_expiry(TOKEN) if TOKEN and not DEMO else None
+    return {"expires": datetime.fromtimestamp(exp, IST).strftime("%d %b %H:%M") if exp else None,
+            "expired": bool(exp and exp < time.time()),
+            "last_renewed": TOKEN_STATUS["last_renewed"], "note": TOKEN_STATUS["note"]}
 
 
 # ── Phone access ────────────────────────────────────────────────────────────
@@ -743,6 +838,7 @@ class Handler(BaseHTTPRequestHandler):
                             "has_pin": bool(SETTINGS.get("pin_hash")), "listening": HOST == "0.0.0.0",
                             "cloud": CLOUD, "public_url": PUBLIC_URL,
                             "picks_from": SETTINGS.get("picks_from") or "10:00",
+                            "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
         elif url.path == "/api/pick":
             p = pick_payload(q.get("symbol", [""])[0].upper())
@@ -846,6 +942,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     threading.Thread(target=scanner, daemon=True).start()
+    threading.Thread(target=token_keeper, daemon=True).start()
     try:
         server = ThreadingHTTPServer((HOST, PORT), Handler)
     except OSError:

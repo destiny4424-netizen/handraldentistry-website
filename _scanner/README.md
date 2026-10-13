@@ -36,8 +36,9 @@ there are about 200 stocks.
 **Notes**
 - The dashboard uses Dhan's historical-candle (Data) API, which needs Dhan's **Data API**
   subscription. Without it, the dashboard shows Dhan's error.
-- An access token generated on web.dhan.co lasts **24 hours**. When it expires, the dashboard says
-  so. Paste a new token into `.env` and restart.
+- An access token generated on web.dhan.co lasts **24 hours**, but the scanner **renews it by
+  itself** (Dhan's RenewToken) when less than 4 hours are left, so you paste it only once. If the
+  scanner was off long enough for the token to expire, paste a new one in Settings.
 - Your keys stay in `.env` on your computer. They are only sent to api.dhan.co. Don't share that
   file or upload it anywhere.
 
