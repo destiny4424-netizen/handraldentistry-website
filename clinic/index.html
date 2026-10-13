@@ -1034,6 +1034,26 @@ textarea{min-height:64px;resize:vertical}
   </div>
 
   <!-- Cloud Sync -->
+  <div class="card" style="margin-bottom:14px;border:2px solid #1d4ed8">
+    <div class="card-header" style="background:linear-gradient(135deg,#1e3a8a,#1d4ed8)">
+      <span class="card-title" style="color:#fff">☁️ Multi-Clinic Cloud Sync</span>
+      <span id="cloudSyncBadge" style="display:none;font-size:11px;color:#fff;background:rgba(255,255,255,.25);padding:2px 9px;border-radius:99px;white-space:nowrap"></span>
+    </div>
+    <div style="padding:16px">
+      <p style="font-size:12px;color:var(--m);margin-bottom:12px">Paste the <b>same</b> Apps Script Web App URL into Settings on every device at all 3 clinics to share one live patient/appointment/billing database. Patient photos stay on each device and are not synced.</p>
+      <div class="form-group">
+        <label>Google Apps Script Web App URL</label>
+        <input id="cloudUrlInput" placeholder="https://script.google.com/macros/s/.../exec"/>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn btn-green btn-sm" onclick="saveCloudUrl()">💾 Save URL</button>
+        <button class="btn btn-outline btn-sm" onclick="testCloud()">🧪 Test Connection</button>
+        <button class="btn btn-outline btn-sm" onclick="syncNow()">🔄 Sync Now</button>
+      </div>
+      <p id="cloudUrlStatus" style="font-size:12px;color:var(--m)"></p>
+      <p id="cloudTestResult" style="font-size:12px;color:var(--m);margin-top:4px"></p>
+    </div>
+  </div>
 
     <!-- Data Transfer -->
   <div class="card" style="margin-bottom:14px;border:2px solid #1a6b4a">
@@ -1270,89 +1290,153 @@ let _clinicScanB64 = null;
 const CLINICS = {bagalkot:'Bagalkot Clinic',vidyagiri:'Vidyagiri Clinic',navanagar:'Navanagar Clinic'};
 const CLINIC_COLORS = {bagalkot:{bg:'#1a6b4a',light:'#d1fae5',text:'#065f46',grad:'linear-gradient(135deg,#0f4c2e,#1a6b4a)'},vidyagiri:{bg:'#1d4ed8',light:'#dbeafe',text:'#1e40af',grad:'linear-gradient(135deg,#1e3a8a,#1d4ed8)'},navanagar:{bg:'#7c3aed',light:'#ede9fe',text:'#5b21b6',grad:'linear-gradient(135deg,#4c1d95,#7c3aed)'}};
 
-// ── CLOUD SYNC ─────────────────────────────────────────────────
-// Cloud sync removed - tablet only mode
+// ── CLOUD SYNC (Google Apps Script + Google Sheet backend) ──────
+// Lets multiple devices/clinics share one live patient/appointment/
+// billing database. Photos stay device-local (too large for Sheets).
+let CLOUD_URL = localStorage.getItem('hd_cloud_url') || '';
+let _cloudPushTimer = null;
+let _cloudPullTimer = null;
+let _cloudSyncing = false;
 
 function setCloudUrl(url) {
   CLOUD_URL = url.trim();
   localStorage.setItem('hd_cloud_url', CLOUD_URL);
+  _restartCloudPolling();
 }
 
-function cloudEnabled() { return CLOUD_URL && CLOUD_URL.includes('script.google.com'); }
+function cloudEnabled() { return !!CLOUD_URL && CLOUD_URL.includes('script.google.com'); }
+
+function showSyncBadge(text) {
+  const el = document.getElementById('cloudSyncBadge');
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = 'inline-flex';
+  clearTimeout(showSyncBadge._t);
+  showSyncBadge._t = setTimeout(()=>{ el.style.display='none'; }, 4000);
+}
 
 async function cloudGet(action, params={}) {
   if (!cloudEnabled()) return null;
   const q = Object.entries({action,...params}).map(([k,v])=>`${k}=${encodeURIComponent(v)}`).join('&');
-  const r = await fetch(CLOUD_URL + '?' + q);
-  const text = await r.text();
-  try { return JSON.parse(text); }
-  catch(e) {
-    // Apps Script returned HTML error page
-    console.warn('cloudGet non-JSON response for '+action+':', text.slice(0,200));
-    return {error: 'Server returned non-JSON. Please update Apps Script deployment.'};
-  }
+  try {
+    const r = await fetch(CLOUD_URL + '?' + q);
+    const text = await r.text();
+    try { return JSON.parse(text); }
+    catch(e) {
+      console.warn('cloudGet non-JSON response for '+action+':', text.slice(0,200));
+      return {error: 'Server returned non-JSON. Please check the Apps Script deployment.'};
+    }
+  } catch(e) { return {error: e.message}; }
 }
 
 async function cloudPost(data) {
   if (!cloudEnabled()) return null;
-  const r = await fetch(CLOUD_URL, {method:'POST', body:JSON.stringify(data)});
-  const text = await r.text();
-  try { return JSON.parse(text); }
-  catch(e) {
-    console.warn('cloudPost non-JSON for '+data.action+':', text.slice(0,100));
-    return {error: 'non-JSON response'};
-  }
+  try {
+    const r = await fetch(CLOUD_URL, {method:'POST', body:JSON.stringify(data)});
+    const text = await r.text();
+    try { return JSON.parse(text); }
+    catch(e) {
+      console.warn('cloudPost non-JSON for '+data.action+':', text.slice(0,200));
+      return {error: 'non-JSON response'};
+    }
+  } catch(e) { return {error: e.message}; }
 }
 
-// Pull all data from cloud for current clinic
+// Last-write-wins merge of a local array with a remote array, by id.
+function mergeById(local, remote) {
+  if (!Array.isArray(remote) || !remote.length) return local||[];
+  const map = {};
+  (local||[]).forEach(x=>{ if (x && x.id!=null) map[String(x.id)] = x; });
+  remote.forEach(r=>{
+    if (!r || r.id==null) return;
+    const key = String(r.id);
+    const existing = map[key];
+    if (!existing || Number(r._updatedAt||0) >= Number(existing._updatedAt||0)) map[key] = r;
+  });
+  return Object.values(map);
+}
+
+// Patient photos are base64 data URIs and can be large — keep them
+// device-local only so a single patient record never exceeds a
+// Google Sheets cell's size limit.
+function _patientForCloud(p) {
+  const c = Object.assign({}, p);
+  delete c.photos;
+  return c;
+}
+
+// Pull the latest shared data and merge it into the local copy.
 async function cloudPull(clinic, silent=false) {
-  if (!cloudEnabled()) return;
+  if (!cloudEnabled() || _cloudSyncing) return;
+  _cloudSyncing = true;
   if (!silent) showSyncBadge('⏳ Syncing...');
   try {
-    const data = await cloudGet('get_all', {clinic: clinic||currentClinic});
+    const data = await cloudGet('get_all');
     if (data && !data.error) {
-      if (data.patients)     { patients = mergeById(patients, data.patients); }
-      if (data.appointments) { appointments = mergeById(appointments, data.appointments); }
-      if (data.transactions) { transactions = mergeById(transactions, data.transactions); }
-      if (data.invoices)     { invoices = mergeById(invoices, data.invoices); }
-      if (data.staff && data.staff.length) { staff = data.staff; }
-      if (data.consultants)  { consultants = mergeById(consultants, data.consultants); }
-      if (data.consultCases) { consultCases = mergeById(consultCases, data.consultCases); }
+      patients      = mergeById(patients, data.patients);
+      appointments  = mergeById(appointments, data.appointments);
+      transactions  = mergeById(transactions, data.transactions);
+      invoices      = mergeById(invoices, data.invoices);
+      staff         = mergeById(staff, data.staff);
+      consultants   = mergeById(consultants, data.consultants);
+      consultCases  = mergeById(consultCases, data.consultCases);
       save();
       updateStats(); renderPatients(); renderAppointments(); renderTransactions(); renderInvoices();
       if (!silent) showSyncBadge('✅ Synced');
-      showToast('✅ Data synced from cloud!');
     } else {
       if (!silent) showSyncBadge('❌ Sync failed');
     }
   } catch(e) {
     if (!silent) showSyncBadge('❌ ' + e.message);
   }
+  _cloudSyncing = false;
 }
 
-// Push all local data to cloud
+// Push the whole local dataset to the shared backend (it upserts by id).
 async function cloudPush() {
-  if (!cloudEnabled()) { showToast('⚠️ Add cloud URL in Settings first'); return; }
+  if (!cloudEnabled()) return;
   showSyncBadge('⬆️ Pushing...');
   try {
-    // Push patients by clinic
-    const byClinic = {bagalkot:[], vidyagiri:[], navanagar:[]};
-    patients.forEach(p => { const c=p.clinic||'bagalkot'; if(byClinic[c]) byClinic[c].push(p); });
-    for (const [clinic, pts] of Object.entries(byClinic)) {
-      if (pts.length) await cloudPost({action:'bulk_patients', patients:pts, clinic});
-    }
-    // Push appointments
-    for (const a of appointments) await cloudPost({action:'save_appointment', ...a});
-    // Push transactions
-    for (const t of transactions) await cloudPost({action:'save_transaction', ...t});
-    showSyncBadge('✅ Pushed');
-    showToast('✅ All data pushed to cloud!');
+    const now = Date.now();
+    [patients,appointments,transactions,invoices,staff,consultants,consultCases].forEach(list=>{
+      (list||[]).forEach(x=>{ if (x && !x._updatedAt) x._updatedAt = now; });
+    });
+    const r = await cloudPost({
+      action:'bulk_sync',
+      patients: patients.map(_patientForCloud),
+      appointments, transactions, invoices, staff, consultants, consultCases
+    });
+    if (r && r.error) showSyncBadge('❌ ' + r.error);
+    else showSyncBadge('✅ Synced');
   } catch(e) {
     showSyncBadge('❌ ' + e.message);
   }
 }
 
-// mergeById and showSyncBadge defined below
+// Any local edit calls this (via save()) to push changes to the cloud
+// a little while after the user stops typing/editing, so rapid edits
+// coalesce into a single upload instead of one request per keystroke.
+function queueSync() {
+  if (!cloudEnabled()) return;
+  clearTimeout(_cloudPushTimer);
+  _cloudPushTimer = setTimeout(cloudPush, 1500);
+}
+
+// Manual "Sync Now" button: push what we have, then pull the latest.
+async function syncNow() {
+  if (!cloudEnabled()) { showToast('Add a cloud URL in Settings first'); return; }
+  await cloudPush();
+  await cloudPull(null, false);
+}
+
+function _restartCloudPolling() {
+  clearInterval(_cloudPullTimer);
+  if (cloudEnabled()) {
+    cloudPull(null, true);
+    _cloudPullTimer = setInterval(()=>cloudPull(null,true), 25000);
+  }
+}
+window.addEventListener('focus', ()=>{ if (cloudEnabled()) cloudPull(null, true); });
 
 const TODAY = new Date().toISOString().split('T')[0];
 const AV_COLORS = ['#d1fae5','#dbeafe','#ede9fe','#fef3c7','#fce7f3'];
@@ -1380,6 +1464,7 @@ const save = () => {
   localStorage.setItem('hd_staff',JSON.stringify(staff));
   localStorage.setItem('hd_consultants',JSON.stringify(consultants));
   localStorage.setItem('hd_consultcases',JSON.stringify(consultCases));
+  queueSync();
 };
 
 // FDI tooth numbering
@@ -1418,9 +1503,12 @@ window.onload = () => {
   updateScanBadge();
   document.getElementById('lvDate') && (document.getElementById('lvDate').value=TODAY);
   // Pre-fill cloud URL
+  const cui=document.getElementById('cloudUrlInput');
+  if(cui) cui.value=CLOUD_URL;
+  if(CLOUD_URL) document.getElementById('cloudUrlStatus').textContent='✓ Connected — syncing with other clinics';
 
   // Auto-pull on load if cloud connected
-
+  _restartCloudPolling();
 };
 
 // ── Stats ──────────────────────────────────────────────────────────────────
@@ -2772,25 +2860,12 @@ function _saveAllScannedAppts(entries, clinic){
 }
 
 
-// Cloud sync removed
-function cloudEnabled(){return false;}
-function queueSync(){}
-function cloudPull(c,s){if(!s)showToast('Cloud sync disabled - tablet only mode');}
-function cloudPush(){showToast('Cloud sync disabled - tablet only mode');}
-function cloudGet(){return Promise.resolve(null);}
-function cloudPost(){return Promise.resolve(null);}
-function cloudSavePatient(){}
-function cloudSaveAppointment(){}
-function cloudSaveTransaction(){}
-function cloudSaveInvoice(){}
-function showSyncBadge(){}
-
 // ── CLOUD SETTINGS HELPERS ─────────────────────────────────────
 function saveCloudUrl(){
   const url=document.getElementById('cloudUrlInput').value.trim();
   setCloudUrl(url);
-  document.getElementById('cloudUrlStatus').textContent=url?'✓ Cloud URL saved':'URL cleared';
-  showToast('✅ Cloud URL saved!');
+  document.getElementById('cloudUrlStatus').textContent=url?'✓ Saved — syncing with other clinics':'URL cleared — sync disabled';
+  showToast(url?'✅ Cloud URL saved! Syncing...':'Cloud sync disabled');
 }
 
 async function testCloud(){
@@ -2799,44 +2874,8 @@ async function testCloud(){
   try{
     const d=await cloudGet('ping');
     if(d&&d.ok){el.textContent='✅ Connected! Server time: '+new Date(d.time).toLocaleTimeString('en-IN');}
-    else el.textContent='❌ Error: '+(d&&d.error||'No response');
+    else el.textContent='❌ Error: '+((d&&d.error)||'No response. Check the URL and that the Apps Script is deployed as "Anyone" can access.');
   }catch(e){el.textContent='❌ Failed: '+e.message;}
-}
-
-async function pushPatientsToCloud(){
-  if(!cloudEnabled()){showToast('Add cloud URL first');return;}
-  const btn=event.target;btn.textContent='⏳ Pushing...';btn.disabled=true;
-  const byClinic={bagalkot:[],vidyagiri:[],navanagar:[]};
-  patients.forEach(p=>{const c=p.clinic||'bagalkot';if(byClinic[c])byClinic[c].push(p);});
-  let total=0;
-  try{
-    for(const[clinic,pts]of Object.entries(byClinic)){
-      if(!pts.length) continue;
-      // Push in batches of 100
-      for(let i=0;i<pts.length;i+=100){
-        const batch=pts.slice(i,i+100);
-        const r=await cloudPost({action:'bulk_patients',patients:batch,clinic});
-        if(r&&r.created) total+=r.created;
-      }
-    }
-    document.getElementById('pushPatientsResult').textContent=`✅ ${total} patients pushed to cloud!`;
-    showToast(`✅ ${total} patients uploaded!`);
-  }catch(e){document.getElementById('pushPatientsResult').textContent='❌ '+e.message;}
-  btn.textContent='⬆️ Push All Patients to Cloud';btn.disabled=false;
-}
-
-// Auto-cloud save wrappers
-async function cloudSavePatient(p){
-  if(cloudEnabled()) cloudPost({action:'save_patient',...p}).catch(()=>{});
-}
-async function cloudSaveAppointment(a){
-  if(cloudEnabled()) cloudPost({action:'save_appointment',...a}).catch(()=>{});
-}
-async function cloudSaveTransaction(t){
-  if(cloudEnabled()) cloudPost({action:'save_transaction',...t}).catch(()=>{});
-}
-async function cloudSaveInvoice(inv){
-  if(cloudEnabled()) cloudPost({action:'save_invoice',...inv}).catch(()=>{});
 }
 
 
