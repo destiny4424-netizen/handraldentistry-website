@@ -174,9 +174,11 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
   in Settings), because confirmations after the first hour are cleaner.
 - Open the address on the iPhone in Safari, sign in with the password (it stays signed in for
   90 days), then **Share → Add to Home Screen** for an app icon.
-- **Dhan token:** tap **Settings** (or **Connect Dhan**) and paste the Client ID and access token.
-  Dhan's access tokens expire after 24 hours, so paste a fresh one each trading day. The button
-  turns green and says **Update token** when it has expired.
+- **Dhan token:** tap **Settings** (or **Connect Dhan**) and paste the Client ID and access token
+  **once**. Dhan tokens last 24 hours, but the scanner renews it by itself (Dhan's RenewToken) when
+  less than 4 hours are left, so it keeps going without daily pasting. Settings shows "Valid until …
+  · renews automatically". Only if the droplet was off long enough for the token to expire does it
+  need pasting again; the button then turns green and says **Update token**.
 - Every 5 minutes the droplet checks GitHub. Changes to `_scanner/` are installed by themselves,
   and if a new version fails to start, the previous one comes back automatically.
 - New password: `curl -fsSL .../_scanner/deploy/install.sh | sudo SCANNER_NEW_PASSWORD=1 bash`
