@@ -423,6 +423,20 @@ def scan_once():
                 raise
         time.sleep(0.25)
     top = finish(oi)
+    # Each stock's real path today (every 15 minutes, % from yesterday's close) for the flow chart.
+    for f in top["flow"]:
+        cs, r = candles_by.get(f["symbol"]), results.get(f["symbol"])
+        if not cs or not r:
+            continue
+        today = [c for c in cs if analysis._day(c["t"]) == analysis._day(cs[-1]["t"])]
+        pc = r["prev_close"] or today[0]["o"]
+        f["path"] = [round((c["c"] - pc) / pc * 100, 2) for c in today[2::3]]
+        if not f["path"] or f["path"][-1] != r["pct"]:
+            f["path"].append(r["pct"])
+        f["price"], f["sector"] = r["price"], picks.sector_of(f["symbol"])
+        o = oi.get(f["symbol"])
+        if o:
+            f["oi"] = f'{o["kind"]} · OI {o["oi_pct"]:+.2f}%'
     day = datetime.now(IST).date()
     for c in top["picks"]:
         key = (day, c["symbol"], c["side"])
