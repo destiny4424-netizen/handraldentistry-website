@@ -107,7 +107,16 @@
   .row.fresh .card { animation: flash 1.2s 3; }
   @keyframes flash { 50% { border-color: var(--liq); box-shadow: 0 0 16px rgba(245,185,30,.35); } }
   .full { grid-column: 1 / -1; }
-  #flow { width: 100%; height: 360px; display: block; }
+  #flow { width: 100%; height: 420px; display: block; cursor: crosshair; }
+  #flowPanel { position: relative; }
+  .flowtip { position: absolute; z-index: 3; min-width: 210px; pointer-events: none; padding: 10px 12px;
+             background: rgba(13,17,23,.94); border: 1px solid #2f3846; border-radius: 12px;
+             box-shadow: 0 8px 30px rgba(0,0,0,.5); font-size: 12px; backdrop-filter: blur(6px); }
+  .flowtip .tt { display: flex; justify-content: space-between; gap: 12px; font: 700 15px var(--mono); margin-bottom: 6px; }
+  .flowtip .tr { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); padding: 2px 0;
+                 border-top: 1px solid #1f2630; }
+  .flowtip .tr b { color: var(--text); font: 600 12px var(--mono); text-align: right; }
+  .flowtip .hint { margin-top: 6px; color: var(--liq); font-size: 11px; }
   .flowlegend { display: none; font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.7; }
   .flowlegend b { color: var(--text); font-family: var(--mono); }
   .ptitle { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; }
@@ -148,7 +157,7 @@
   .watch { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: center; padding: 9px 12px;
            border: 1px dashed #343c49; border-radius: 12px; margin-bottom: 8px; font-size: 13px; }
   .watch .nm { font-weight: 800; } .watch .why { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
-  @media (max-width: 520px) { .flowlegend { display: block; } .nums { grid-template-columns: repeat(3, 1fr); } .pick .mid { grid-template-columns: 1fr; } #flow { height: 300px; } }
+  @media (max-width: 520px) { #flow { height: 340px; } .flowlegend { display: block; } .nums { grid-template-columns: repeat(3, 1fr); } .pick .mid { grid-template-columns: 1fr; } }
   header { padding-top: max(14px, env(safe-area-inset-top)); }
   main { padding-bottom: max(40px, env(safe-area-inset-bottom)); }
   dialog .sect { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
@@ -251,6 +260,7 @@
 
   <section class="panel full" id="flowPanel" hidden>
     <canvas id="flow"></canvas>
+    <div class="flowtip" id="flowTip" hidden></div>
     <div class="flowlegend" id="flowLegend"></div>
   </section>
   <section class="panel full" id="sectorPanel" hidden>
@@ -629,38 +639,48 @@ function drawFlow(pk) {
 
 function buildFlow(pk, w, h) {
   const st = pk.funnel, rows = pk.flow, small = w < 600;
-  const top = 54, bottom = h - 14, H = bottom - top;
-  const right = w - (small ? 96 : 130), mid0 = w * (small ? .26 : .36);
-  const colX = st.map((_, i) => i === 0 ? 14 : mid0 + (right - mid0) * (i - 1) / (st.length - 2));
+  const top = 54, bottom = h - 14, H = bottom - top, mid = top + H / 2;
+  const right = w - (small ? 96 : 130), pathEnd = w * (small ? .40 : .42), x0 = 14;
+  const colX = st.map((_, i) => i === 0 ? x0 : pathEnd + (right - pathEnd) * (i - 1) / (st.length - 2));
   const bull = rows.filter(r => r.side === "bull"), bear = rows.filter(r => r.side === "bear");
   const picksOrder = (pk.picks || []).map(c => c.symbol), last = st.length - 1;
+  // y scale for the day's % moves: the 97th percentile move fills the height, outliers clamp
+  const moves = rows.flatMap(r => (r.path || [r.pct]).map(Math.abs)).sort((p, q) => p - q);
+  const span = Math.max(1, moves[Math.floor(moves.length * .97)] || 1);
+  const py = v => mid - Math.max(-1, Math.min(1, v / span)) * H * .46;
+  const slot = i => x0 + (pathEnd - x0) * i / 25;           // 26 fifteen-minute slots in a session
   const pos = (r, j, idx, n) => {
-    if (j === 0) return top + (rows.indexOf(r) + .5) / rows.length * H;
     if (j === last) return top + (picksOrder.indexOf(r.symbol) + .5) / Math.max(1, picksOrder.length) * H;
     const centre = r.side === "bull" ? top + H * .28 : top + H * .72, spread = H * .22 * (1 - (j - 1) / last);
     return centre + ((idx + .5) / Math.max(1, n) - .5) * 2 * spread;
   };
-  const lines = [...rows].sort((a, b) => a.stage - b.stage).map((r, li) => {
-    const side = r.side === "bull" ? bull : bear, idx = side.indexOf(r);
-    const knots = [];
-    for (let j = 0; j <= Math.min(r.stage, last); j++) knots.push([colX[j], pos(r, j, idx, side.length)]);
-    if (r.stage === 0) knots.push([colX[1] * .55, top + H * (r.side === "bull" ? .45 : .55)]);
-    const pts = [];                                    // sample the curve once; animate the samples
-    for (let i = 1; i < knots.length; i++) {
-      const [x0, y0] = knots[i - 1], [x1, y1] = knots[i], mx = (x0 + x1) / 2;
-      const n = Math.max(8, Math.round((x1 - x0) / 6));
-      for (let k = i === 1 ? 0 : 1; k <= n; k++) {
-        const t = k / n, u = 1 - t;
-        pts.push([u*u*u*x0 + 3*u*u*t*mx + 3*u*t*t*mx + t*t*t*x1, u*u*u*y0 + 3*u*u*t*y0 + 3*u*t*t*y1 + t*t*t*y1]);
-      }
+  const curve = (pts, x1, y1) => {                           // bezier from the last point to (x1, y1)
+    const [xa, ya] = pts[pts.length - 1], mx = (xa + x1) / 2, n = Math.max(8, Math.round((x1 - xa) / 6));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n, u = 1 - t;
+      pts.push([u*u*u*xa + 3*u*u*t*mx + 3*u*t*t*mx + t*t*t*x1, u*u*u*ya + 3*u*u*t*ya + 3*u*t*t*y1 + t*t*t*y1]);
     }
-    return { pts, stage: r.stage, final: r.stage === last, symbol: r.symbol,
-             rgb: r.side === "bull" ? "34,211,138" : "240,67,93",
-             seed: (li * 0.6180339) % 1, speed: 0.00006 + (li % 7) * 0.000008, phase: li * 0.37 };
+  };
+  const lines = [...rows].sort((p, q) => p.stage - q.stage).map((r, li) => {
+    const side = r.side === "bull" ? bull : bear, idx = side.indexOf(r);
+    const path = [0, ...(r.path || [r.pct])];                // from the open (0%) through the day
+    const pts = [[x0, mid]];
+    path.slice(1).forEach((v, i) => {                        // straight segments, subdivided for the dots
+      const [xa, ya] = pts[pts.length - 1], xb = slot(i + 1), yb = py(v);
+      for (let k = 1; k <= 4; k++) pts.push([xa + (xb - xa) * k / 4, ya + (yb - ya) * k / 4]);
+    });
+    const end = pts[pts.length - 1];
+    if (end[0] < pathEnd) curve(pts, pathEnd, end[1]);       // day not over yet: carry on to the filters
+    const pathLen = pts.length;
+    for (let j = 2; j <= Math.min(r.stage, last); j++) curve(pts, colX[j], pos(r, j, idx, side.length));
+    return { pts, pathLen, stage: r.stage, final: r.stage === last, symbol: r.symbol, row: r,
+             rgb: r.pct >= 0 ? "34,211,138" : "240,67,93", side: r.side === "bull" ? "34,211,138" : "240,67,93",
+             seed: (li * 0.6180339) % 1, speed: 0.00006 + (li % 7) * 0.000008 };
   });
-  return { lines, colX, top, bottom, small, last, waveEnd: colX[2] || w / 2 };
+  return { lines, colX, top, bottom, mid, small, last, pathEnd, x0 };
 }
 
+let flowHover = null, flowPinned = false;
 function flowFrame(t) {
   requestAnimationFrame(flowFrame);
   if (mode !== "pk" || !flowData || document.hidden) return;
@@ -668,22 +688,22 @@ function flowFrame(t) {
   flowFrame.prev = t;
   const cv = $("flow"), r = cv.getBoundingClientRect();
   if (!r.width) return;
-  const key = `${r.width}x${r.height}|${flowData.flow.length}|${flowData.funnel.map(s => s.count)}|${(flowData.picks || []).map(c => c.symbol)}`;
-  if (key !== flowKey) { flowModel = flowData.funnel.length ? buildFlow(flowData, r.width, r.height) : null; flowKey = key; }
+  const key = `${r.width}x${r.height}|${flowData.flow.length}|${flowData.funnel.map(s => s.count)}|${(flowData.picks || []).map(c => c.symbol)}|${flowData.flow.map(f => f.pct).join()}`;
+  if (key !== flowKey) {
+    flowModel = flowData.funnel.length ? buildFlow(flowData, r.width, r.height) : null; flowKey = key;
+    if (flowHover && flowModel) flowHover = flowModel.lines.find(L => L.symbol === flowHover.symbol) || null;
+  }
   const [ctx, w, h] = setupCanvas(cv);
   ctx.clearRect(0, 0, w, h);
   const m = flowModel, st = flowData.funnel;
   if (!m) { ctx.fillStyle = css("--muted"); ctx.font = "14px system-ui"; ctx.fillText("Waiting for the first scan…", 20, 40); return; }
-  const scanning = state && state.status === "scanning";
-  const amp = scanning ? 9 : 5;
-  const wy = (x, y, ph) => {                           // ripple that dies out after the first filters
-    const k = Math.max(0, 1 - x / m.waveEnd);
-    return y + Math.sin(t * 0.0016 + ph + x * 0.013) * amp * k * k;
-  };
+  const scanning = state && state.status === "scanning", hov = flowHover, dim = hov ? .22 : 1;
 
-  // filter columns
+  // filter columns and the 0% line (yesterday's close)
   ctx.strokeStyle = "#232a35"; ctx.lineWidth = 1;
-  m.colX.forEach(x => { ctx.beginPath(); ctx.moveTo(x, m.top - 6); ctx.lineTo(x, m.bottom); ctx.stroke(); });
+  m.colX.slice(1).forEach(x => { ctx.beginPath(); ctx.moveTo(x, m.top - 6); ctx.lineTo(x, m.bottom); ctx.stroke(); });
+  ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.beginPath(); ctx.moveTo(m.x0, m.mid); ctx.lineTo(m.pathEnd, m.mid); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.35)"; ctx.font = `600 10px ${css("--mono")}`; ctx.fillText("0%", m.x0 + 2, m.mid - 4);
 
   // scan beam: fast while scanning, a slow pass every few seconds otherwise
   const period = scanning ? 1800 : 7000, bx = ((t % period) / period) * (w + 200) - 100;
@@ -692,37 +712,50 @@ function flowFrame(t) {
   ctx.fillStyle = g; ctx.fillRect(bx - 80, m.top - 6, 90, m.bottom - m.top + 6);
   ctx.fillStyle = `rgba(150,220,255,${scanning ? .55 : .2})`; ctx.fillRect(bx + 9, m.top - 6, 1.5, m.bottom - m.top + 6);
 
-  // lines
-  for (const L of m.lines) {
-    ctx.strokeStyle = `rgba(${L.rgb},${L.final ? 1 : .09 + .6 * Math.pow(L.stage / m.last, 1.6)})`;
-    ctx.lineWidth = L.final ? 2 : 1;
-    ctx.beginPath();
-    L.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, wy(x, y, L.phase)) : ctx.moveTo(x, wy(x, y, L.phase)));
+  // lines: the day's path in green/red by today's move, then the filters in the setup's colour
+  const stroke = (L, a, width) => {
+    ctx.lineWidth = width;
+    ctx.strokeStyle = `rgba(${L.rgb},${a})`; ctx.beginPath();
+    for (let i = 0; i < L.pathLen; i++) i ? ctx.lineTo(...L.pts[i]) : ctx.moveTo(...L.pts[i]);
     ctx.stroke();
+    if (L.pts.length > L.pathLen) {
+      ctx.strokeStyle = `rgba(${L.side},${a})`; ctx.beginPath(); ctx.moveTo(...L.pts[L.pathLen - 1]);
+      for (let i = L.pathLen; i < L.pts.length; i++) ctx.lineTo(...L.pts[i]);
+      ctx.stroke();
+    }
+  };
+  for (const L of m.lines) {
+    if (L === hov) continue;
+    stroke(L, (L.final ? 1 : .10 + .55 * Math.pow(L.stage / m.last, 1.6)) * dim, L.final ? 2 : 1);
   }
+  if (hov) { stroke(hov, .25, 7); stroke(hov, 1, 2.5); }
   ctx.lineWidth = 1;
 
   // dots streaming along the lines; filtered lines fade out at their end
   for (const L of m.lines) {
     const n = L.pts.length, f = (t * L.speed * (scanning ? 2.2 : 1) + L.seed) % 1;
-    const [x, y0] = L.pts[Math.floor(f * (n - 1))], y = wy(x, y0, L.phase);
-    const fade = L.final ? 1 : Math.max(0, 1 - f * f);
-    const big = L.final ? 3 : L.stage >= 3 ? 2 : 1.3;
-    if (L.final) { ctx.fillStyle = `rgba(${L.rgb},.25)`; ctx.beginPath(); ctx.arc(x, y, big * 2.6, 0, 7); ctx.fill(); }
-    ctx.fillStyle = `rgba(${L.rgb},${(.35 + .65 * (L.stage / m.last)) * fade})`;
+    const i = Math.floor(f * (n - 1)), [x, y] = L.pts[i], rgb = i < L.pathLen ? L.rgb : L.side;
+    const fade = (L.final ? 1 : Math.max(0, 1 - f * f)) * (L === hov ? 1 : dim);
+    const big = L.final || L === hov ? 3 : L.stage >= 3 ? 2 : 1.3;
+    if (L.final || L === hov) { ctx.fillStyle = `rgba(${rgb},${.25 * fade})`; ctx.beginPath(); ctx.arc(x, y, big * 2.6, 0, 7); ctx.fill(); }
+    ctx.fillStyle = `rgba(${rgb},${(.35 + .65 * (L.stage / m.last)) * fade})`;
     ctx.beginPath(); ctx.arc(x, y, big, 0, 7); ctx.fill();
+  }
+  if (hov) {                                           // marker where the hovered stock is now
+    const [x, y] = hov.pts[hov.pathLen - 1];
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.stroke(); ctx.lineWidth = 1;
   }
 
   // picks: pulsing nodes and names on top
   for (const L of m.lines) {
     if (!L.final) continue;
     const [x, y] = L.pts[L.pts.length - 1], p = ((t / 1400) + L.seed) % 1;
-    ctx.strokeStyle = `rgba(${L.rgb},${1 - p})`; ctx.beginPath(); ctx.arc(x, y, 4 + p * 10, 0, 7); ctx.stroke();
-    ctx.fillStyle = `rgb(${L.rgb})`; ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill();
+    ctx.strokeStyle = `rgba(${L.side},${1 - p})`; ctx.beginPath(); ctx.arc(x, y, 4 + p * 10, 0, 7); ctx.stroke();
+    ctx.fillStyle = `rgb(${L.side})`; ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill();
     ctx.font = `700 12px ${css("--mono")}`; ctx.textAlign = "left";
     const tw = ctx.measureText(L.symbol).width;
     ctx.fillStyle = "rgba(11,14,19,.85)"; ctx.fillRect(x + 8, y - 9, tw + 8, 17);
-    ctx.fillStyle = `rgb(${L.rgb})`; ctx.fillText(L.symbol, x + 12, y + 4);
+    ctx.fillStyle = `rgb(${L.side})`; ctx.fillText(L.symbol, x + 12, y + 4);
   }
 
   // stage headings with counts ticking up to the latest numbers
@@ -741,6 +774,55 @@ function flowFrame(t) {
     ctx.fillText(`● SCANNING ${state.scanned}/${state.total}`, 14, h - 2);
   }
 }
+
+// Hover (or tap) a line: highlight it and show what it is and how far it got.
+function flowPick(ev) {
+  if (!flowModel) return null;
+  const r = $("flow").getBoundingClientRect(), p = ev.touches ? ev.touches[0] : ev;
+  const x = p.clientX - r.left, y = p.clientY - r.top;
+  let best = null, bd = 10 * 10;
+  for (const L of flowModel.lines) {
+    for (let i = 0; i < L.pts.length; i += 2) {
+      const dx = L.pts[i][0] - x, dy = L.pts[i][1] - y, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = L; }
+    }
+  }
+  return best ? { L: best, x, y } : null;
+}
+function showFlowTip(hit) {
+  const tip = $("flowTip");
+  flowHover = hit ? hit.L : null;
+  if (!hit) { tip.hidden = true; return; }
+  const f = hit.L.row, st = flowData.funnel, reached = st[Math.min(f.stage, st.length - 1)].name;
+  const pickIdx = (flowData.picks || []).findIndex(c => c.symbol === f.symbol);
+  const up = f.pct >= 0;
+  tip.innerHTML = `<div class="tt"><b>${f.symbol}</b><span style="color:${up ? css("--bull") : css("--bear")}">${pct(f.pct)}</span></div>
+    <div class="tr"><span>Price</span><b>${f.price != null ? fmt(f.price) : "—"}</b></div>
+    <div class="tr"><span>Sector</span><b>${f.sector || "—"}</b></div>
+    <div class="tr"><span>Setup</span><b>${f.side === "bull" ? "Bullish" : "Bearish"}</b></div>
+    ${f.oi ? `<div class="tr"><span>OI</span><b>${f.oi}</b></div>` : ""}
+    <div class="tr"><span>Gate</span><b>${pickIdx >= 0 ? `Top pick #${pickIdx + 1}` : f.stage + 1 < st.length ? `stopped at ${st[f.stage + 1].name}` : reached}</b></div>
+    ${pickIdx >= 0 ? `<div class="hint">Click to open the trade</div>` : ""}`;
+  tip.hidden = false;
+  const box = $("flowPanel").getBoundingClientRect(), cr = $("flow").getBoundingClientRect();
+  const left = cr.left - box.left + hit.x + 16, topY = cr.top - box.top + hit.y - 20;
+  tip.style.left = Math.min(left, box.width - tip.offsetWidth - 8) + "px";
+  tip.style.top = Math.max(6, Math.min(topY, box.height - tip.offsetHeight - 6)) + "px";
+}
+let lastTouch = 0;                                     // phones send fake mouse events after a tap
+const touchy = () => Date.now() - lastTouch < 1000;
+$("flow").addEventListener("mousemove", e => { if (!touchy()) showFlowTip(flowPick(e)); });
+$("flow").addEventListener("mouseleave", () => { if (!touchy()) showFlowTip(null); });
+$("flow").addEventListener("touchstart", e => { lastTouch = Date.now(); showFlowTip(flowPick(e)); }, { passive: true });
+document.addEventListener("touchstart", e => { if (e.target !== $("flow")) showFlowTip(null); }, { passive: true });
+$("flow").addEventListener("click", e => {
+  const hit = touchy() ? (flowHover && { L: flowHover }) : flowPick(e);
+  if (!touchy()) showFlowTip(hit);
+  if (!hit) return;
+  const c = (flowData.picks || []).find(p => p.symbol === hit.L.symbol);
+  if (c) { selected = [c.symbol, c.side]; highlightPicks(); loadChart();
+           document.querySelector(`.pick[data-sym="${CSS.escape(c.symbol)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }
+});
 requestAnimationFrame(flowFrame);
 
 function drawPick(d, ctx, w, h) {
