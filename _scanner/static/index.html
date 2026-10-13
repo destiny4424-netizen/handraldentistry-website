@@ -180,6 +180,39 @@
   .row .card { transition: transform .25s, border-color .15s; }
   .row.enter .card, .pick.enter { animation: rise .5s ease-out both; }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  .verdict { font-weight: 700; font-size: 15px; padding: 10px 14px; border-radius: 12px; margin-bottom: 14px;
+             background: #1a2029; border: 1px solid var(--line); }
+  .verdict.Bullish { background: rgba(34,211,138,.10); border-color: rgba(34,211,138,.35); color: #b8f5da; }
+  .verdict.Bearish { background: rgba(240,67,93,.10); border-color: rgba(240,67,93,.35); color: #ffc2cc; }
+  .mkt { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .idx { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+  .idx .h { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+  .idx .n { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .04em; }
+  .idx .v { font: 700 17px var(--mono); margin-top: 2px; }
+  .idx .why { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+  .idx canvas { width: 100%; height: 38px; display: block; margin-top: 6px; }
+  .trend { font: 800 11px var(--mono); padding: 2px 7px; border-radius: 6px; }
+  .trend.Bullish { background: rgba(34,211,138,.18); color: var(--bull); }
+  .trend.Bearish { background: rgba(240,67,93,.18); color: #ff8193; }
+  .trend.Sideways, .trend.Normal { background: #262d38; color: var(--muted); }
+  .trend.High { background: rgba(240,67,93,.18); color: #ff8193; } .trend.Low { background: rgba(34,211,138,.18); color: var(--bull); }
+  .bbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 10px; background: #262d38; }
+  .bbar b { display: block; height: 100%; }
+  .movers { margin-top: 14px; }
+  .mv { display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; align-items: center; padding: 6px 2px;
+        border-bottom: 1px solid #1f2630; font-size: 13px; }
+  .mv .s { font-weight: 800; } .mv small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .mv .p { font: 600 12px var(--mono); color: var(--muted); } .mv .c { font: 700 13px var(--mono); }
+  .rv { font: 700 10px var(--mono); padding: 1px 6px; border-radius: 5px; background: #262d38; color: var(--muted); }
+  .rv.hot { background: rgba(245,185,30,.18); color: var(--liq); }
+  .tips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .tips span { font-size: 12px; padding: 6px 10px; border-radius: 8px; background: #1a2029; color: var(--muted); }
+  .tips span.warn { background: rgba(245,185,30,.12); color: var(--liq); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chips span { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,.3); color: var(--muted); }
+  .chips .ok { color: var(--bull); } .chips .bad { color: var(--liq); }
+  #niftyChip.Bullish { color: var(--bull); } #niftyChip.Bearish { color: #ff8193; }
+  @media (max-width: 900px) { .mkt { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   footer { grid-column: 1 / -1; color: var(--muted); font-size: 12px; text-align: center; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; }
@@ -198,6 +231,7 @@
   <span class="chip" id="tf"></span>
   <span class="chip demo" id="demo" hidden>DEMO DATA</span>
   <span class="chip" id="auto"></span>
+  <span class="chip" id="niftyChip" hidden></span>
   <span class="spacer"></span>
   <button id="keysBtn" class="ghost">Connect Dhan</button>
   <button id="scan">Scan now</button>
@@ -258,6 +292,16 @@
     <button class="tab alerts" id="alertsBtn" title="Pop-up and sound when a new breakout appears">🔔 Breakout alerts: off</button>
   </nav>
 
+  <section class="panel full" id="marketPanel" hidden>
+    <div class="verdict" id="mVerdict"></div>
+    <div class="mkt"><div class="idx" id="mNifty"></div><div class="idx" id="mBank"></div>
+      <div class="idx" id="mVix"></div><div class="idx" id="mBreadth"></div></div>
+    <div class="cols movers">
+      <div><h2 class="bull-t">▲ Top gainers · F&amp;O</h2><div id="mGain"></div></div>
+      <div><h2 class="bear-t">▼ Top losers · F&amp;O</h2><div id="mLose"></div></div>
+    </div>
+    <div class="tips" id="mTips"></div>
+  </section>
   <section class="panel full" id="flowPanel" hidden>
     <canvas id="flow"></canvas>
     <div class="flowtip" id="flowTip" hidden></div>
@@ -338,7 +382,8 @@ function render() {
   $("tf").textContent = mode === "ob" ? s.timeframe + " min" : s.breakout_tf + " min";
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
-  ["flowPanel", "sectorPanel", "picksPanel"].forEach(id => $(id).hidden = mode !== "pk");
+  ["marketPanel", "flowPanel", "sectorPanel", "picksPanel"].forEach(id => $(id).hidden = mode !== "pk");
+  renderMarket(s.market);
   ["strengthPanel", "listsPanel"].forEach(id => $(id).hidden = mode === "pk");
   $("ver").textContent = s.version ? ` · Version ${s.version}` : "";
   $("auto").textContent = s.next_scan ? `Auto-scan every ${s.scan_every} min · next ${s.next_scan}` : `Auto-scan every ${s.scan_every} min`;
@@ -556,6 +601,75 @@ function drawChart() {
   ctx.fillStyle = css("--bg"); ctx.fillText(fmt(last.c), plotW + 6, ly + 4);
 }
 
+// ---------- Market context ----------
+function pickChips(c) {
+  const out = [];
+  if (c.market) out.push(c.market === "with" ? `<span class="ok">✓ WITH NIFTY</span>`
+                       : c.market === "against" ? `<span class="bad">⚠ AGAINST NIFTY</span>` : `<span>NIFTY SIDEWAYS</span>`);
+  if (c.vwap_ok != null) out.push(c.vwap_ok ? `<span class="ok">✓ ${c.side === "bull" ? "ABOVE" : "BELOW"} VWAP ${fmt(c.vwap)}</span>`
+                                            : `<span class="bad">⚠ ${c.side === "bull" ? "BELOW" : "ABOVE"} VWAP ${fmt(c.vwap)}</span>`);
+  if (c.rvol != null) out.push(`<span class="${c.rvol >= 1.5 ? "ok" : ""}">RVOL ${c.rvol}×</span>`);
+  if (c.rs != null) out.push(`<span class="${(c.side === "bull" ? c.rs > 0 : c.rs < 0) ? "ok" : "bad"}">VS NIFTY ${c.rs >= 0 ? "+" : ""}${c.rs}%</span>`);
+  return out.join("");
+}
+function idxCard(el, v, label) {
+  if (!v) { el.innerHTML = `<div class="n">${label}</div><div class="why">Not available yet</div>`; return; }
+  el.innerHTML = `<div class="h"><span class="n">${v.name}</span><span class="trend ${v.trend}">${v.trend.toUpperCase()}</span></div>
+    <div class="v" style="color:${v.pct >= 0 ? css("--bull") : css("--bear")}">${fmt(v.price)} <small style="font-size:12px">${pct(v.pct)}</small></div>
+    <canvas></canvas><div class="why">${v.why.slice(0, 4).join(" · ")}</div>`;
+  const [ctx, w, h] = setupCanvas(el.querySelector("canvas")), p = v.spark;
+  if (p.length < 2) return;
+  const lo = Math.min(...p, v.or_low, v.prev_close), hi = Math.max(...p, v.or_high, v.prev_close);
+  const y = q => 2 + (hi - q) / ((hi - lo) || 1) * (h - 4), x = i => i / Math.max(1, p.length - 1) * w;
+  ctx.fillStyle = "rgba(139,124,246,.14)"; ctx.fillRect(0, y(v.or_high), w, y(v.or_low) - y(v.or_high));   // first 15 min
+  ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(255,255,255,.3)";
+  ctx.beginPath(); ctx.moveTo(0, y(v.prev_close)); ctx.lineTo(w, y(v.prev_close)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = v.pct >= 0 ? css("--bull") : css("--bear"); ctx.lineWidth = 1.5; ctx.beginPath();
+  p.forEach((q, i) => i ? ctx.lineTo(x(i), y(q)) : ctx.moveTo(x(i), y(q))); ctx.stroke(); ctx.lineWidth = 1;
+}
+function moverRows(list, up) {
+  return (list || []).map(r => `<div class="mv"><span class="s">${r.symbol}<small>${r.sector || ""}</small></span>
+    <span class="p">${fmt(r.price)}</span>${r.rvol != null ? `<span class="rv ${r.rvol >= 2 ? "hot" : ""}">${r.rvol}× vol</span>` : "<span></span>"}
+    <span class="c" style="color:${up ? css("--bull") : css("--bear")}">${pct(r.pct)}</span></div>`).join("")
+    || `<div class="empty">Waiting for scan…</div>`;
+}
+function renderMarket(m) {
+  const chip = $("niftyChip");
+  if (m && m.nifty) {
+    chip.hidden = false; chip.className = "chip " + m.nifty.trend;
+    chip.textContent = `NIFTY ${m.nifty.trend === "Bullish" ? "▲" : m.nifty.trend === "Bearish" ? "▼" : "◆"} ${m.nifty.trend} ${pct(m.nifty.pct)}`;
+  } else chip.hidden = true;
+  if (mode !== "pk") return;
+  $("mVerdict").className = "verdict " + (m && m.nifty ? m.nifty.trend : "");
+  $("mVerdict").textContent = m ? (m.verdict || "Market direction appears after the first scan.") : "Market direction appears after the first scan.";
+  idxCard($("mNifty"), m && m.nifty, "NIFTY 50");
+  idxCard($("mBank"), m && m.bank, "BANK NIFTY");
+  const v = m && m.vix;
+  $("mVix").innerHTML = v ? `<div class="h"><span class="n">INDIA VIX</span><span class="trend ${v.level}">${v.level.toUpperCase()}</span></div>
+      <div class="v">${fmt(v.price)} <small style="font-size:12px;color:${v.pct >= 0 ? css("--bear") : css("--bull")}">${pct(v.pct)}</small></div>
+      <div class="why">${v.avg20 ? `20-day average ${fmt(v.avg20)}. ` : ""}${v.note}</div>`
+    : `<div class="n">INDIA VIX</div><div class="why">Not available yet</div>`;
+  const b = m && m.breadth;
+  $("mBreadth").innerHTML = b ? `<div class="h"><span class="n">BREADTH · F&amp;O</span><span class="trend ${b.advances > b.declines * 1.5 ? "Bullish" : b.declines > b.advances * 1.5 ? "Bearish" : "Sideways"}">${b.ratio != null ? b.ratio + " A/D" : ""}</span></div>
+      <div class="v"><span style="color:${css("--bull")}">${b.advances}↑</span> <span style="color:${css("--bear")}">${b.declines}↓</span></div>
+      <div class="bbar"><b style="width:${100 * b.advances / Math.max(1, b.advances + b.declines + b.unchanged)}%;background:${css("--bull")}"></b>
+      <b style="width:${100 * b.unchanged / Math.max(1, b.advances + b.declines + b.unchanged)}%;background:#4a5566"></b>
+      <b style="flex:1;background:${css("--bear")}"></b></div>
+      <div class="why">Stocks up vs down today. Strong days have most stocks moving the same way as NIFTY.</div>`
+    : `<div class="n">BREADTH</div><div class="why">Not available yet</div>`;
+  $("mGain").innerHTML = moverRows(m && m.movers.gainers, true);
+  $("mLose").innerHTML = moverRows(m && m.movers.losers, false);
+  // time-of-day and expiry reminders (IST)
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })), hm = now.getHours() * 60 + now.getMinutes();
+  const tips = [];
+  if (m && m.expiry_today) tips.push(`<span class="warn">⚡ NIFTY weekly expiry today: expect sharp swings, especially after 1 PM</span>`);
+  else if (m && m.expiry) tips.push(`<span>Next NIFTY expiry: ${m.expiry}</span>`);
+  if (hm >= 555 && hm < 570) tips.push(`<span class="warn">First 15 minutes: let the opening range form before trading</span>`);
+  else if (hm >= 900 && hm < 930) tips.push(`<span class="warn">After 3:00 PM: no new entries, manage open trades and exit before close</span>`);
+  tips.push(`<span>Risk 1–2% of capital per trade at most, always with the stop-loss</span>`);
+  $("mTips").innerHTML = tips.join("");
+}
+
 // ---------- Top picks ----------
 function renderPicks() {
   const pk = state.picks || { funnel: [], flow: [], sectors: [], picks: [] };
@@ -591,6 +705,7 @@ function renderPicks() {
           ${c.sources.join(" + ")} · <span class="held">✓ held the level ${hm(p.held_at)}</span><br>
           <span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since}</div>
           <canvas data-spark="${i}"></canvas></div>
+        <div class="chips">${pickChips(c)}</div>
         <div class="nums">
           <div>${bull ? "BUY ABOVE" : "SELL BELOW"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
           <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
