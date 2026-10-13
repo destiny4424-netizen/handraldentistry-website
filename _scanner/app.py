@@ -37,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
+VERSION = "13 Oct · hover fix"                         # shown at the bottom of the page
 
 
 def load_env():
@@ -306,6 +307,7 @@ def demo_daily(symbol, intraday):
 STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO,
          "timeframe": TIMEFRAME, "scanned": 0, "total": 0, "last_scan": None,
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
+         "version": VERSION,
          "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}

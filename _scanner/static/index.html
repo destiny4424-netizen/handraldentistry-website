@@ -300,7 +300,8 @@
     </div>
   </section>
 
-  <footer>Order blocks, breakouts and scores are computed from price and volume only. They are not trading advice.</footer>
+  <footer>Order blocks, breakouts and scores are computed from price and volume only. They are not trading advice.
+    <span id="ver"></span></footer>
 </main>
 
 <script>
@@ -339,6 +340,7 @@ function render() {
   $("cntPk").textContent = pk.picks.length;
   ["flowPanel", "sectorPanel", "picksPanel"].forEach(id => $(id).hidden = mode !== "pk");
   ["strengthPanel", "listsPanel"].forEach(id => $(id).hidden = mode === "pk");
+  $("ver").textContent = s.version ? ` · Version ${s.version}` : "";
   $("auto").textContent = s.next_scan ? `Auto-scan every ${s.scan_every} min · next ${s.next_scan}` : `Auto-scan every ${s.scan_every} min`;
   const bo = s.breakouts || { bullish: [], bearish: [] };
   $("cntOb").textContent = s.bullish.length + s.bearish.length;
@@ -772,6 +774,11 @@ function flowFrame(t) {
   if (scanning) {
     ctx.fillStyle = css("--liq"); ctx.font = `700 11px ${css("--mono")}`;
     ctx.fillText(`● SCANNING ${state.scanned}/${state.total}`, 14, h - 2);
+  } else if (!hov) {
+    ctx.fillStyle = "rgba(255,255,255,.4)"; ctx.font = "600 11px system-ui"; ctx.textAlign = "right";
+    ctx.fillText(matchMedia("(hover: hover)").matches ? "Point at any line to see that stock" : "Tap any line to see that stock",
+                 m.pathEnd - 6, h - 2);
+    ctx.textAlign = "left";
   }
 }
 
@@ -780,10 +787,16 @@ function flowPick(ev) {
   if (!flowModel) return null;
   const r = $("flow").getBoundingClientRect(), p = ev.touches ? ev.touches[0] : ev;
   const x = p.clientX - r.left, y = p.clientY - r.top;
-  let best = null, bd = 10 * 10;
+  const reach = ev.touches ? 24 : 16;                  // how close (px) counts as "on" a line
+  let best = null, bd = reach * reach;
   for (const L of flowModel.lines) {
-    for (let i = 0; i < L.pts.length; i += 2) {
-      const dx = L.pts[i][0] - x, dy = L.pts[i][1] - y, d = dx * dx + dy * dy;
+    const bonus = L.final ? 30 : L.stage * 3;          // when lines overlap, prefer the ones that got further
+    for (let i = 1; i < L.pts.length; i++) {
+      const [ax, ay] = L.pts[i - 1], [bx, by] = L.pts[i];
+      if (x < Math.min(ax, bx) - reach || x > Math.max(ax, bx) + reach) continue;
+      const vx = bx - ax, vy = by - ay, len = vx * vx + vy * vy || 1;
+      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / len));
+      const dx = ax + t * vx - x, dy = ay + t * vy - y, d = dx * dx + dy * dy - bonus;
       if (d < bd) { bd = d; best = L; }
     }
   }
