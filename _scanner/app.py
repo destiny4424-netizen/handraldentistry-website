@@ -615,6 +615,12 @@ def token_info():
 FAILED_LOGINS = {}                                     # ip -> (count, locked until)
 
 
+def loose(password):
+    """Forgiving form of a password for comparing: phones capitalise the first letter,
+    add spaces when pasting and change dashes, so those don't count."""
+    return "".join(ch for ch in password.lower() if ch.isalnum())
+
+
 def hash_pin(pin, salt):
     return hashlib.pbkdf2_hmac("sha256", pin.encode(), bytes.fromhex(salt), 120_000).hex()
 
@@ -702,7 +708,9 @@ button{margin-top:14px;width:100%;padding:13px;border:0;border-radius:12px;font:
 background:linear-gradient(135deg,#7b6cf6,#a08bff)}.err{color:#ffb3bf;font-size:14px;min-height:20px;margin-top:10px}</style>"""
 LOGIN_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>OrderBlock Scanner</title>{PAGE_STYLE}</head>
 <body><form class="box" id="f"><h1>OrderBlock Scanner</h1><p>{"Enter your scanner password." if CLOUD else "Enter the phone PIN you set on your PC."}</p>
-<input id="pin" type="password" {'autocomplete="current-password" style="font-size:18px;letter-spacing:.05em"' if CLOUD else 'inputmode="numeric" autocomplete="current-password" maxlength="8"'} autofocus>
+<input id="pin" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" {'autocomplete="current-password" style="font-size:18px;letter-spacing:.05em"' if CLOUD else 'inputmode="numeric" autocomplete="current-password" maxlength="8"'} autofocus>
+<label style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;font-size:14px;color:#8a94a3">
+<input type="checkbox" onchange="pin.type=this.checked?'text':'password'" style="width:18px;height:18px">Show password</label>
 <button>Open</button><div class="err" id="e"></div></form>
 <script>f.onsubmit=async e=>{{e.preventDefault();const r=await fetch('/api/login',{{method:'POST',
 headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{pin:pin.value}})}});
@@ -916,7 +924,8 @@ class Handler(BaseHTTPRequestHandler):
         if CLOUD:
             if not PASSWORD:
                 return self.send(403, {"error": "No password is set on the server."})
-            ok = hmac.compare_digest(hashlib.sha256(given.encode()).digest(), hashlib.sha256(PASSWORD.encode()).digest())
+            ok = hmac.compare_digest(hashlib.sha256(loose(given).encode()).digest(),
+                                     hashlib.sha256(loose(PASSWORD).encode()).digest())
         else:
             if not (SETTINGS.get("phone") and SETTINGS.get("pin_hash")):
                 return self.send(403, {"error": "Phone access is off on the PC."})
