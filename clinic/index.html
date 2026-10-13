@@ -1951,6 +1951,98 @@ function renderTransactions(){
   document.getElementById('txList').innerHTML=list.map(t=>`<div class="tx-row"><div style="width:34px;height:34px;border-radius:9px;background:${t.type==='in'?'#d1fae5':'#fee2e2'};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${t.type==='in'?'💚':'🔴'}</div><div style="flex:1"><div class="row-name">${t.description}</div><div class="row-sub">${t.category} · ${fmtDate(t.date)}</div></div><div class="${t.type==='in'?'tx-amount-in':'tx-amount-out'}">₹${Number(t.amount).toLocaleString('en-IN')}</div></div>`).join('');
 }
 
+// ── REPORTS ──────────────────────────────────────────────────────────────
+function _reportMonths(){
+  const set=new Set();
+  const now=new Date();
+  set.add(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`);
+  [...transactions,...invoices,...appointments].forEach(x=>{if(x&&x.date) set.add(x.date.slice(0,7));});
+  return [...set].sort().reverse();
+}
+function renderReports(){
+  const monthSel=document.getElementById('reportMonth');
+  if(monthSel && !monthSel.options.length){
+    const months=_reportMonths();
+    monthSel.innerHTML='<option value="all">📅 All Time</option>'+months.map(m=>{
+      const d=new Date(m+'-01T00:00:00');
+      const label=d.toLocaleDateString('en-IN',{month:'long',year:'numeric'});
+      return `<option value="${m}">${label}</option>`;
+    }).join('');
+  }
+  const month=monthSel?monthSel.value:'all';
+  const clinicSel=document.getElementById('reportClinic');
+  const clinic=clinicSel?clinicSel.value:'all';
+
+  const inMonth=d=>month==='all'||(d||'').startsWith(month);
+  const inClinic=c=>clinic==='all'||(c||'bagalkot')===clinic;
+
+  const txs=transactions.filter(t=>inMonth(t.date)&&inClinic(t.clinic));
+  const invs=invoices.filter(i=>inMonth(i.date)&&inClinic(i.clinic));
+  const appts=appointments.filter(a=>inMonth(a.date)&&inClinic(a.clinic));
+  const pats=patients.filter(p=>inMonth(p.date)&&inClinic(p.clinic));
+
+  const cashIn=txs.filter(t=>t.type==='in').reduce((s,t)=>s+Number(t.amount),0);
+  const cashOut=txs.filter(t=>t.type==='out').reduce((s,t)=>s+Number(t.amount),0);
+  const billed=invs.reduce((s,i)=>s+Number(i.total),0);
+  const completedAppts=appts.filter(a=>a.status==='completed').length;
+  const confirmedAppts=appts.filter(a=>a.status==='confirmed').length;
+
+  const byClinic={};
+  Object.keys(CLINICS).forEach(c=>{byClinic[c]={in:0,out:0,appts:0,patients:0};});
+  txs.forEach(t=>{const c=t.clinic||'bagalkot';if(byClinic[c]) byClinic[c][t.type==='in'?'in':'out']+=Number(t.amount);});
+  appts.forEach(a=>{const c=a.clinic||'bagalkot';if(byClinic[c]) byClinic[c].appts++;});
+  pats.forEach(p=>{const c=p.clinic||'bagalkot';if(byClinic[c]) byClinic[c].patients++;});
+
+  let html=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+    <div class="card" style="padding:14px;text-align:center"><div style="font-size:11px;color:var(--m);font-weight:600">CASH IN</div><div style="font-size:20px;font-weight:800;color:#065f46">₹${cashIn.toLocaleString('en-IN')}</div></div>
+    <div class="card" style="padding:14px;text-align:center"><div style="font-size:11px;color:var(--m);font-weight:600">CASH OUT</div><div style="font-size:20px;font-weight:800;color:#991b1b">₹${cashOut.toLocaleString('en-IN')}</div></div>
+    <div class="card" style="padding:14px;text-align:center"><div style="font-size:11px;color:var(--m);font-weight:600">NET</div><div style="font-size:20px;font-weight:800;color:#1e40af">₹${(cashIn-cashOut).toLocaleString('en-IN')}</div></div>
+    <div class="card" style="padding:14px;text-align:center"><div style="font-size:11px;color:var(--m);font-weight:600">BILLED</div><div style="font-size:20px;font-weight:800;color:var(--g)">₹${billed.toLocaleString('en-IN')}</div></div>
+  </div>`;
+  html+=`<div class="card" style="margin-bottom:14px"><div class="card-header"><span class="card-title">Appointments & Patients</span></div><div style="padding:14px;display:flex;gap:6px">
+    <div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:800">${appts.length}</div><div style="font-size:10px;color:var(--m)">Total Appts</div></div>
+    <div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:800;color:#065f46">${completedAppts}</div><div style="font-size:10px;color:var(--m)">Completed</div></div>
+    <div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:800;color:#1e40af">${confirmedAppts}</div><div style="font-size:10px;color:var(--m)">Confirmed</div></div>
+    <div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:800;color:var(--g)">${pats.length}</div><div style="font-size:10px;color:var(--m)">New Patients</div></div>
+  </div></div>`;
+
+  if(clinic==='all'){
+    html+='<div class="card"><div class="card-header"><span class="card-title">By Clinic</span></div>';
+    Object.keys(CLINICS).forEach(c=>{
+      const b=byClinic[c];
+      html+=`<div class="row"><div style="flex:1"><div class="row-name">${CLINICS[c]}</div><div class="row-sub">${b.appts} appts · ${b.patients} new patients</div></div><div style="text-align:right"><div style="font-weight:700;color:#065f46">₹${b.in.toLocaleString('en-IN')} in</div><div style="font-size:11px;color:var(--m)">₹${b.out.toLocaleString('en-IN')} out</div></div></div>`;
+    });
+    html+='</div>';
+  }
+
+  if(!txs.length && !invs.length && !appts.length){
+    html+='<div class="empty"><div class="empty-icon">📊</div>No data for this period.</div>';
+  }
+
+  const el=document.getElementById('reportContent');
+  if(el) el.innerHTML=html;
+}
+function exportReport(){
+  const monthSel=document.getElementById('reportMonth');
+  const month=monthSel?monthSel.value:'all';
+  const clinicSel=document.getElementById('reportClinic');
+  const clinic=clinicSel?clinicSel.value:'all';
+  const inMonth=d=>month==='all'||(d||'').startsWith(month);
+  const inClinic=c=>clinic==='all'||(c||'bagalkot')===clinic;
+  const rows=[['Date','Clinic','Type','Category','Description','Amount']];
+  transactions.filter(t=>inMonth(t.date)&&inClinic(t.clinic)).sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{
+    rows.push([t.date,CLINICS[t.clinic||'bagalkot']||t.clinic,t.type,t.category||'',(t.description||'').replace(/,/g,';'),t.amount]);
+  });
+  if(rows.length===1){showToast('No transactions to export for this period');return;}
+  const csv=rows.map(r=>r.join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=`handral-report-${month}-${clinic}.csv`;a.click();
+  URL.revokeObjectURL(url);
+  showToast('✅ Report exported!');
+}
+
 // ── SETTINGS / STAFF ───────────────────────────────────────────────────────
 function renderStaffList(){document.getElementById('staffList').innerHTML=staff.map((s,i)=>`<div class="row"><div class="av" style="background:${AV_COLORS[i%AV_COLORS.length]}">${initials(s.name)}</div><div style="flex:1"><div class="row-name">${s.name}</div><div class="row-sub">${s.role}</div></div><button onclick="removeStaff('${String(s.id)}')" style="background:#fee2e2;border:none;border-radius:6px;color:#991b1b;cursor:pointer;padding:4px 8px;font-size:12px">Remove</button></div>`).join('');}
 function addStaff(){const name=document.getElementById('newStaffName').value.trim();const role=document.getElementById('newStaffRole').value.trim();if(!name)return;const newStaff={id:String(Date.now()),name,role:role||'Staff'};
@@ -1972,6 +2064,16 @@ function clearData(){if(!confirm('Delete ALL data? Cannot be undone.'))return;pa
 function sendWA(phone,name,date,time){const template=localStorage.getItem('hd_waTemplate')||'Dear {name}, your appointment at Handral Dentistry is on {date} at {time}. Please confirm. - Dr. Handral';const msg=template.replace('{name}',name||'').replace('{date}',fmtDate(date)||'').replace('{time}',fmtTime(time)||'');if(!phone){showToast('No phone number');return;}window.open(`https://wa.me/91${phone}?text=${encodeURIComponent(msg)}`,'_blank');}
 
 // ── Toast ──────────────────────────────────────────────────────────────────
+let _toastTimer=null;
+function showToast(msg){
+  const t=document.getElementById('toast');
+  if(!t) return;
+  t.textContent=msg;
+  t.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>t.classList.remove('show'),2200);
+}
+
 // ── SMART SCAN ─────────────────────────────────────────────────────────────
 let _scanB64=null, _scanEntries=[], _scanMode='opd', _scanClinic='bagalkot';
 
@@ -3517,6 +3619,15 @@ function _addPpApptForm(){
   f.innerHTML=h;
 }
 function _clearApptForm(){var f=document.getElementById('ppApptForm');if(f)f.innerHTML='';}
+function _toggleProfileApptForm(){
+  var existing=document.getElementById('ppApptForm');
+  if(existing && existing.innerHTML.trim()){existing.innerHTML='';return;}
+  _addPpApptForm();
+}
+function _profileSendWA(){
+  if(!_PP) return;
+  sendWA(_PP.phone,_PP.name);
+}
 function _savePpAppt(){
   var date=document.getElementById('ppappt_date').value;
   if(!date){showToast('Date required');return;}
@@ -3670,6 +3781,44 @@ function agentAddTyping(){
   div.innerHTML='🤖 Thinking...';chat.appendChild(div);chat.scrollTop=chat.scrollHeight;
 }
 function agentRemoveTyping(){var t=document.getElementById('agentTyping');if(t)t.remove();}
+
+function runDiagnostics(){
+  agentAddMsg('user','🔧 Run diagnostics & fix issues','');
+  agentAddTyping();
+  const issues=[];
+  let fixed=0;
+  if(!Array.isArray(patients)){patients=[];issues.push('Patients list was corrupted — reset.');fixed++;}
+  if(!Array.isArray(appointments)){appointments=[];issues.push('Appointments list was corrupted — reset.');fixed++;}
+  if(!Array.isArray(transactions)){transactions=[];issues.push('Transactions list was corrupted — reset.');fixed++;}
+  if(!Array.isArray(invoices)){invoices=[];issues.push('Invoices list was corrupted — reset.');fixed++;}
+
+  const seenIds=new Set();
+  patients.forEach(p=>{
+    if(!p.id){p.id='p'+Date.now()+Math.random();fixed++;}
+    if(seenIds.has(String(p.id))){p.id='p'+Date.now()+Math.random();fixed++;}
+    seenIds.add(String(p.id));
+    if(!p.clinic) p.clinic='bagalkot';
+  });
+  if(fixed) issues.push('Assigned missing/duplicate IDs for '+fixed+' patient record(s).');
+
+  const patientNames=new Set(patients.map(p=>p.name));
+  const orphanAppts=appointments.filter(a=>a.name&&!patientNames.has(a.name)).length;
+  if(orphanAppts) issues.push(orphanAppts+' appointment(s) reference a patient no longer in the list.');
+
+  try{localStorage.setItem('hd_diag_test','1');localStorage.removeItem('hd_diag_test');}
+  catch(e){issues.push('⚠️ Browser storage is unavailable — data will NOT be saved. Check private-browsing mode or site storage permissions.');}
+
+  if(fixed){save();updateStats();renderPatients();renderAppointments();}
+
+  agentRemoveTyping();
+  let html;
+  if(!issues.length){
+    html='✅ All good! Checked '+patients.length+' patients, '+appointments.length+' appointments, '+transactions.length+' transactions. No issues found.';
+  } else {
+    html='🔧 Diagnostics complete:<br><br>'+issues.map(i=>'• '+i).join('<br>');
+  }
+  agentAddMsg('assistant',html,'success');
+}
 
 async function runAgent(){
   if(!apiKey){agentAddMsg('assistant','⚠️ Add API key in ⚙️ Settings first.','error');return;}
@@ -3980,6 +4129,5 @@ function importAllData(e){
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
 </body>
 </html>
