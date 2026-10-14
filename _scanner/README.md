@@ -20,6 +20,13 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
   - The header shows NIFTY's direction on every tab.
   - Each pick card shows whether it is **with or against NIFTY**, above or below **VWAP**, its **relative volume**
     and its move **vs NIFTY** today.
+- **Today's trades:** every Top Pick is **locked in the moment it first appears**, with its entry, stop and
+  targets frozen. Later scans can bring new picks, but earlier ones never disappear. Each trade is followed
+  on 5-minute candles:
+  - Waiting for trigger → Triggered → T1 hit (half booked, stop moved to cost) → T2 hit, or SL hit
+  - Not triggered by 3 PM, or closed at 3:15 PM
+  - The result is in R (multiples of the risk), with a running total and win rate for the day
+  - Saved on the server, so it survives restarts
 - **Ranked lists:** the top 20 bullish and top 20 bearish stocks, strongest first.
 - **Strength map:** how many stocks are choppy and how many are strong, on each side.
 - **Chart:** recent candles with the order block zone, support, resistance and the liquidity level.

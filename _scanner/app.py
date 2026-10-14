@@ -33,12 +33,13 @@ import analysis
 import breakout
 import market
 import picks
+import trades
 
 HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "13 Oct · market panel"                         # shown at the bottom of the page
+VERSION = "14 Oct · today's trades"                         # shown at the bottom of the page
 
 
 def load_env():
@@ -319,13 +320,14 @@ def demo_daily(symbol, intraday):
 STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO,
          "timeframe": TIMEFRAME, "scanned": 0, "total": 0, "last_scan": None,
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
-         "version": VERSION, "market": None,
+         "version": VERSION, "market": None, "trades": {"rows": [], "summary": {}},
          "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
 CANDLES = {}
 BREAKOUTS = {}                                         # symbol -> (15m candles, setup, levels, result)
 PICKS = {}                                             # symbol -> pick (with its 5m candles)
+TRADES = trades.TradeBook(SETTINGS_DIR)                # today's locked-in picks, followed to the end
 PICK_SINCE = {}                                        # (day, symbol, side) -> first time it was picked
 DAILY = {}                                             # security id -> (IST day fetched, candles)
 LOCK = threading.Lock()
@@ -507,6 +509,11 @@ def scan_once():
             c["market"] = ("with" if nifty["trend"] == ("Bullish" if is_bull else "Bearish")
                            else "neutral" if nifty["trend"] == "Sideways" else "against")
             c["rs"] = round(r.get("pct", 0) - nifty["pct"], 2)   # strength vs NIFTY today
+    # Lock every new pick into today's trades and follow them all through the day's candles.
+    book_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
+    for c in top["picks"]:
+        c["locked_new"] = TRADES.record(c, book_now)
+    TRADES.update(candles_by, book_now)
     day = datetime.now(IST).date()
     for c in top["picks"]:
         key = (day, c["symbol"], c["side"])
@@ -536,6 +543,7 @@ def scan_once():
         PICKS.clear()
         PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"]})
         STATE.update(status="live", message="", scores=scores, breakouts=breakouts, picks=top, market=mkt,
+                     trades=TRADES.view(),
                      last_scan=datetime.now(IST).strftime("%H:%M"),
                      bullish=[row(s, "bull") for s in bull[:TOP_N]],
                      bearish=[row(s, "bear") for s in bear[:TOP_N]])
