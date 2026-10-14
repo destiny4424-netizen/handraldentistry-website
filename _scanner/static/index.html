@@ -213,6 +213,23 @@
   .chips .ok { color: var(--bull); } .chips .bad { color: var(--liq); }
   #niftyChip.Bullish { color: var(--bull); } #niftyChip.Bearish { color: #ff8193; }
   @media (max-width: 900px) { .mkt { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tsum { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .tsum span { font: 700 12px var(--mono); padding: 5px 10px; border-radius: 8px; background: var(--card); color: var(--muted); }
+  .tsum b { color: var(--text); }
+  .trow { display: grid; grid-template-columns: 52px 1.3fr repeat(4, .9fr) 1.6fr 70px; gap: 8px; align-items: center;
+          padding: 8px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; }
+  .trow:nth-child(odd) { background: rgba(255,255,255,.02); }
+  .trow.head { font: 700 10px system-ui; color: var(--muted); letter-spacing: .05em; cursor: default; background: none; }
+  .trow .tm { font: 12px var(--mono); color: var(--muted); }
+  .trow .sym { font-weight: 800; } .trow .num { font: 600 12px var(--mono); }
+  .trow .r { font: 800 13px var(--mono); text-align: right; }
+  .tst { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 5px; text-transform: uppercase; background: #262d38; color: var(--muted); white-space: nowrap; }
+  .tst.live { background: rgba(139,124,246,.25); color: #c4b9ff; } .tst.win { background: rgba(34,211,138,.18); color: var(--bull); }
+  .tst.loss { background: rgba(240,67,93,.18); color: #ff8193; }
+  @media (max-width: 760px) {
+    .trow { grid-template-columns: 44px 1fr 1fr 1fr; } .trow.head { display: none; }
+    .trow .hide-s { display: none; } .trow .st { grid-column: 2 / 4; } .trow .r { grid-column: 4; }
+  }
   footer { grid-column: 1 / -1; color: var(--muted); font-size: 12px; text-align: center; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; }
@@ -302,6 +319,11 @@
     </div>
     <div class="tips" id="mTips"></div>
   </section>
+  <section class="panel full" id="tradesPanel" hidden>
+    <div class="ptitle"><h2>Today's trades</h2><small>every pick is locked in when it first appears, with its levels frozen, and followed until it ends</small></div>
+    <div class="tsum" id="tSum"></div>
+    <div id="tRows"></div>
+  </section>
   <section class="panel full" id="flowPanel" hidden>
     <canvas id="flow"></canvas>
     <div class="flowtip" id="flowTip" hidden></div>
@@ -382,8 +404,9 @@ function render() {
   $("tf").textContent = mode === "ob" ? s.timeframe + " min" : s.breakout_tf + " min";
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
-  ["marketPanel", "flowPanel", "sectorPanel", "picksPanel"].forEach(id => $(id).hidden = mode !== "pk");
+  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"].forEach(id => $(id).hidden = mode !== "pk");
   renderMarket(s.market);
+  renderTrades(s.trades);
   ["strengthPanel", "listsPanel"].forEach(id => $(id).hidden = mode === "pk");
   $("ver").textContent = s.version ? ` · Version ${s.version}` : "";
   $("auto").textContent = s.next_scan ? `Auto-scan every ${s.scan_every} min · next ${s.next_scan}` : `Auto-scan every ${s.scan_every} min`;
@@ -670,6 +693,36 @@ function renderMarket(m) {
   $("mTips").innerHTML = tips.join("");
 }
 
+// ---------- Today's trades ----------
+function renderTrades(tv) {
+  if (mode !== "pk") return;
+  const rows = (tv && tv.rows) || [], sm = (tv && tv.summary) || {};
+  const hm = t => t ? new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }) : "";
+  $("tSum").innerHTML = rows.length ? `<span>Picks <b>${sm.count}</b></span><span>Triggered <b>${sm.triggered}</b></span>
+      <span>Open <b>${sm.open}</b></span><span>Won <b style="color:${css("--bull")}">${sm.wins}</b> · Lost <b style="color:${css("--bear")}">${sm.losses}</b></span>
+      ${sm.win_rate != null ? `<span>Win rate <b>${sm.win_rate}%</b></span>` : ""}
+      <span>Total <b style="color:${sm.total_r >= 0 ? css("--bull") : css("--bear")}">${sm.total_r >= 0 ? "+" : ""}${sm.total_r}R</b></span>` : "";
+  if (!rows.length) { $("tRows").innerHTML = `<div class="empty">No picks yet today. Each Top Pick is added here the moment it appears${state.picks && state.picks.picks_from ? ` (from ${state.picks.picks_from})` : ""}.</div>`; return; }
+  const cls = r => r.result_r != null ? (r.result_r > 0 ? "win" : r.result_r < 0 ? "loss" : "") : r.triggered_at && !r.exit_at ? "live" : "";
+  $("tRows").innerHTML = `<div class="trow head"><span>PICKED</span><span>STOCK</span><span class="hide-s">ENTRY</span><span class="hide-s">SL</span><span class="hide-s">T1</span><span class="hide-s">T2</span><span>STATUS</span><span class="r">RESULT</span></div>` +
+    rows.map(r => {
+      const res = r.result_r != null ? r.result_r : r.running_r, live = r.result_r == null && r.running_r != null;
+      const when = /3:15|Not triggered/.test(r.status) ? "" : r.exit_at ? hm(r.exit_at) : r.triggered_at ? hm(r.triggered_at) : "";
+      return `<div class="trow" data-sym="${r.symbol}" data-side="${r.side}">
+        <span class="tm">${hm(r.picked_at)}</span>
+        <span><span class="badge" style="font-size:10px;padding:1px 6px;background:${r.side === "bull" ? css("--bull") : css("--bear")};color:${r.side === "bull" ? "#04140c" : "#fff"}">${r.side === "bull" ? "BUY" : "SELL"}</span> <span class="sym">${r.symbol}</span></span>
+        <span class="num hide-s">${fmt(r.entry)}</span><span class="num hide-s" style="color:#ff8193">${fmt(r.sl)}</span>
+        <span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t1)}</span><span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t2)}</span>
+        <span class="st"><span class="tst ${cls(r)}">${r.status}${when ? " " + when : ""}</span>${r.last != null ? ` <span class="tm">now ${fmt(r.last)}</span>` : ""}</span>
+        <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}${live ? "*" : ""}</span>
+      </div>`;
+    }).join("") + `<div class="hint" style="margin-top:8px;font-size:11px;color:var(--muted)">R = multiples of the risk (entry to stop). Half is booked at T1 and the stop moves to cost; the rest rides to T2. * = still open. Untriggered picks expire at 3:00 PM; open trades close at 3:15 PM.</div>`;
+  $("tRows").querySelectorAll(".trow[data-sym]").forEach(el => el.onclick = () => {
+    const p = (state.picks.picks || []).find(c => c.symbol === el.dataset.sym && c.side === el.dataset.side);
+    if (p) { selected = [p.symbol, p.side]; highlightPicks(); loadChart(); }
+  });
+}
+
 // ---------- Top picks ----------
 function renderPicks() {
   const pk = state.picks || { funnel: [], flow: [], sectors: [], picks: [] };
@@ -703,7 +756,7 @@ function renderPicks() {
           <span class="oi">${oi ? `${oi.kind} · OI ${pct(oi.oi_pct)}` : "OI n/a"}</span></div>
         <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)} · ${c.sector} (${pct(c.sector_pct)}, rank ${c.sector_rank})<br>
           ${c.sources.join(" + ")} · <span class="held">✓ held the level ${hm(p.held_at)}</span><br>
-          <span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since}</div>
+          <span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since} · in Today's trades</div>
           <canvas data-spark="${i}"></canvas></div>
         <div class="chips">${pickChips(c)}</div>
         <div class="nums">
