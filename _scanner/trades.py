@@ -118,6 +118,10 @@ class TradeBook:
                 break
         if state["triggered_at"] is None and state["exit_at"] is None and _hm(now_ts) >= NO_NEW_ENTRY:
             state.update(status="Not triggered", exit_at=now_ts)   # no candle broke it before 3 PM
+        if state["triggered_at"] and state["exit_at"] is None and last and _hm(now_ts) >= SQUARE_OFF:
+            px = last["c"]                                       # square off at the last price
+            state.update(status="Closed at 3:15", exit_at=now_ts, exit=px,
+                         result_r=r_of(px) if not state["t1_at"] else round((r_of(t1) + r_of(px)) / 2, 2))
         r.update(state)
         if last:
             r["last"] = last["c"]
