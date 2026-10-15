@@ -364,11 +364,13 @@
     <ol class="tvsteps">
       <li>Open the <b>Shortcuts</b> app → tap <b>+</b> (top right).</li>
       <li>Tap the name at the top → <b>Rename</b> → type exactly <b>TradingView Chart</b>.</li>
-      <li>Tap <b>Add Action</b> → search <b>Open App</b> → add it → tap <b>App</b> → choose <b>TradingView</b>.</li>
+      <li>Tap <b>Add Action</b> → search <b>Open URLs</b> → add it.</li>
+      <li>Tap the blue <b>URL</b> word in that action → choose <b>Shortcut Input</b>.</li>
       <li>Tap <b>Done</b>.</li>
     </ol>
-    <p>From then on the button copies the stock (e.g. <b>NSE:SBIN</b>) and opens the TradingView app.
-    In the app tap 🔍 and <b>Paste</b>. The first time, iPhone asks "Open in Shortcuts?" — tap <b>Open</b>.</p>
+    <p>Already made it with <b>Open App</b>? Open the shortcut, remove that action (✕) and do steps 3–4.</p>
+    <p>From then on one tap opens the stock's chart in the TradingView app. The first time, iPhone asks
+    "Open in Shortcuts?" — tap <b>Open</b>.</p>
     <div class="actions" style="flex-wrap:wrap">
       <button type="button" class="ghost" id="tvWeb">Use the website instead</button>
       <button type="button" id="tvDone">I've made it — open the app</button>
@@ -882,7 +884,9 @@ function lwcLegend(k) {
 }
 const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 const tvMode = v => { try { if (v !== undefined) localStorage.setItem("tvMode", v); return localStorage.getItem("tvMode") || ""; } catch (e) { return ""; } };
-const tvApp = sym => { location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("TradingView Chart")}&input=text&text=${encodeURIComponent(sym)}`; };
+// The shortcut gets the TradingView chart address; its "Open URLs" action makes iOS open it in the TradingView app.
+const tvApp = sym => { location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("TradingView Chart")}&input=text&text=` +
+  encodeURIComponent(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}`); };
 function tvCopy(ev) {
   const tv = $("tvLink"), sym = tv.dataset.sym;
   if (!sym || !isIOS) return;
