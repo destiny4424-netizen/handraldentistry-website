@@ -160,6 +160,7 @@
   @media (max-width: 520px) { #flow { height: 340px; } .flowlegend { display: block; } .nums { grid-template-columns: repeat(3, 1fr); } .pick .mid { grid-template-columns: 1fr; } }
   header { padding-top: max(14px, env(safe-area-inset-top)); }
   main { padding-bottom: max(40px, env(safe-area-inset-bottom)); }
+  .tvsteps { margin: 0 0 14px; padding-left: 20px; font-size: 13px; line-height: 1.6; }
   dialog .sect { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
   dialog .saved { font-size: 12px; color: var(--bull); background: rgba(34,211,138,.08); border-radius: 8px; padding: 7px 10px; margin-top: 8px; }
   dialog .saved.none { color: var(--muted); background: var(--card); }
@@ -355,6 +356,25 @@
   <button id="keysBtn" class="ghost">Connect Dhan</button>
   <button id="scan">Scan now</button>
 </header>
+<dialog id="tvSetup">
+  <form method="dialog">
+    <h3>Open charts in the TradingView app</h3>
+    <p>iPhone doesn't let web pages open the TradingView app directly, so a tiny Apple Shortcut does it.
+    Make it once (1 minute):</p>
+    <ol class="tvsteps">
+      <li>Open the <b>Shortcuts</b> app → tap <b>+</b> (top right).</li>
+      <li>Tap the name at the top → <b>Rename</b> → type exactly <b>TradingView Chart</b>.</li>
+      <li>Tap <b>Add Action</b> → search <b>Open App</b> → add it → tap <b>App</b> → choose <b>TradingView</b>.</li>
+      <li>Tap <b>Done</b>.</li>
+    </ol>
+    <p>From then on the button copies the stock (e.g. <b>NSE:SBIN</b>) and opens the TradingView app.
+    In the app tap 🔍 and <b>Paste</b>. The first time, iPhone asks "Open in Shortcuts?" — tap <b>Open</b>.</p>
+    <div class="actions" style="flex-wrap:wrap">
+      <button type="button" class="ghost" id="tvWeb">Use the website instead</button>
+      <button type="button" id="tvDone">I've made it — open the app</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="keys">
   <form id="keysForm" method="dialog">
     <h3>Settings</h3>
@@ -395,6 +415,8 @@
       <div class="actions" style="margin-top:10px"><button type="button" id="phoneSave">Save phone settings</button></div>
       <div class="err" id="phoneErr"></div>
       <div id="phoneUrls"></div>
+      <div class="hint" id="tvHint" style="margin-top:10px">TradingView button on this iPhone:
+        <b id="tvModeTxt">not set up</b> · <button type="button" class="link" id="tvReset">change</button></div>
     </div>
     <div class="actions"><button type="button" class="ghost" id="keysCancel">Close</button></div>
   </form>
@@ -407,7 +429,7 @@
     <div class="dhead">
       <span class="s" id="dSym">—</span><span class="p" id="dPrice"></span>
       <span class="tag" id="dTag"></span>
-      <a class="tvbtn" id="tvLink" target="_blank" rel="noopener" onclick="tvCopy()" hidden>Open in TradingView ↗</a>
+      <a class="tvbtn" id="tvLink" target="_blank" rel="noopener" onclick="tvCopy(event)" hidden>Open in TradingView ↗</a>
     </div>
     <div class="ohlc" id="ohlc"></div>
     <div class="chartwrap"><div id="lwc"></div><canvas id="chart"></canvas><canvas id="chartOv"></canvas></div>
@@ -858,13 +880,24 @@ function lwcLegend(k) {
     H <span class="${cl}">${fmt(k.h)}</span> L <span class="${cl}">${fmt(k.l)}</span> C <span class="${cl}">${fmt(k.c)}</span>
     <span class="${ch >= 0 ? "up" : "dn"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</span>`;
 }
-function tvCopy() {
+const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+const tvMode = v => { try { if (v !== undefined) localStorage.setItem("tvMode", v); return localStorage.getItem("tvMode") || ""; } catch (e) { return ""; } };
+const tvApp = sym => { location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("TradingView Chart")}&input=text&text=${encodeURIComponent(sym)}`; };
+function tvCopy(ev) {
   const tv = $("tvLink"), sym = tv.dataset.sym;
-  if (!sym || !/iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
+  if (!sym || !isIOS) return;
   try { navigator.clipboard.writeText(sym).catch(() => {}); } catch (e) {}
-  const was = tv.textContent; tv.textContent = `Copied ${sym}`;
-  setTimeout(() => { tv.textContent = was; }, 2500);
+  const m = tvMode();
+  if (m === "web") return;                             // normal link to tradingview.com
+  ev.preventDefault();
+  if (m === "app") { tvApp(sym); return; }
+  $("tvSetup").showModal();
 }
+$("tvDone").onclick = () => { tvMode("app"); $("tvSetup").close(); tvSettings(); tvApp($("tvLink").dataset.sym); };
+$("tvWeb").onclick = () => { tvMode("web"); $("tvSetup").close(); tvSettings(); window.open($("tvLink").href, "_blank"); };
+$("tvReset").onclick = () => { tvMode(""); tvSettings(); $("tvSetup").showModal(); };
+function tvSettings() { $("tvModeTxt").textContent = { app: "opens the TradingView app", web: "opens tradingview.com" }[tvMode()] || "not set up"; }
+tvSettings(); $("tvHint").hidden = !isIOS;
 function lwcShow(d) {
   lwcInit();
   const tv = $("tvLink");
