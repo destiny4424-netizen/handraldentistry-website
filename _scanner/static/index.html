@@ -407,7 +407,7 @@
     <div class="dhead">
       <span class="s" id="dSym">—</span><span class="p" id="dPrice"></span>
       <span class="tag" id="dTag"></span>
-      <a class="tvbtn" id="tvLink" target="_blank" rel="noopener" hidden>Open in TradingView ↗</a>
+      <a class="tvbtn" id="tvLink" target="_blank" rel="noopener" onclick="tvCopy()" hidden>Open in TradingView ↗</a>
     </div>
     <div class="ohlc" id="ohlc"></div>
     <div class="chartwrap"><div id="lwc"></div><canvas id="chart"></canvas><canvas id="chartOv"></canvas></div>
@@ -858,10 +858,27 @@ function lwcLegend(k) {
     H <span class="${cl}">${fmt(k.h)}</span> L <span class="${cl}">${fmt(k.l)}</span> C <span class="${cl}">${fmt(k.c)}</span>
     <span class="${ch >= 0 ? "up" : "dn"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</span>`;
 }
+function tvCopy() {
+  const tv = $("tvLink"), sym = tv.dataset.sym;
+  if (!sym || !/iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
+  try { navigator.clipboard.writeText(sym).catch(() => {}); } catch (e) {}
+  const was = tv.textContent; tv.textContent = `Copied ${sym}`;
+  setTimeout(() => { tv.textContent = was; }, 2500);
+}
 function lwcShow(d) {
   lwcInit();
   const tv = $("tvLink");
-  if (d) { tv.hidden = false; tv.href = `https://www.tradingview.com/chart/?symbol=NSE:${encodeURIComponent(d.symbol.replace(/[&-]/g, "_"))}`; }
+  if (d) {
+    const sym = "NSE:" + d.symbol.replace(/[&-]/g, "_"), web = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}`;
+    const ua = navigator.userAgent, android = /Android/i.test(ua), ios = /iPhone|iPad|iPod/i.test(ua);
+    tv.hidden = false; tv.dataset.sym = sym;
+    tv.textContent = android || ios ? "Open in TradingView app ↗" : "Open in TradingView ↗";
+    // Android: open the TradingView app directly; falls back to the website if the app is not installed.
+    // iPhone: the website link opens the app when iOS hands it over; the symbol is also copied for its search box.
+    tv.href = android ? `intent://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}#Intent;scheme=https;` +
+      `package=com.tradingview.tradingviewapp;S.browser_fallback_url=${encodeURIComponent(web)};end` : web;
+    tv.target = android ? "_self" : "_blank";
+  }
   else tv.hidden = true;
   if (!lwc) return;
   lwcLines.forEach(l => lwcSeries.removePriceLine(l)); lwcLines = [];

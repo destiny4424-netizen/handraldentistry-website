@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "16 Oct · TradingView chart + performance"
+VERSION = "16 Oct · TradingView app button"
 
 
 def load_env():
