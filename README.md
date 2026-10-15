@@ -166,7 +166,15 @@ password. To see them again: `sudo cat /etc/orderblock-scanner/login.txt`.
 It sits next to Handral Books in the same Caddy web server and doesn't touch Books.
 
 ### After that
-- Runs 24/7 on the droplet, whether your PC is on or off. It scans every 15 minutes during
+- **Schedule:** 15-minute scans from 9:30 to 12:00 give the intraday Top Picks. After that, hourly scans at
+  12:15, 13:15, 14:15 and 15:00 build the **BTST / STBT** list: strong closers to buy (or, in F&O, sell)
+  between 3:15 and 3:25 PM and exit the next morning. The 3 PM list is locked in and followed into the
+  next session (target, stop, or 11:00 exit).
+- The app looks like the TradingView app:
+  - a dark theme, with a big chart that has a price scale, time axis, volume bars, a crosshair and an OHLC readout
+  - a watchlist on the right
+  - a bottom bar on the iPhone: Picks, BTST, Trades, Market, Chart
+- Runs 24/7 on the droplet, whether your PC is on or off. It scans during
   market hours (9:15–15:30 IST, Mon–Fri), starts on boot and restarts itself if it ever stops.
 - A trade is only listed after price has come back to its level and a 15-minute candle has closed
   holding it. It then says "Buy above …" (the high of that candle) with the stop beyond the level.
