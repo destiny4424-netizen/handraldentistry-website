@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "15 Oct · BTST + new look"                         # shown at the bottom of the page
+VERSION = "16 Oct · TradingView chart + performance"
 
 
 def load_env():
@@ -432,7 +432,10 @@ def scan_once():
             setup, levels = breakout.detect(c15, daily, now_ts, res["price"])
             if setup:
                 bo[sym] = (c15, setup, levels, res)
+            prev_days = [x for x in daily if analysis._day(x["t"]) < analysis._day(candles[-1]["t"])]
             funnel_in[sym] = {"res": res, "bo": setup, "levels": levels,
+                              "pdh": prev_days[-1]["h"] if prev_days else None,
+                              "pdl": prev_days[-1]["l"] if prev_days else None,
                               "c15": [c for c in c15 if c["end"] <= now_ts]}
         set_state(scanned=n)
 
@@ -458,7 +461,8 @@ def scan_once():
     clock = max((d["c15"][-1]["end"] for d in funnel_in.values() if d["c15"]), default=time.time())
     session_time = datetime.fromtimestamp(clock, IST).strftime("%H:%M")
     cands, finish = picks.build(funnel_in, MIN_RR, N_PICKS, MIN_SETUP,
-                                picks_open=session_time >= picks_from, picks_from=picks_from)
+                                picks_open=session_time >= picks_from, picks_from=picks_from,
+                                early=session_time <= (SETTINGS.get("pdh_rule_until") or "10:30"))
     oi = {}
     checks = cands[:OI_CHECKS]
     for n, c in enumerate(checks, 1):
@@ -963,6 +967,9 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(url.query)
         if url.path == "/icon.png":
             return self.send(200, ICON, "image/png")
+        if url.path.startswith("/static/vendor/") and url.path.endswith(".js"):
+            f = HERE / "static" / "vendor" / url.path.rsplit("/", 1)[1]   # the chart library (no paths in names)
+            return self.send(200, f.read_bytes(), "text/javascript") if f.is_file() else self.send(404, {"error": "not found"})
         if url.path == "/manifest.webmanifest":
             return self.send(200, MANIFEST, "application/manifest+json")
         if url.path == "/healthz":
@@ -989,6 +996,11 @@ class Handler(BaseHTTPRequestHandler):
                             "picks_from": SETTINGS.get("picks_from") or "10:00",
                             "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
+        elif url.path == "/api/performance":
+            month = (q.get("month", [""])[0] or datetime.now(IST).strftime("%Y-%m"))[:7]
+            if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
+                return self.send(400, {"error": "month must be YYYY-MM"})
+            self.send(200, trades.month_report(SETTINGS_DIR, month, BTSTS.rows))
         elif url.path == "/api/btst":
             p = pick_payload(q.get("symbol", [""])[0].upper(), BTST_PICKS)
             self.send(200 if p else 404, p or {"error": "not found"})
