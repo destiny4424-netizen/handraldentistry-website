@@ -173,7 +173,8 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
 - The app looks like the TradingView app:
   - a dark theme, with a candle chart drawn by TradingView's own Lightweight Charts library
     (no volume bars), with entry, stop and target lines, a crosshair and an OHLC readout
-  - an **Open in TradingView** button that opens the same stock on tradingview.com
+  - an **Open in TradingView** button that opens the same stock in the TradingView app on Android and iPhone
+    (on the iPhone it also copies the symbol, e.g. NSE:SBIN, for the app's search box), or on tradingview.com on a computer
   - a watchlist on the right
   - a bottom bar on the iPhone: Picks, BTST, Trades, Market, Stats
 - Runs 24/7 on the droplet, whether your PC is on or off. It scans during
