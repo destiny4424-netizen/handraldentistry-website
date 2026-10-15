@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, urlparse
 
 import analysis
 import breakout
+import btst
 import market
 import picks
 import trades
@@ -39,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "14 Oct · today's trades"                         # shown at the bottom of the page
+VERSION = "15 Oct · BTST + new look"                         # shown at the bottom of the page
 
 
 def load_env():
@@ -321,6 +322,8 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
          "timeframe": TIMEFRAME, "scanned": 0, "total": 0, "last_scan": None,
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
          "version": VERSION, "market": None, "trades": {"rows": [], "summary": {}},
+         "btst": {"open": False, "from": "12:00", "picks": [], "book": {"rows": [], "summary": {}}},
+         "schedule": "15-min scans 9:30–12:00 for intraday · hourly scans 12:15, 13:15, 14:15 and 15:00 for BTST",
          "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
@@ -328,6 +331,8 @@ CANDLES = {}
 BREAKOUTS = {}                                         # symbol -> (15m candles, setup, levels, result)
 PICKS = {}                                             # symbol -> pick (with its 5m candles)
 TRADES = trades.TradeBook(SETTINGS_DIR)                # today's locked-in picks, followed to the end
+BTSTS = trades.BtstBook(SETTINGS_DIR)                  # BTST/STBT picks, followed into the next session
+BTST_PICKS = {}                                        # symbol -> (BTST pick, 5m candles) for the chart
 PICK_SINCE = {}                                        # (day, symbol, side) -> first time it was picked
 DAILY = {}                                             # security id -> (IST day fetched, candles)
 LOCK = threading.Lock()
@@ -473,6 +478,16 @@ def scan_once():
                 raise
         time.sleep(0.25)
     top = finish(oi)
+    # Intraday picks only until 12:00 (Settings); after that the hourly scans are for BTST.
+    intraday_until = SETTINGS.get("intraday_until") or "12:00"
+    top["intraday_until"] = intraday_until
+    if not demo and session_time > intraday_until and top["picks"]:
+        gone = {c["symbol"] for c in top["picks"]}
+        for f in top["flow"]:
+            if f["symbol"] in gone:
+                f["stage"] = 5
+        top["funnel"][-1]["count"] = 0
+        top["picks"], top["window_closed"] = [], True
     # Each stock's real path today (every 15 minutes, % from yesterday's close) for the flow chart.
     for f in top["flow"]:
         cs, r = candles_by.get(f["symbol"]), results.get(f["symbol"])
@@ -509,6 +524,37 @@ def scan_once():
             c["market"] = ("with" if nifty["trend"] == ("Bullish" if is_bull else "Bearish")
                            else "neutral" if nifty["trend"] == "Sideways" else "against")
             c["rs"] = round(r.get("pct", 0) - nifty["pct"], 2)   # strength vs NIFTY today
+    # BTST / STBT from 12:00: strong closers, checked against futures OI, followed into tomorrow.
+    btst_from = "12:00"
+    btst_open = demo or session_time >= btst_from
+    btst_picks = []
+    if btst_open:
+        sec_pct = {s: next((x["pct"] for x in top["sectors"] if x["name"] == picks.sector_of(s)), 0) for s in results}
+        bc = btst.candidates(results, candles_by, {}, {s: d["levels"] for s, d in funnel_in.items()},
+                             sec_pct, nifty["trend"] if nifty else "Sideways",
+                             time.time() if not demo else max(cs[-1]["t"] + 300 for cs in candles_by.values()))
+        boi = {}
+        for c in bc[:15]:
+            sym = c["symbol"]
+            if sym in oi:
+                boi[sym] = oi[sym]
+            elif demo:
+                boi[sym] = demo_oi(sym, c["pct"])
+            elif FUTURES.get(sym):
+                try:
+                    boi[sym] = picks.oi_build(dhan_futures_oi(FUTURES[sym]))
+                    time.sleep(0.25)
+                except DhanError as e:
+                    if e.fatal:
+                        raise
+        btst_picks = btst.finish(bc[:15], boi, 5)
+    btst_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
+    if not demo and session_time >= "15:00":            # lock in the 3 PM list as today's BTST trades
+        for c in btst_picks:
+            BTSTS.record(c, btst_now)
+    BTSTS.update(candles_by, btst_now)
+    btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": BTSTS.view()}
+
     # Lock every new pick into today's trades and follow them all through the day's candles.
     book_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
     for c in top["picks"]:
@@ -542,29 +588,32 @@ def scan_once():
         BREAKOUTS.update(bo)
         PICKS.clear()
         PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"]})
+        BTST_PICKS.clear()
+        BTST_PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in btst_picks})
         STATE.update(status="live", message="", scores=scores, breakouts=breakouts, picks=top, market=mkt,
-                     trades=TRADES.view(),
+                     trades=TRADES.view(), btst=btst_state,
                      last_scan=datetime.now(IST).strftime("%H:%M"),
                      bullish=[row(s, "bull") for s in bull[:TOP_N]],
                      bearish=[row(s, "bear") for s in bear[:TOP_N]])
 
 
+INTRADAY_SCANS = [(9, 30 + 15 * i) if 30 + 15 * i < 60 else (9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60)
+                  for i in range(11)]                   # 9:30, 9:45 ... 12:00, after each 15-min candle
+BTST_SCANS = [(12, 15), (13, 15), (14, 15), (15, 0)]  # after each hourly candle, plus a last look at 3 PM
+SCHEDULE = INTRADAY_SCANS + BTST_SCANS
+
+
 def next_scan_time(now):
-    """Next candle close (every SCAN_EVERY minutes from 09:15) plus 20 seconds,
-    so each scan sees the candle that just closed. Skips nights and weekends."""
-    start = now.replace(hour=9, minute=15, second=20, microsecond=0)
-    if now < start:
-        t = start + timedelta(minutes=SCAN_EVERY)
-    else:
-        steps = int((now - start).total_seconds() // (SCAN_EVERY * 60)) + 1
-        t = start + timedelta(minutes=steps * SCAN_EVERY)
-    close = now.replace(hour=15, minute=30, second=20, microsecond=0)
-    if t > close or t.weekday() >= 5:
-        t = (now + timedelta(days=1)).replace(hour=9, minute=15, second=20, microsecond=0) \
-            + timedelta(minutes=SCAN_EVERY)
-        while t.weekday() >= 5:
-            t += timedelta(days=1)
-    return t
+    """Next scheduled scan (20 seconds after the candle closes), skipping nights and weekends."""
+    day = now
+    for _ in range(8):
+        if day.weekday() < 5:
+            for h, m in SCHEDULE:
+                t = day.replace(hour=h, minute=m, second=20, microsecond=0)
+                if t > now:
+                    return t
+        day = (day + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return now + timedelta(hours=1)
 
 
 def scanner():
@@ -829,9 +878,9 @@ def chart_payload(symbol, side):
             "score": ob["score"], "tests": ob["tests"]}
 
 
-def pick_payload(symbol):
+def pick_payload(symbol, book=None):
     with LOCK:
-        item = PICKS.get(symbol)
+        item = (book if book is not None else PICKS).get(symbol)
     if not item:
         return None
     c, candles = item
@@ -940,6 +989,9 @@ class Handler(BaseHTTPRequestHandler):
                             "picks_from": SETTINGS.get("picks_from") or "10:00",
                             "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
+        elif url.path == "/api/btst":
+            p = pick_payload(q.get("symbol", [""])[0].upper(), BTST_PICKS)
+            self.send(200 if p else 404, p or {"error": "not found"})
         elif url.path == "/api/pick":
             p = pick_payload(q.get("symbol", [""])[0].upper())
             self.send(200 if p else 404, p or {"error": "not found"})

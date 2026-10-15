@@ -142,3 +142,97 @@ class TradeBook:
 
     def view(self):
         return {"rows": sorted(self.rows, key=lambda r: -r["picked_at"]), "summary": self.summary()}
+
+
+BTST_EXIT = (11, 0)                                    # if neither target nor stop by 11:00 next day, exit
+
+
+class BtstBook:
+    """BTST/STBT picks: bought (or sold) near today's close, followed through the next session."""
+
+    def __init__(self, folder):
+        self.path = folder / "btst.json"
+        try:
+            self.rows = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.rows = []
+
+    def save(self):
+        cutoff = datetime.now(IST).timestamp() - 10 * 86400       # keep ten days
+        self.rows = [r for r in self.rows if r["picked_at"] > cutoff]
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.rows), encoding="utf-8")
+            tmp.replace(self.path)
+        except OSError:
+            pass
+
+    def record(self, pick, now_ts):
+        day = datetime.fromtimestamp(now_ts, IST).strftime("%Y-%m-%d")
+        if any(r["symbol"] == pick["symbol"] and r["day"] == day for r in self.rows):
+            return False
+        p = pick["plan"]
+        self.rows.append({"symbol": pick["symbol"], "side": pick["side"], "day": day, "picked_at": now_ts,
+                          "entry": round(p["entry"], 2), "sl": round(p["sl"], 2), "t1": round(p["t1"], 2),
+                          "t2": round(p["t2"], 2), "status": "Holding overnight", "gap_pct": None,
+                          "t1_at": None, "exit_at": None, "exit": None, "result_r": None, "last": pick["price"]})
+        return True
+
+    def update(self, candles_by_symbol, now_ts):
+        for r in self.rows:
+            if r["exit_at"]:
+                continue
+            cs = candles_by_symbol.get(r["symbol"])
+            if cs:
+                self._follow(r, cs, now_ts)
+        self.save()
+
+    def _follow(self, r, candles, now_ts):
+        bull = r["side"] == "bull"
+        entry, stop, t1, t2 = r["entry"], r["sl"], r["t1"], r["t2"]
+        risk = abs(entry - stop) or 1e-9
+        r_of = lambda px: round(((px - entry) if bull else (entry - px)) / risk, 2)
+        pick_day = datetime.fromtimestamp(r["picked_at"], IST).date()
+        nxt = [c for c in candles if datetime.fromtimestamp(c["t"], IST).date() > pick_day
+               and c["t"] + 300 <= now_ts + 1]
+        if not nxt:
+            r["last"] = candles[-1]["c"]
+            r["running_r"] = r_of(candles[-1]["c"])
+            return
+        day1 = datetime.fromtimestamp(nxt[0]["t"], IST).date()
+        nxt = [c for c in nxt if datetime.fromtimestamp(c["t"], IST).date() == day1]   # the next session only
+        r["gap_pct"] = round((nxt[0]["o"] - entry) / entry * 100, 2)
+        r.update(status="Next day: open", t1_at=None, exit_at=None, exit=None, result_r=None)
+        for c in nxt:
+            hit_stop = c["l"] <= stop if bull else c["h"] >= stop
+            if hit_stop:
+                px = min(stop, c["o"]) if bull else max(stop, c["o"])   # a gap through the stop fills at the open
+                res = r_of(px) if not r["t1_at"] else round((r_of(t1) + r_of(px)) / 2, 2)
+                r.update(status="Stopped at cost after T1" if r["t1_at"] else "SL hit", exit_at=c["t"], exit=px, result_r=res)
+                break
+            if not r["t1_at"] and (c["h"] >= t1 if bull else c["l"] <= t1):
+                r.update(status="T1 hit · stop moved to cost", t1_at=c["t"])
+                stop = entry
+            if r["t1_at"] and (c["h"] >= t2 if bull else c["l"] <= t2):
+                r.update(status="T2 hit", exit_at=c["t"], exit=t2, result_r=round((r_of(t1) + r_of(t2)) / 2, 2))
+                break
+            if _hm(c["t"]) >= BTST_EXIT:
+                px = c["c"]
+                res = r_of(px) if not r["t1_at"] else round((r_of(t1) + r_of(px)) / 2, 2)
+                r.update(status="Exited 11:00", exit_at=c["t"], exit=px, result_r=res)
+                break
+        r["last"] = nxt[-1]["c"]
+        if r["exit_at"] is None:
+            r["running_r"] = r_of(nxt[-1]["c"]) if not r["t1_at"] else round((r_of(t1) + r_of(nxt[-1]["c"])) / 2, 2)
+        else:
+            r.pop("running_r", None)
+
+    def view(self):
+        done = [r for r in self.rows if r["result_r"] is not None]
+        wins = [r for r in done if r["result_r"] > 0]
+        return {"rows": sorted(self.rows, key=lambda r: -r["picked_at"])[:30],
+                "summary": {"count": len(self.rows), "closed": len(done), "wins": len(wins),
+                            "losses": sum(1 for r in done if r["result_r"] < 0),
+                            "total_r": round(sum(r["result_r"] for r in done), 2),
+                            "win_rate": round(100 * len(wins) / len(done)) if done else None}}

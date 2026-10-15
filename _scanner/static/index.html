@@ -6,15 +6,15 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="OrderBlock">
-<meta name="theme-color" content="#0b0e13">
+<meta name="theme-color" content="#131722">
 <link rel="apple-touch-icon" href="/icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <title>OrderBlock Scanner</title>
 <style>
   :root {
-    --bg: #0b0e13; --panel: #11151c; --card: #161b23; --line: #232a35;
-    --text: #e8edf3; --muted: #8a94a3; --bull: #22d38a; --bear: #f0435d;
-    --liq: #f5b91e; --accent: #8b7cf6;
+    --bg: #131722; --panel: #1e222d; --card: #2a2e39; --line: #2a2e39;
+    --text: #d1d4dc; --muted: #787b86; --bull: #089981; --bear: #f23645;
+    --liq: #ff9800; --accent: #2962ff;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
@@ -230,6 +230,65 @@
     .trow { grid-template-columns: 44px 1fr 1fr 1fr; } .trow.head { display: none; }
     .trow .hide-s { display: none; } .trow .st { grid-column: 2 / 4; } .trow .r { grid-column: 4; }
   }
+  /* ---- TradingView-style workspace ---- */
+  body { font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif; }
+  header { height: 48px; padding: 0 12px; gap: 10px; background: var(--panel); border-bottom: 1px solid #363a45;
+           padding-top: env(safe-area-inset-top); height: calc(48px + env(safe-area-inset-top)); }
+  .logo { font-size: 16px; } .logo i b { height: 3px; }
+  header .tabs { display: flex; gap: 2px; align-items: center; flex-wrap: nowrap; grid-column: auto; margin-left: 8px; }
+  header .tabs .spacer { display: none; }
+  .tab { background: transparent; border: 0; color: var(--muted); border-radius: 4px; padding: 7px 10px; font-size: 13px; font-weight: 600; }
+  .tab:hover { background: var(--card); color: var(--text); }
+  .tab.on { background: var(--card); color: #fff; border: 0; box-shadow: inset 0 -2px 0 var(--accent); }
+  .tab .count { background: #363a45; }
+  .tab.alerts { margin-left: 4px; }
+  button { border-radius: 4px; background: var(--accent); font-size: 13px; padding: 7px 12px; }
+  button.ghost { background: var(--card); border: 1px solid #363a45; }
+  button.ghost.attn { background: var(--bull); color: #fff; }
+  .chip { border-radius: 4px; background: var(--card); }
+  .live { font-size: 12px; } .live .dot { width: 8px; height: 8px; }
+  main { max-width: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 0; }
+  .ws-main { padding: 10px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .ws-side { background: var(--panel); border-left: 1px solid #363a45; padding: 10px; display: flex; flex-direction: column; gap: 10px;
+             position: sticky; top: 48px; height: calc(100vh - 48px); overflow-y: auto; }
+  .ws-side .panel { background: transparent; border: 0; padding: 4px; border-radius: 0; }
+  .panel { border-radius: 6px; padding: 14px; background: var(--panel); border-color: #2a2e39; }
+  .panel.detail { position: static; padding: 0; overflow: hidden; }
+  .detail .dhead { padding: 10px 12px 4px; margin: 0; }
+  .detail .levels { padding: 0 12px 12px; }
+  .ohlc { padding: 0 12px 6px; font: 12px var(--mono); color: var(--muted); min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ohlc b { color: var(--text); font-weight: 600; margin-right: 8px; } .ohlc .up { color: var(--bull); } .ohlc .dn { color: var(--bear); }
+  .chartwrap { position: relative; background: var(--bg); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  #chart { height: 470px; background: var(--bg); }
+  #chartOv { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: pan-y; }
+  .levels div, .card, .idx, .tsum span, .tips span, .verdict { border-radius: 4px; }
+  .pick { border-radius: 6px; }
+  .ws-side .nums { grid-template-columns: repeat(3, 1fr); }
+  .ws-side .pick .mid { grid-template-columns: 1fr 120px; } .ws-side .pick canvas { width: 120px; }
+  .ws-side .cols { grid-template-columns: 1fr; }
+  .bnav { display: none; }
+  .why2 { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .why2 span { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,.25); color: var(--muted); }
+  @media (max-width: 1000px) {
+    header { overflow-x: auto; flex-wrap: nowrap; } header .live, header #tf, header #auto, header #niftyChip { display: none; }
+    .lname { display: none; }
+    main { display: flex; flex-direction: column; padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+    .ws-main, .ws-side { display: contents; }
+    .ws-side .panel, .ws-main > * { margin: 0 8px 10px; }
+    .ws-side .panel { background: var(--panel); border: 1px solid #2a2e39; border-radius: 6px; padding: 12px; }
+    #msg { order: 0; } .panel.detail { order: 1; } #picksPanel, #btstPanel, #listsPanel { order: 2; }
+    #marketPanel { order: 3; } #tradesPanel, #btstBookPanel, #strengthPanel { order: 4; } #flowPanel { order: 5; }
+    #sectorPanel { order: 6; } footer { order: 9; }
+    .msg { margin-top: 10px; }
+    #chart { height: 360px; }
+    .ohlc { white-space: normal; } .panel.detail, .ws-main > *, .ws-side .panel { min-width: 0; max-width: calc(100vw - 16px); }
+    .bnav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--panel);
+            border-top: 1px solid #363a45; padding-bottom: env(safe-area-inset-bottom); }
+    .bnav button { flex: 1; background: none; border: 0; border-radius: 0; color: var(--muted); padding: 8px 0 6px;
+                   font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .bnav button span { font-size: 18px; line-height: 1; }
+    .bnav button.on { color: var(--accent); }
+  }
   footer { grid-column: 1 / -1; color: var(--muted); font-size: 12px; text-align: center; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; }
@@ -239,11 +298,30 @@
     .levels { grid-template-columns: repeat(2, 1fr); }
   }
   @media (max-width: 520px) { .cols { grid-template-columns: 1fr; } }
+  /* last word: TradingView header on every screen size */
+  header button, header .tab, header .chip, header .live { white-space: nowrap; flex-shrink: 0; }
+  @media (max-width: 1500px) { header #auto, header #tf { display: none; } }
+  @media (max-width: 1000px) {
+    header { flex-wrap: nowrap !important; height: auto !important; min-height: 48px; overflow-x: auto; overflow-y: hidden;
+             padding: env(safe-area-inset-top) 8px 0 !important; gap: 6px; scrollbar-width: none; }
+    header::-webkit-scrollbar { display: none; }
+    header .tabs { margin-left: 2px; }
+    header button { padding: 6px 10px; font-size: 12px; }
+    #keysBtn, #scan { padding: 6px 9px; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <div class="logo"><i><b></b><b></b><b></b></i>OrderBlock Scanner</div>
+  <div class="logo"><i><b></b><b></b><b></b></i><span class="lname">OrderBlock</span></div>
+  <nav class="tabs">
+    <button class="tab" data-mode="pk">Top Picks<span class="count" id="cntPk">0</span></button>
+    <button class="tab" data-mode="btst">BTST<span class="count" id="cntBt">0</span></button>
+    <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
+    <button class="tab" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
+    <span class="spacer"></span>
+    <button class="tab alerts" id="alertsBtn" title="Pop-up and sound when a new breakout appears">🔔 Breakout alerts: off</button>
+  </nav>
   <div class="live off" id="live"><span class="dot"></span><span id="liveText">—</span></div>
   <span class="chip" id="tf"></span>
   <span class="chip demo" id="demo" hidden>DEMO DATA</span>
@@ -299,16 +377,22 @@
 </dialog>
 <div class="progress"><b id="prog"></b></div>
 <main>
+<div class="ws-main">
   <div class="msg" id="msg"></div>
-
-  <nav class="tabs">
-    <button class="tab" data-mode="pk">Top Picks<span class="count" id="cntPk">0</span></button>
-    <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
-    <button class="tab" data-mode="bo">HTF Key Level Breakouts · 15m<span class="count" id="cntBo">0</span></button>
-    <span class="spacer"></span>
-    <button class="tab alerts" id="alertsBtn" title="Pop-up and sound when a new breakout appears">🔔 Breakout alerts: off</button>
-  </nav>
-
+  <section class="panel detail">
+    <div class="dhead">
+      <span class="s" id="dSym">—</span><span class="p" id="dPrice"></span>
+      <span class="tag" id="dTag"></span>
+    </div>
+    <div class="ohlc" id="ohlc"></div>
+    <div class="chartwrap"><canvas id="chart"></canvas><canvas id="chartOv"></canvas></div>
+    <div class="levels">
+      <div><span id="n1">Order block</span><b id="lZone">—</b></div>
+      <div><span id="n2">Support</span><b id="lSup">—</b></div>
+      <div><span id="n3">Resistance</span><b id="lRes">—</b></div>
+      <div><span id="n4">Liquidity</span><b id="lLiq">—</b></div>
+    </div>
+  </section>
   <section class="panel full" id="marketPanel" hidden>
     <div class="verdict" id="mVerdict"></div>
     <div class="mkt"><div class="idx" id="mNifty"></div><div class="idx" id="mBank"></div>
@@ -318,6 +402,11 @@
       <div><h2 class="bear-t">▼ Top losers · F&amp;O</h2><div id="mLose"></div></div>
     </div>
     <div class="tips" id="mTips"></div>
+  </section>
+  <section class="panel full" id="btstBookPanel" hidden>
+    <div class="ptitle"><h2>BTST trades</h2><small>the 3 PM list is locked in and followed into the next morning: exit at target, stop, or 11:00</small></div>
+    <div class="tsum" id="bSum"></div>
+    <div id="bRows"></div>
   </section>
   <section class="panel full" id="tradesPanel" hidden>
     <div class="ptitle"><h2>Today's trades</h2><small>every pick is locked in when it first appears, with its levels frozen, and followed until it ends</small></div>
@@ -333,48 +422,45 @@
     <div class="ptitle"><h2>Sectors now</h2><small id="secNote"></small></div>
     <div class="sectors" id="sectors"></div>
   </section>
+  <section class="panel strength" id="strengthPanel">
+    <canvas id="dist"></canvas>
+    <div class="legend"><span class="bear-t">Bearish</span><span>Choppy ← → Strongest</span><span class="bull-t">Bullish</span></div>
+  </section>
+  <footer>Order blocks, breakouts and scores are computed from price and volume only. They are not trading advice.
+    <span id="ver"></span></footer>
+</div>
+<aside class="ws-side">
   <section class="panel" id="picksPanel" hidden>
     <div class="ptitle"><h2>Top picks</h2><small id="pickNote"></small></div>
     <div id="pickList"></div>
     <div class="ptitle" style="margin-top:18px"><h2>Watchlist</h2><small>good setups that have not held their level yet — not trades until they do</small></div>
     <div id="watchList"></div>
   </section>
-
-  <section class="panel strength" id="strengthPanel">
-    <canvas id="dist"></canvas>
-    <div class="legend"><span class="bear-t">Bearish</span><span>Choppy ← → Strongest</span><span class="bull-t">Bullish</span></div>
+  <section class="panel" id="btstPanel" hidden>
+    <div class="ptitle"><h2>BTST / STBT</h2><small id="btstNote"></small></div>
+    <div id="btstList"></div>
   </section>
-
   <section class="panel" id="listsPanel">
     <div class="cols">
       <div><h2 class="bull-t">↗ Bullish</h2><div class="list" id="bullList"></div></div>
       <div><h2 class="bear-t">↘ Bearish</h2><div class="list" id="bearList"></div></div>
     </div>
   </section>
-
-  <section class="panel detail">
-    <div class="dhead">
-      <span class="s" id="dSym">—</span><span class="p" id="dPrice"></span>
-      <span class="tag" id="dTag"></span>
-    </div>
-    <canvas id="chart"></canvas>
-    <div class="levels">
-      <div><span id="n1">Order block</span><b id="lZone">—</b></div>
-      <div><span id="n2">Support</span><b id="lSup">—</b></div>
-      <div><span id="n3">Resistance</span><b id="lRes">—</b></div>
-      <div><span id="n4">Liquidity</span><b id="lLiq">—</b></div>
-    </div>
-  </section>
-
-  <footer>Order blocks, breakouts and scores are computed from price and volume only. They are not trading advice.
-    <span id="ver"></span></footer>
+</aside>
 </main>
+<nav class="bnav" id="bnav">
+  <button data-go="pk:picksPanel"><span>◎</span>Picks</button>
+  <button data-go="btst:btstPanel"><span>☾</span>BTST</button>
+  <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
+  <button data-go="pk:marketPanel"><span>▲</span>Market</button>
+  <button data-go="chart"><span>⌇</span>Chart</button>
+</nav>
 
 <script>
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 let state = null, selected = null, mode = "pk", alertsOn = false, seen = null;
-try { const m = localStorage.getItem("mode"); if (["pk", "ob", "bo"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
+try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
 const view = () => mode === "ob" ? { bullish: state.bullish, bearish: state.bearish, scores: state.scores }
                                  : state.breakouts || { bullish: [], bearish: [], scores: [] };
 
@@ -401,21 +487,26 @@ function setLive(cls, text) { $("live").className = "live " + cls; $("liveText")
 
 function render() {
   const s = state;
-  $("tf").textContent = mode === "ob" ? s.timeframe + " min" : s.breakout_tf + " min";
+  $("tf").textContent = mode === "ob" ? s.timeframe + "m" : mode === "btst" ? "1h" : s.breakout_tf + "m";
+  $("cntBt").textContent = (s.btst && s.btst.picks || []).length;
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
-  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"].forEach(id => $(id).hidden = mode !== "pk");
+  const show = { pk: ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"],
+                 btst: ["marketPanel", "btstBookPanel", "btstPanel"], ob: ["strengthPanel", "listsPanel"], bo: ["strengthPanel", "listsPanel"] };
+  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel"]
+    .forEach(id => $(id).hidden = !show[mode].includes(id));
+  document.querySelectorAll(".bnav button").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode && b.dataset.go !== "pk:tradesPanel" && b.dataset.go !== "pk:marketPanel"));
   renderMarket(s.market);
   renderTrades(s.trades);
-  ["strengthPanel", "listsPanel"].forEach(id => $(id).hidden = mode === "pk");
   $("ver").textContent = s.version ? ` · Version ${s.version}` : "";
-  $("auto").textContent = s.next_scan ? `Auto-scan every ${s.scan_every} min · next ${s.next_scan}` : `Auto-scan every ${s.scan_every} min`;
+  $("auto").textContent = s.next_scan ? `Next scan ${s.next_scan}` : "Auto-scan";
+  $("auto").title = s.schedule || "";
   const bo = s.breakouts || { bullish: [], bearish: [] };
   $("cntOb").textContent = s.bullish.length + s.bearish.length;
   $("cntBo").textContent = bo.bullish.length + bo.bearish.length;
   document.querySelectorAll(".tab[data-mode]").forEach(t => t.classList.toggle("on", t.dataset.mode === mode));
   $("alertsBtn").classList.toggle("on", alertsOn);
-  $("alertsBtn").textContent = `🔔 Breakout alerts: ${alertsOn ? "on" : "off"}`;
+  $("alertsBtn").textContent = `🔔 ${alertsOn ? "On" : "Off"}`;
   checkNewBreakouts(bo);
   $("demo").hidden = !s.demo;
   const tokenProblem = s.status === "error" && /token|DH-901/i.test(s.message || "");
@@ -434,6 +525,7 @@ function render() {
   msg.className = "msg" + (s.message ? " show" : "") + (s.status === "error" ? " err" : "");
 
   if (mode === "pk") { renderPicks(); return; }
+  if (mode === "btst") { renderBtst(); return; }
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
   document.querySelector("#bearList").previousElementSibling.textContent = mode === "ob" ? "↘ Bearish" : "↘ Breakdowns";
@@ -536,7 +628,7 @@ async function loadChart() {
   const id = ++chartReq;
   try {
     const sym = encodeURIComponent(selected[0]);
-    const url = mode === "pk" ? `/api/pick?symbol=${sym}` : mode === "ob" ? `/api/chart?symbol=${sym}&side=${selected[1]}` : `/api/breakout?symbol=${sym}`;
+    const url = mode === "pk" ? `/api/pick?symbol=${sym}` : mode === "btst" ? `/api/btst?symbol=${sym}` : mode === "ob" ? `/api/chart?symbol=${sym}&side=${selected[1]}` : `/api/breakout?symbol=${sym}`;
     const r = await fetch(url, { cache: "no-store" });
     if (id !== chartReq) return;
     chartData = r.ok ? await r.json() : null;
@@ -547,7 +639,7 @@ async function loadChart() {
 function drawChart() {
   const d = chartData, [ctx, w, h] = setupCanvas($("chart"));
   ctx.clearRect(0, 0, w, h);
-  const names = mode === "pk" ? ["Entry", "Stop-loss", "Target 1", "Target 2"]
+  const names = mode === "pk" || mode === "btst" ? ["Entry", "Stop-loss", "Target 1", "Target 2"]
               : mode === "ob" ? ["Order block", "Support", "Resistance", "Liquidity"]
                               : ["Broken level", "Stop (candle)", "Target (next level)", "Breakout candle"];
   names.forEach((n, i) => $("n" + (i + 1)).textContent = n);
@@ -564,13 +656,14 @@ function drawChart() {
   const lvl = v => v == null ? "—" : fmt(v);
   $("lSup").textContent = lvl(d.support); $("lRes").textContent = lvl(d.resistance); $("lLiq").textContent = lvl(d.liquidity);
 
-  const c = d.candles, padR = 70, padT = 14, padB = 14, plotW = w - padR;
+  const c = d.candles, padR = 70, padT = 14, padB = 30, plotW = w - padR;
   const lv = [d.liquidity, d.support, d.resistance].filter(v => v != null);
   let lo = Math.min(...lv, d.zone.bottom, ...c.map(k => k.l));
   let hi = Math.max(...lv, d.zone.top, ...c.map(k => k.h));
   const pad = (hi - lo) * .05; lo -= pad; hi += pad;
   const y = p => padT + (hi - p) / (hi - lo) * (h - padT - padB);
   const cw = plotW / c.length, x = i => cw * (i + .5);
+  tvBack(ctx, { c, w, h, plotW, padT, padB, lo, hi, x, y, cw });
 
   // Order block zone
   const zx = x(d.zone.start) - cw / 2, zc = bull ? "34,211,138" : "240,67,93";
@@ -595,7 +688,7 @@ function drawChart() {
 
   // Candles
   c.forEach((k, i) => {
-    const up = k.c >= k.o, col = up ? css("--bull") : "#7d8796";
+    const up = k.c >= k.o, col = up ? css("--bull") : css("--bear");
     ctx.strokeStyle = col; ctx.fillStyle = col;
     ctx.beginPath(); ctx.moveTo(x(i), y(k.h)); ctx.lineTo(x(i), y(k.l)); ctx.stroke();
     const bw = Math.max(1, cw * .62), top = y(Math.max(k.o, k.c)), bh = Math.max(1, Math.abs(y(k.o) - y(k.c)));
@@ -623,6 +716,131 @@ function drawChart() {
   ctx.fillStyle = css("--text"); ctx.fillRect(plotW + 2, ly - 9, padR - 4, 18);
   ctx.fillStyle = css("--bg"); ctx.fillText(fmt(last.c), plotW + 6, ly + 4);
 }
+
+// ---------- TradingView-style chart chrome: grid, price scale, time axis, volume, crosshair ----------
+let chartGeom = null;
+function niceStep(range, n) {
+  const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p;
+}
+const istHM = t => new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
+const istDay = t => new Date(t * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+function tvBack(ctx, g) {
+  const { c, w, h, plotW, padT, padB, lo, hi, x, cw } = g;
+  ctx.fillStyle = css("--bg"); ctx.fillRect(0, 0, w, h);
+  ctx.font = `11px ${css("--mono")}`; ctx.textAlign = "left";
+  const step = niceStep(hi - lo, 7), yy = v => padT + (hi - v) / (hi - lo) * (h - padT - padB);
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {          // grid + price scale
+    const py = Math.round(yy(v)) + .5;
+    ctx.strokeStyle = "rgba(42,46,57,.55)"; ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(plotW, py); ctx.stroke();
+    ctx.fillStyle = css("--muted"); ctx.fillText(v.toFixed(step < 1 ? 2 : step < 10 ? 1 : 0), plotW + 6, py + 4);
+  }
+  const every = Math.max(1, Math.ceil(64 / cw)), placed = [];                // time axis
+  const mark = (i, newDay) => {
+    const px = Math.round(x(i)) + .5;
+    if (px < 26 || px > plotW - 20 || placed.some(q => Math.abs(q - px) < 58)) return;
+    placed.push(px);
+    ctx.strokeStyle = newDay ? "rgba(120,123,134,.35)" : "rgba(42,46,57,.45)";
+    ctx.beginPath(); ctx.moveTo(px, padT); ctx.lineTo(px, h - padB); ctx.stroke();
+    ctx.fillStyle = newDay ? css("--text") : css("--muted");
+    ctx.fillText(newDay ? istDay(c[i].t) : istHM(c[i].t), px, h - 10);
+  };
+  ctx.textAlign = "center";
+  c.forEach((k, i) => { if (i > 0 && istDay(k.t) !== istDay(c[i - 1].t)) mark(i, true); });
+  c.forEach((k, i) => { if (i % every === 0) mark(i, false); });
+  ctx.textAlign = "left";
+  ctx.strokeStyle = "#2a2e39"; ctx.beginPath(); ctx.moveTo(plotW + .5, 0); ctx.lineTo(plotW + .5, h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, h - padB + .5); ctx.lineTo(w, h - padB + .5); ctx.stroke();
+  const vmax = Math.max(1, ...c.map(k => k.v || 0)), vh = (h - padT - padB) * .16;   // volume
+  c.forEach((k, i) => {
+    const bh = (k.v || 0) / vmax * vh;
+    ctx.fillStyle = k.c >= k.o ? "rgba(8,153,129,.32)" : "rgba(242,54,69,.32)";
+    ctx.fillRect(x(i) - Math.max(1, cw * .62) / 2, h - padB - bh, Math.max(1, cw * .62), bh);
+  });
+  chartGeom = { ...g, yInv: py => hi - (py - padT) / (h - padT - padB) * (hi - lo) };
+  showOhlc(c.length - 1);
+}
+function showOhlc(i) {
+  const g = chartGeom; if (!g || !g.c[i]) return;
+  const k = g.c[i], prev = g.c[i - 1] || k, ch = (k.c - prev.c) / prev.c * 100, cl = k.c >= k.o ? "up" : "dn";
+  const vol = k.v >= 1e7 ? (k.v / 1e7).toFixed(2) + "Cr" : k.v >= 1e5 ? (k.v / 1e5).toFixed(2) + "L" : Math.round(k.v || 0);
+  $("ohlc").innerHTML = `<b>${$("dSym").textContent}</b><span>${istDay(k.t)} ${istHM(k.t)}</span> &nbsp;O <span class="${cl}">${fmt(k.o)}</span>
+    H <span class="${cl}">${fmt(k.h)}</span> L <span class="${cl}">${fmt(k.l)}</span> C <span class="${cl}">${fmt(k.c)}</span>
+    <span class="${ch >= 0 ? "up" : "dn"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</span> &nbsp;Vol ${vol}`;
+}
+function crosshair(ev) {
+  const g = chartGeom, ov = $("chartOv"); if (!g) return;
+  const [ctx, w, h] = setupCanvas(ov), r = ov.getBoundingClientRect(), p = ev.touches ? ev.touches[0] : ev;
+  const mx = p.clientX - r.left, my = p.clientY - r.top;
+  ctx.clearRect(0, 0, w, h);
+  if (mx < 0 || mx > g.plotW || my < g.padT || my > h - g.padB) { showOhlc(g.c.length - 1); return; }
+  const i = Math.max(0, Math.min(g.c.length - 1, Math.floor(mx / g.cw))), px = Math.round(g.x(i)) + .5, py = Math.round(my) + .5;
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(149,152,161,.8)";
+  ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h - g.padB); ctx.moveTo(0, py); ctx.lineTo(g.plotW, py); ctx.stroke(); ctx.setLineDash([]);
+  ctx.font = `11px ${css("--mono")}`;
+  const price = g.yInv(my).toFixed(2), tl = `${istDay(g.c[i].t)} ${istHM(g.c[i].t)}`;
+  ctx.fillStyle = "#363a45"; ctx.fillRect(g.plotW + 1, py - 9, w - g.plotW - 1, 18);
+  ctx.fillStyle = "#fff"; ctx.fillText(price, g.plotW + 6, py + 4);
+  const tw = ctx.measureText(tl).width + 10;
+  ctx.fillStyle = "#363a45"; ctx.fillRect(Math.min(px - tw / 2, g.plotW - tw), h - g.padB + 1, tw, 18);
+  ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.fillText(tl, Math.min(px, g.plotW - tw / 2), h - g.padB + 14); ctx.textAlign = "left";
+  showOhlc(i);
+}
+$("chartOv").addEventListener("mousemove", crosshair);
+$("chartOv").addEventListener("touchmove", crosshair, { passive: true });
+$("chartOv").addEventListener("touchstart", crosshair, { passive: true });
+$("chartOv").addEventListener("mouseleave", () => { const [ctx, w, h] = setupCanvas($("chartOv")); ctx.clearRect(0, 0, w, h); if (chartGeom) showOhlc(chartGeom.c.length - 1); });
+
+// ---------- BTST ----------
+function renderBtst() {
+  const b = state.btst || { open: false, from: "12:00", picks: [], book: { rows: [], summary: {} } };
+  $("btstNote").textContent = b.open ? "strong closers · enter 3:15–3:25 PM · exit next morning"
+                                     : `opens at ${b.from} · hourly scans 12:15, 13:15, 14:15, 15:00`;
+  const list = $("btstList");
+  list.innerHTML = b.picks.length ? b.picks.map((c, i) => {
+    const p = c.plan, bull = c.side === "bull";
+    return `<div class="pick ${c.side}" data-sym="${c.symbol}" data-side="${c.side}">
+      <div class="top"><span class="badge">${bull ? "BTST BUY" : "STBT SELL"}</span><span class="nm">${c.symbol}</span>
+        <span class="px">${fmt(c.price)} <span style="color:${c.pct >= 0 ? css("--bull") : css("--bear")}">${pct(c.pct)}</span></span>
+        ${c.oi ? `<span class="oi">${c.oi.kind} · OI ${pct(c.oi.oi_pct)}</span>` : ""}</div>
+      <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)}</div><canvas data-spark="${i}"></canvas></div>
+      <div class="why2">${c.why.map(w => `<span>${w}</span>`).join("")}</div>
+      <div class="nums" style="margin-top:8px">
+        <div>${bull ? "BUY ~" : "SELL ~"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
+        <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
+        <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
+      <div class="action">${bull ? "Buy" : "Sell (futures)"} between 3:15 and 3:25 PM near ${fmt(p.entry)} · stop ${fmt(p.sl)} · exit tomorrow at T1/T2, the stop, or by 11:00</div>
+    </div>`;
+  }).join("") : `<div class="empty">${b.open ? "No stock closes strong enough right now. The next hourly scan may find some." : `BTST picks appear from ${b.from}, after the first hourly scan.`}</div>`;
+  list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, b.picks[+cv.dataset.spark]));
+  list.querySelectorAll(".pick").forEach(el => el.onclick = () => { selected = [el.dataset.sym, el.dataset.side]; hl(); loadChart(); });
+  const hl = () => list.querySelectorAll(".pick").forEach(el => el.classList.toggle("sel", !!selected && el.dataset.sym === selected[0]));
+  if (!selected || !b.picks.some(c => c.symbol === selected[0])) selected = b.picks[0] ? [b.picks[0].symbol, b.picks[0].side] : null;
+  hl(); loadChart();
+  // the locked-in BTST trades
+  const bk = b.book || { rows: [], summary: {} }, sm = bk.summary || {};
+  $("bSum").innerHTML = bk.rows.length ? `<span>Trades <b>${sm.count}</b></span><span>Won <b style="color:${css("--bull")}">${sm.wins}</b> · Lost <b style="color:${css("--bear")}">${sm.losses}</b></span>
+    ${sm.win_rate != null ? `<span>Win rate <b>${sm.win_rate}%</b></span>` : ""}<span>Total <b style="color:${sm.total_r >= 0 ? css("--bull") : css("--bear")}">${sm.total_r >= 0 ? "+" : ""}${sm.total_r}R</b></span>` : "";
+  $("bRows").innerHTML = bk.rows.length ? `<div class="trow head"><span>DAY</span><span>STOCK</span><span class="hide-s">ENTRY</span><span class="hide-s">SL</span><span class="hide-s">T1</span><span class="hide-s">T2</span><span>STATUS</span><span class="r">RESULT</span></div>` +
+    bk.rows.map(r => {
+      const res = r.result_r != null ? r.result_r : r.running_r;
+      const cls = r.result_r != null ? (r.result_r > 0 ? "win" : r.result_r < 0 ? "loss" : "") : "live";
+      return `<div class="trow"><span class="tm">${istDay(r.picked_at)}</span>
+        <span><span class="badge" style="font-size:10px;padding:1px 6px;background:${r.side === "bull" ? css("--bull") : css("--bear")};color:#fff">${r.side === "bull" ? "BTST" : "STBT"}</span> <span class="sym">${r.symbol}</span></span>
+        <span class="num hide-s">${fmt(r.entry)}</span><span class="num hide-s" style="color:#ff8193">${fmt(r.sl)}</span>
+        <span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t1)}</span><span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t2)}</span>
+        <span class="st"><span class="tst ${cls}">${r.status}</span>${r.gap_pct != null ? ` <span class="tm">gap ${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</span>` : ""}</span>
+        <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}${r.result_r == null && res != null ? "*" : ""}</span></div>`;
+    }).join("") : `<div class="empty">The 3:00 PM BTST list is locked in here each day and followed into the next morning.</div>`;
+}
+
+// iPhone bottom bar: jump to a section (switching tab if needed)
+document.querySelectorAll(".bnav button").forEach(b => b.onclick = () => {
+  const [m, target] = b.dataset.go.split(":");
+  if (m === "chart") { document.querySelector(".panel.detail").scrollIntoView({ behavior: "smooth" }); return; }
+  if (mode !== m) { mode = m; selected = null; try { localStorage.setItem("mode", mode); } catch {} render(); }
+  setTimeout(() => $(target).scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+});
 
 // ---------- Market context ----------
 function pickChips(c) {
@@ -662,7 +880,7 @@ function renderMarket(m) {
     chip.hidden = false; chip.className = "chip " + m.nifty.trend;
     chip.textContent = `NIFTY ${m.nifty.trend === "Bullish" ? "▲" : m.nifty.trend === "Bearish" ? "▼" : "◆"} ${m.nifty.trend} ${pct(m.nifty.pct)}`;
   } else chip.hidden = true;
-  if (mode !== "pk") return;
+  if (mode !== "pk" && mode !== "btst") return;
   $("mVerdict").className = "verdict " + (m && m.nifty ? m.nifty.trend : "");
   $("mVerdict").textContent = m ? (m.verdict || "Market direction appears after the first scan.") : "Market direction appears after the first scan.";
   idxCard($("mNifty"), m && m.nifty, "NIFTY 50");
@@ -1015,11 +1233,12 @@ function drawPick(d, ctx, w, h) {
   $("n1").textContent = bull ? "Buy above" : "Sell below";
   $("lZone").textContent = fmt(p.entry); $("lSup").textContent = fmt(p.sl);
   $("lRes").textContent = `${fmt(p.t1)} (1:${p.rr})`; $("lLiq").textContent = `${fmt(p.t2)} (1:${p.rr2})`;
-  const k = d.candles, padR = 70, padT = 14, padB = 14, plotW = w - padR;
+  const k = d.candles, padR = 70, padT = 14, padB = 30, plotW = w - padR;
   const ext = [p.sl, p.t1, p.t2, p.entry];
   let lo = Math.min(...ext, ...k.map(q => q.l)), hi = Math.max(...ext, ...k.map(q => q.h));
   const pad = (hi - lo) * .05; lo -= pad; hi += pad;
   const y = v => padT + (hi - v) / (hi - lo) * (h - padT - padB), cw = plotW / k.length, x = i => cw * (i + .5);
+  tvBack(ctx, { c: k, w, h, plotW, padT, padB, lo, hi, x, y, cw });
   // entry zone and reward/risk shading on the right
   const zx = plotW * .72;
   ctx.fillStyle = "rgba(240,67,93,.13)"; ctx.fillRect(zx, Math.min(y(p.entry), y(p.sl)), plotW - zx, Math.abs(y(p.entry) - y(p.sl)));
@@ -1037,7 +1256,7 @@ function drawPick(d, ctx, w, h) {
   line(p.entry, "#ffffff", `${bull ? "Buy above" : "Sell below"} · ${p.basis}`, [], 1.5);
   line(p.sl, css("--bear"), "Stop-loss", [4, 3]);
   k.forEach((q, i) => {
-    const up = q.c >= q.o, cc = up ? css("--bull") : "#7d8796";
+    const up = q.c >= q.o, cc = up ? css("--bull") : css("--bear");
     ctx.strokeStyle = cc; ctx.fillStyle = cc;
     ctx.beginPath(); ctx.moveTo(x(i), y(q.h)); ctx.lineTo(x(i), y(q.l)); ctx.stroke();
     const bw = Math.max(1, cw * .62); ctx.fillRect(x(i) - bw / 2, y(Math.max(q.o, q.c)), bw, Math.max(1, Math.abs(y(q.o) - y(q.c))));
@@ -1081,12 +1300,13 @@ function drawBreakout(d, ctx, w, h) {
   $("lRes").textContent = d.target == null ? "—" : fmt(d.target);
   $("lLiq").textContent = `${d.time} · ${d.vol_ratio}× vol`;
 
-  const c = d.candles, padR = 70, padT = 14, padB = 14, plotW = w - padR;
+  const c = d.candles, padR = 70, padT = 14, padB = 30, plotW = w - padR;
   const extra = [d.level_price, d.stop, d.target].filter(v => v != null);
   let lo = Math.min(...extra, ...c.map(k => k.l)), hi = Math.max(...extra, ...c.map(k => k.h));
   const pad = (hi - lo) * .06; lo -= pad; hi += pad;
   const y = p => padT + (hi - p) / (hi - lo) * (h - padT - padB);
   const cw = plotW / c.length, x = i => cw * (i + .5);
+  tvBack(ctx, { c, w, h, plotW, padT, padB, lo, hi, x, y, cw });
   const labels = [];
   const line = (p, color, label, dash, width = 1) => {
     if (p == null || p < lo || p > hi) return;
@@ -1101,7 +1321,7 @@ function drawBreakout(d, ctx, w, h) {
   line(d.level_price, col, `${d.level} · ${LEVEL_NAMES[d.level] || ""}`, [], 2);
 
   c.forEach((k, i) => {
-    const up = k.c >= k.o, cc = up ? css("--bull") : "#7d8796";
+    const up = k.c >= k.o, cc = up ? css("--bull") : css("--bear");
     ctx.strokeStyle = cc; ctx.fillStyle = cc;
     ctx.beginPath(); ctx.moveTo(x(i), y(k.h)); ctx.lineTo(x(i), y(k.l)); ctx.stroke();
     const bw = Math.max(1, cw * .62), top = y(Math.max(k.o, k.c)), bh = Math.max(1, Math.abs(y(k.o) - y(k.c)));
