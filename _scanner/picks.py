@@ -5,6 +5,7 @@ trades with entry, stop-loss and targets.
             -> Good risk:reward -> OI confirms -> Top picks
 """
 from analysis import _clamp, _day, atr
+from market import supertrend
 
 SECTORS = {
     "Banks": "HDFCBANK ICICIBANK SBIN KOTAKBANK AXISBANK INDUSINDBK BANKBARODA PNB CANBK FEDERALBNK "
@@ -108,13 +109,15 @@ def hold_check(side, hi, lo, since, c15, atr15):
     return ("testing" if touched else "waiting"), None
 
 
-def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr, c15=None, atr15=None):
+def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr, c15=None, atr15=None, pdh=None, pdl=None, early=False):
     """Entry, stop and targets from the order block and/or the broken HTF level.
     A trade is only "confirmed" once a 15-minute candle has held the level (see
     hold_check); the entry is then the break of that candle (above its high for a
     buy, below its low for a sell) and the stop goes beyond the candle and the zone.
     Returns None when there is no valid plan (level broken, stop hit, target already
-    reached, ran too far, or not enough room to the next level)."""
+    reached, ran too far, or not enough room to the next level).
+    early=True (picks before 10:30): a buy only enters above yesterday's high and a
+    sell only below yesterday's low, so the opening moves have to clear them first."""
     entries = []
     if ob:
         entries.append(("Order block", ob["bottom"], ob["top"], ob.get("time", 0)))
@@ -139,6 +142,11 @@ def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr, c15=None, atr15=Non
     else:                                              # not confirmed yet: plan from the level
         entry = hi if side == "bull" else lo
         sl = lo - 0.1 * a15 if side == "bull" else hi + 0.1 * a15
+    pd_rule = False
+    if early and side == "bull" and pdh and entry < pdh:
+        entry, pd_rule = round(pdh * 1.0005, 2), True     # just above yesterday's high
+    elif early and side == "bear" and pdl and entry > pdl:
+        entry, pd_rule = round(pdl * 0.9995, 2), True     # just below yesterday's low
     risk = (entry - sl) * sign
     if risk <= 0.05 * a15:
         sl = entry - sign * 0.5 * a15                  # zone too thin: give the stop some room
@@ -177,11 +185,12 @@ def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr, c15=None, atr15=Non
             "r1_level": r1 is not None, "rr": round(rr, 2), "rr2": round((t2 - entry) * sign / risk, 2),
             "risk_pct": round(risk / entry * 100, 2), "status": status, "confirmed": bool(conf),
             "held_at": conf["t"] if conf else None, "triggered_at": hit["t"] if hit else None,
-            "action": f"{word} {entry:.2f}" if conf else
+            "pd_rule": pd_rule,
+            "action": f"{word} {entry:.2f}" + (" (yesterday's " + ("high" if side == "bull" else "low") + ")" if pd_rule else "") if conf else
                       f"Wait for a 15m candle to close {'above' if side == 'bull' else 'below'} {(hi if side == 'bull' else lo):.2f} after touching it"}
 
 
-def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_from="10:00"):
+def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_from="10:00", early=False):
     """stocks: {symbol: {"res": order-block analysis, "bo": breakout setup or None,
     "levels": HTF levels, "c15": closed 15-minute candles}}.
     Returns (candidates needing OI, finish function)."""
@@ -220,14 +229,17 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_fr
         row["stage"] = 2
         c15 = d.get("c15") or []
         atr15 = atr(c15)[-1] if len(c15) > 2 else None
-        plan = trade_plan(side, res["price"], res["atr"], ob, b, d["levels"], min_rr, c15, atr15)
+        plan = trade_plan(side, res["price"], res["atr"], ob, b, d["levels"], min_rr, c15, atr15,
+                          d.get("pdh"), d.get("pdl"), early)
         if not plan:
             continue
+        st = supertrend(c15) if len(c15) > 12 else []
+        st_info = {"ok": (st[-1][1] == 1) == (side == "bull"), "value": round(st[-1][0], 2)} if st else None
         row["stage"] = 3
         sources = (["Order block"] if ob else []) + ([f'{b["level"]} breakout'] if b else [])
         cands.append({"symbol": sym, "side": side, "base": base, "sector": sector_of(sym),
                       "sector_pct": s["pct"], "sector_rank": s["rank"], "price": res["price"],
-                      "pct": res["pct"], "plan": plan, "sources": sources})
+                      "pct": res["pct"], "plan": plan, "sources": sources, "supertrend": st_info})
     cands.sort(key=lambda c: (not c["plan"]["confirmed"], -c["base"]))   # confirmed first for OI checks
     held = [c for c in cands if c["plan"]["confirmed"]]
     for c in held:
@@ -252,7 +264,8 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_fr
             sector_pts = 20 * (1 - (c["sector_rank"] - 1) / max(1, len(sectors) - 1))
             if c["side"] == "bear":
                 sector_pts = 20 - sector_pts
-            c["score"] = round(0.5 * c["base"] + sector_pts + oi_pts + 10 * _clamp((c["plan"]["rr"] - 1) / 2), 1)
+            st_pts = 0 if not c.get("supertrend") else (5 if c["supertrend"]["ok"] else -5)   # 15-min Supertrend
+            c["score"] = round(0.5 * c["base"] + sector_pts + oi_pts + st_pts + 10 * _clamp((c["plan"]["rr"] - 1) / 2), 1)
             bucket.append(c)
             if bucket is strong:
                 flow[c["symbol"]]["stage"] = 5

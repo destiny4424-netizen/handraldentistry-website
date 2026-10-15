@@ -138,3 +138,25 @@ def verdict(nifty, bank, vix, br):
     if vix and vix["level"] == "High":
         msg += " VIX is high, so reduce position size."
     return msg + tilt
+
+
+def supertrend(candles, period=10, mult=3.0):
+    """Supertrend on the given candles: list of (line value, direction), +1 up / -1 down."""
+    out, prev_up, prev_dn, d, a = [], None, None, 1, None
+    prev_close = None
+    for c in candles:
+        tr = c["h"] - c["l"] if prev_close is None else max(c["h"] - c["l"], abs(c["h"] - prev_close), abs(c["l"] - prev_close))
+        a = tr if a is None else (a * (period - 1) + tr) / period
+        mid = (c["h"] + c["l"]) / 2
+        up, dn = mid - mult * a, mid + mult * a
+        if prev_up is not None and prev_close > prev_up:
+            up = max(up, prev_up)
+        if prev_dn is not None and prev_close < prev_dn:
+            dn = min(dn, prev_dn)
+        if prev_dn is not None and c["c"] > prev_dn:
+            d = 1
+        elif prev_up is not None and c["c"] < prev_up:
+            d = -1
+        out.append((up if d == 1 else dn, d))
+        prev_up, prev_dn, prev_close = up, dn, c["c"]
+    return out

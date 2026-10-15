@@ -309,6 +309,29 @@
     header button { padding: 6px 10px; font-size: 12px; }
     #keysBtn, #scan { padding: 6px 9px; }
   }
+  #lwc { height: 470px; } .chartwrap #chart, .chartwrap #chartOv { display: none; }
+  .tvbtn { margin-left: 8px; font-size: 12px; font-weight: 600; color: #fff; background: var(--accent); padding: 4px 10px;
+           border-radius: 4px; text-decoration: none; white-space: nowrap; }
+  @media (max-width: 1000px) { #lwc { height: 380px; } }
+  body.noside main { grid-template-columns: minmax(0, 1fr); } body.noside .ws-side, body.noside .panel.detail { display: none; }
+  .perfbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .perfbar h2 { margin: 0; font-size: 18px; } .perfbar select, .perfbar input { background: var(--card); color: var(--text);
+    border: 1px solid #363a45; border-radius: 4px; padding: 6px 8px; font: 13px var(--mono); }
+  .perfbar input { width: 110px; } .perfbar label { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .perfgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .perfsec { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; }
+  .perfsec h3 { margin: 0 0 10px; font-size: 15px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .kpi { background: var(--panel); border-radius: 4px; padding: 8px 10px; font-size: 11px; color: var(--muted); }
+  .kpi b { display: block; font: 700 16px var(--mono); color: var(--text); margin-top: 2px; }
+  .perfsec canvas { width: 100%; height: 150px; display: block; margin: 12px 0; background: var(--panel); border-radius: 4px; }
+  .ptable { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ptable th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  .ptable td { padding: 6px 4px; border-bottom: 1px solid #22262f; font-family: var(--mono); }
+  .ptable td.l { font-family: inherit; }
+  .perfsec details { margin-top: 10px; } .perfsec summary { cursor: pointer; color: var(--accent); font-size: 13px; margin-bottom: 6px; }
+  @media (max-width: 1000px) { .perfgrid { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .revised { display: block; font-size: 11px; color: var(--liq); margin-top: 3px; }
 </style>
 </head>
 <body>
@@ -319,6 +342,7 @@
     <button class="tab" data-mode="btst">BTST<span class="count" id="cntBt">0</span></button>
     <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
     <button class="tab" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
+    <button class="tab" data-mode="perf">Performance</button>
     <span class="spacer"></span>
     <button class="tab alerts" id="alertsBtn" title="Pop-up and sound when a new breakout appears">🔔 Breakout alerts: off</button>
   </nav>
@@ -383,9 +407,10 @@
     <div class="dhead">
       <span class="s" id="dSym">—</span><span class="p" id="dPrice"></span>
       <span class="tag" id="dTag"></span>
+      <a class="tvbtn" id="tvLink" target="_blank" rel="noopener" hidden>Open in TradingView ↗</a>
     </div>
     <div class="ohlc" id="ohlc"></div>
-    <div class="chartwrap"><canvas id="chart"></canvas><canvas id="chartOv"></canvas></div>
+    <div class="chartwrap"><div id="lwc"></div><canvas id="chart"></canvas><canvas id="chartOv"></canvas></div>
     <div class="levels">
       <div><span id="n1">Order block</span><b id="lZone">—</b></div>
       <div><span id="n2">Support</span><b id="lSup">—</b></div>
@@ -402,6 +427,12 @@
       <div><h2 class="bear-t">▼ Top losers · F&amp;O</h2><div id="mLose"></div></div>
     </div>
     <div class="tips" id="mTips"></div>
+  </section>
+  <section class="panel full" id="perfPanel" hidden>
+    <div class="perfbar"><h2>Performance</h2><select id="perfMonth"></select>
+      <label>Risk per trade ₹ <input id="perfRisk" type="number" min="0" step="100" placeholder="e.g. 1000"></label>
+      <small style="color:var(--muted)">Every pick the scanner gives is recorded and scored here. R = multiples of the risk; enter your ₹ risk per trade to see rupees.</small></div>
+    <div class="perfgrid"><div class="perfsec" id="perfIntra"></div><div class="perfsec" id="perfBtst"></div></div>
   </section>
   <section class="panel full" id="btstBookPanel" hidden>
     <div class="ptitle"><h2>BTST trades</h2><small>the 3 PM list is locked in and followed into the next morning: exit at target, stop, or 11:00</small></div>
@@ -453,14 +484,15 @@
   <button data-go="btst:btstPanel"><span>☾</span>BTST</button>
   <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
   <button data-go="pk:marketPanel"><span>▲</span>Market</button>
-  <button data-go="chart"><span>⌇</span>Chart</button>
+  <button data-go="perf:perfPanel"><span>%</span>Stats</button>
 </nav>
 
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 let state = null, selected = null, mode = "pk", alertsOn = false, seen = null;
-try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
+try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo", "perf"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
 const view = () => mode === "ob" ? { bullish: state.bullish, bearish: state.bearish, scores: state.scores }
                                  : state.breakouts || { bullish: [], bearish: [], scores: [] };
 
@@ -492,8 +524,10 @@ function render() {
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
   const show = { pk: ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"],
-                 btst: ["marketPanel", "btstBookPanel", "btstPanel"], ob: ["strengthPanel", "listsPanel"], bo: ["strengthPanel", "listsPanel"] };
-  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel"]
+                 btst: ["marketPanel", "btstBookPanel", "btstPanel"], ob: ["strengthPanel", "listsPanel"], bo: ["strengthPanel", "listsPanel"],
+                 perf: ["perfPanel"] };
+  document.body.classList.toggle("noside", mode === "perf");
+  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel", "perfPanel"]
     .forEach(id => $(id).hidden = !show[mode].includes(id));
   document.querySelectorAll(".bnav button").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode && b.dataset.go !== "pk:tradesPanel" && b.dataset.go !== "pk:marketPanel"));
   renderMarket(s.market);
@@ -526,6 +560,7 @@ function render() {
 
   if (mode === "pk") { renderPicks(); return; }
   if (mode === "btst") { renderBtst(); return; }
+  if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); } return; }
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
   document.querySelector("#bearList").previousElementSibling.textContent = mode === "ob" ? "↘ Bearish" : "↘ Breakdowns";
@@ -643,6 +678,7 @@ function drawChart() {
               : mode === "ob" ? ["Order block", "Support", "Resistance", "Liquidity"]
                               : ["Broken level", "Stop (candle)", "Target (next level)", "Breakout candle"];
   names.forEach((n, i) => $("n" + (i + 1)).textContent = n);
+  lwcShow(d);
   if (!d) { ["dSym", "dPrice", "dTag", "lZone", "lSup", "lRes", "lLiq"].forEach(i => $(i).textContent = i[0] === "l" ? "—" : ""); $("dSym").textContent = "—"; return; }
   if (d.pick) return drawPick(d, ctx, w, h);
   if (d.levels) return drawBreakout(d, ctx, w, h);
@@ -727,6 +763,7 @@ const istHM = t => new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-dig
 const istDay = t => new Date(t * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
 function tvBack(ctx, g) {
   const { c, w, h, plotW, padT, padB, lo, hi, x, cw } = g;
+  if (w < 20) return;                                  // the TradingView chart (lwcShow) is shown instead
   ctx.fillStyle = css("--bg"); ctx.fillRect(0, 0, w, h);
   ctx.font = `11px ${css("--mono")}`; ctx.textAlign = "left";
   const step = niceStep(hi - lo, 7), yy = v => padT + (hi - v) / (hi - lo) * (h - padT - padB);
@@ -791,6 +828,123 @@ $("chartOv").addEventListener("touchmove", crosshair, { passive: true });
 $("chartOv").addEventListener("touchstart", crosshair, { passive: true });
 $("chartOv").addEventListener("mouseleave", () => { const [ctx, w, h] = setupCanvas($("chartOv")); ctx.clearRect(0, 0, w, h); if (chartGeom) showOhlc(chartGeom.c.length - 1); });
 
+// ---------- TradingView Lightweight Charts ----------
+let lwc = null, lwcSeries = null, lwcLines = [], lwcData = [];
+const IST_OFF = 19800;                                 // the chart shows times as given: shift UTC to IST
+function lwcInit() {
+  if (lwc || !window.LightweightCharts) return;
+  const L = window.LightweightCharts;
+  lwc = L.createChart($("lwc"), {
+    autoSize: true,
+    localization: { locale: "en-IN" },
+    layout: { background: { type: "solid", color: "#131722" }, textColor: "#d1d4dc",
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif' },
+    grid: { vertLines: { color: "rgba(42,46,57,.6)" }, horzLines: { color: "rgba(42,46,57,.6)" } },
+    crosshair: { mode: L.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: "#2a2e39", scaleMargins: { top: .08, bottom: .08 } },
+    timeScale: { borderColor: "#2a2e39", timeVisible: true, secondsVisible: false, rightOffset: 6 },
+  });
+  lwcSeries = lwc.addCandlestickSeries({ upColor: "#089981", downColor: "#f23645", borderVisible: false,
+                                         wickUpColor: "#089981", wickDownColor: "#f23645" });
+  lwc.subscribeCrosshairMove(p => {
+    const k = p && p.time && p.seriesData ? p.seriesData.get(lwcSeries) : null;
+    lwcLegend(k ? { t: p.time, o: k.open, h: k.high, l: k.low, c: k.close } : null);
+  });
+}
+function lwcLegend(k) {
+  if (!k) { const d = lwcData[lwcData.length - 1]; if (!d) { $("ohlc").innerHTML = ""; return; } k = { t: d.time, o: d.open, h: d.high, l: d.low, c: d.close }; }
+  const i = lwcData.findIndex(d => d.time === k.t), prev = lwcData[i - 1], ch = prev ? (k.c - prev.close) / prev.close * 100 : 0, cl = k.c >= k.o ? "up" : "dn";
+  $("ohlc").innerHTML = `<b>${$("dSym").textContent}</b><span>${istDay(k.t - IST_OFF)} ${istHM(k.t - IST_OFF)}</span> &nbsp;O <span class="${cl}">${fmt(k.o)}</span>
+    H <span class="${cl}">${fmt(k.h)}</span> L <span class="${cl}">${fmt(k.l)}</span> C <span class="${cl}">${fmt(k.c)}</span>
+    <span class="${ch >= 0 ? "up" : "dn"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</span>`;
+}
+function lwcShow(d) {
+  lwcInit();
+  const tv = $("tvLink");
+  if (d) { tv.hidden = false; tv.href = `https://www.tradingview.com/chart/?symbol=NSE:${encodeURIComponent(d.symbol.replace(/[&-]/g, "_"))}`; }
+  else tv.hidden = true;
+  if (!lwc) return;
+  lwcLines.forEach(l => lwcSeries.removePriceLine(l)); lwcLines = [];
+  if (!d) { lwcSeries.setData([]); lwcSeries.setMarkers([]); lwcData = []; $("ohlc").innerHTML = ""; return; }
+  lwcData = d.candles.map(k => ({ time: k.t + IST_OFF, open: k.o, high: k.h, low: k.l, close: k.c }));
+  lwcSeries.setData(lwcData);
+  const line = (price, color, title, style = 2, width = 1) => {
+    if (price == null) return;
+    lwcLines.push(lwcSeries.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }));
+  };
+  const bull = d.side === "bull", col = bull ? "#089981" : "#f23645", marks = [];
+  const at = t => { const k = d.candles.find(q => q.t >= t); return k ? k.t + IST_OFF : null; };
+  if (d.pick) {
+    const p = d.pick.plan;
+    line(p.entry, "#d1d4dc", bull ? "Buy above" : "Sell below", 0, 2);
+    line(p.sl, "#f23645", "SL"); line(p.t1, "#089981", "T1"); line(p.t2, "#089981", "T2");
+    if (p.held_at && at(p.held_at)) marks.push({ time: at(p.held_at), position: bull ? "belowBar" : "aboveBar", color: col, shape: bull ? "arrowUp" : "arrowDown", text: "HELD" });
+  } else if (d.levels) {
+    line(d.level_price, col, d.level, 0, 2); line(d.stop, "#f23645", "Stop"); line(d.target, "#089981", "Target");
+    d.levels.filter(l => Math.abs(l.price - d.level_price) > 1e-6).forEach(l => line(l.price, "#5d6776", l.name, 3));
+    if (d.breakout_index != null && d.candles[d.breakout_index])
+      marks.push({ time: d.candles[d.breakout_index].t + IST_OFF, position: bull ? "belowBar" : "aboveBar", color: col, shape: bull ? "arrowUp" : "arrowDown", text: bull ? "Breakout" : "Breakdown" });
+  } else if (d.zone) {
+    line(d.zone.top, col, "OB top", 0); line(d.zone.bottom, col, "OB bottom", 0);
+    line(d.support, "#787b86", "Support"); line(d.resistance, "#787b86", "Resistance"); line(d.liquidity, "#ff9800", "Liquidity");
+  }
+  lwcSeries.setMarkers(marks);
+  lwc.timeScale().fitContent();
+  lwcLegend(null);
+}
+
+// ---------- Performance ----------
+let perfData = null, perfMonth = null;
+try { $("perfRisk").value = localStorage.getItem("perfRisk") || ""; } catch {}
+async function loadPerf() {
+  const m = perfMonth || "";
+  try { const r = await fetch(`/api/performance?month=${m}`, { cache: "no-store" }); if (r.ok) perfData = await r.json(); } catch {}
+  renderPerf();
+}
+function renderPerf() {
+  const d = perfData; if (!d) return;
+  perfMonth = d.month;
+  $("perfMonth").innerHTML = d.months.map(m => `<option value="${m}"${m === d.month ? " selected" : ""}>${new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</option>`).join("");
+  const risk = +$("perfRisk").value || 0;
+  const rs = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v}R${risk ? ` <small style="color:var(--muted)">(₹${Math.round(v * risk).toLocaleString("en-IN")})</small>` : ""}`;
+  const col = v => v == null ? "" : v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
+  const sec = (el, title, part, kind) => {
+    const sm = part.summary;
+    el.innerHTML = `<h3>${title}</h3>
+      <div class="kpis">
+        <div class="kpi">Total<b style="color:${col(sm.total_r)}">${rs(sm.total_r)}</b></div>
+        <div class="kpi">Win rate<b>${sm.win_rate == null ? "—" : sm.win_rate + "%"}</b></div>
+        <div class="kpi">Trades closed<b>${sm.closed}</b></div>
+        <div class="kpi">Won / lost<b><span style="color:${css("--bull")}">${sm.wins}</span> / <span style="color:${css("--bear")}">${sm.losses}</span></b></div>
+        <div class="kpi">Avg per trade<b style="color:${col(sm.avg_r)}">${sm.avg_r == null ? "—" : (sm.avg_r >= 0 ? "+" : "") + sm.avg_r + "R"}</b></div>
+        <div class="kpi">Profit factor<b>${sm.profit_factor ?? "—"}</b></div>
+        <div class="kpi">Best / worst<b>${sm.best ?? "—"} / ${sm.worst ?? "—"}</b></div>
+        <div class="kpi">Losing streak<b>${sm.losing_streak}</b></div>
+      </div>
+      <canvas></canvas>
+      <table class="ptable"><tr><th>Day</th><th>${kind === "btst" ? "Picks" : "Picks"}</th><th>Closed</th><th>W / L</th><th>Result</th></tr>
+        ${part.days.map(x => `<tr><td class="l">${new Date(x.day + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", weekday: "short" })}</td>
+          <td>${x.picks}</td><td>${x.closed}</td><td>${x.wins} / ${x.losses}</td><td style="color:${col(x.total_r)}">${rs(x.total_r)}</td></tr>`).join("") || `<tr><td colspan="5" class="l">No trades this month yet.</td></tr>`}
+      </table>
+      <details><summary>All ${part.trades.length} trades</summary>
+        <table class="ptable"><tr><th>Day</th><th>Stock</th><th>Status</th><th>Result</th></tr>
+        ${part.trades.map(t => `<tr><td class="l">${t.day.slice(5)}</td><td class="l">${t.side === "bull" ? "▲" : "▼"} <b>${t.symbol}</b></td>
+          <td class="l">${t.status}${t.revised ? `<span class="revised">${t.revised}</span>` : ""}</td>
+          <td style="color:${col(t.result_r)}">${t.result_r == null ? "—" : rs(t.result_r)}</td></tr>`).join("")}</table></details>`;
+    const [ctx, w, h] = setupCanvas(el.querySelector("canvas"));                 // equity curve, cumulative R by day
+    let cum = 0; const pts = [0, ...part.days.map(x => (cum += x.total_r))];
+    const lo = Math.min(0, ...pts), hi = Math.max(0, ...pts), y = v => 10 + (hi - v) / ((hi - lo) || 1) * (h - 20), xx = i => 10 + i / Math.max(1, pts.length - 1) * (w - 20);
+    ctx.strokeStyle = "rgba(255,255,255,.2)"; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(0, y(0)); ctx.lineTo(w, y(0)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = cum >= 0 ? css("--bull") : css("--bear"); ctx.lineWidth = 2; ctx.beginPath();
+    pts.forEach((v, i) => i ? ctx.lineTo(xx(i), y(v)) : ctx.moveTo(xx(i), y(v))); ctx.stroke(); ctx.lineWidth = 1;
+    ctx.fillStyle = css("--muted"); ctx.font = `11px ${css("--mono")}`; ctx.fillText(`Equity curve: ${cum >= 0 ? "+" : ""}${cum.toFixed(2)}R`, 12, 16);
+  };
+  sec($("perfIntra"), "Intraday (Top Picks)", d.intraday, "intra");
+  sec($("perfBtst"), "BTST / STBT", d.btst, "btst");
+}
+$("perfMonth").onchange = () => { perfMonth = $("perfMonth").value; loadPerf(); };
+$("perfRisk").oninput = () => { try { localStorage.setItem("perfRisk", $("perfRisk").value); } catch {} renderPerf(); };
+
 // ---------- BTST ----------
 function renderBtst() {
   const b = state.btst || { open: false, from: "12:00", picks: [], book: { rows: [], summary: {} } };
@@ -850,6 +1004,8 @@ function pickChips(c) {
   if (c.vwap_ok != null) out.push(c.vwap_ok ? `<span class="ok">✓ ${c.side === "bull" ? "ABOVE" : "BELOW"} VWAP ${fmt(c.vwap)}</span>`
                                             : `<span class="bad">⚠ ${c.side === "bull" ? "BELOW" : "ABOVE"} VWAP ${fmt(c.vwap)}</span>`);
   if (c.rvol != null) out.push(`<span class="${c.rvol >= 1.5 ? "ok" : ""}">RVOL ${c.rvol}×</span>`);
+  if (c.supertrend) out.push(c.supertrend.ok ? `<span class="ok">✓ SUPERTREND ${fmt(c.supertrend.value)}</span>`
+                                             : `<span class="bad">⚠ SUPERTREND AGAINST</span>`);
   if (c.rs != null) out.push(`<span class="${(c.side === "bull" ? c.rs > 0 : c.rs < 0) ? "ok" : "bad"}">VS NIFTY ${c.rs >= 0 ? "+" : ""}${c.rs}%</span>`);
   return out.join("");
 }
@@ -931,7 +1087,7 @@ function renderTrades(tv) {
         <span><span class="badge" style="font-size:10px;padding:1px 6px;background:${r.side === "bull" ? css("--bull") : css("--bear")};color:${r.side === "bull" ? "#04140c" : "#fff"}">${r.side === "bull" ? "BUY" : "SELL"}</span> <span class="sym">${r.symbol}</span></span>
         <span class="num hide-s">${fmt(r.entry)}</span><span class="num hide-s" style="color:#ff8193">${fmt(r.sl)}</span>
         <span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t1)}</span><span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t2)}</span>
-        <span class="st"><span class="tst ${cls(r)}">${r.status}${when ? " " + when : ""}</span>${r.last != null ? ` <span class="tm">now ${fmt(r.last)}</span>` : ""}</span>
+        <span class="st"><span class="tst ${cls(r)}">${r.status}${when ? " " + when : ""}</span>${r.last != null ? ` <span class="tm">now ${fmt(r.last)}</span>` : ""}${r.revised ? `<span class="revised">↻ ${r.revised}</span>` : ""}</span>
         <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}${live ? "*" : ""}</span>
       </div>`;
     }).join("") + `<div class="hint" style="margin-top:8px;font-size:11px;color:var(--muted)">R = multiples of the risk (entry to stop). Half is booked at T1 and the stop moves to cost; the rest rides to T2. * = still open. Untriggered picks expire at 3:00 PM; open trades close at 3:15 PM.</div>`;

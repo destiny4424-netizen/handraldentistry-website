@@ -171,15 +171,30 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
   between 3:15 and 3:25 PM and exit the next morning. The 3 PM list is locked in and followed into the
   next session (target, stop, or 11:00 exit).
 - The app looks like the TradingView app:
-  - a dark theme, with a big chart that has a price scale, time axis, volume bars, a crosshair and an OHLC readout
+  - a dark theme, with a candle chart drawn by TradingView's own Lightweight Charts library
+    (no volume bars), with entry, stop and target lines, a crosshair and an OHLC readout
+  - an **Open in TradingView** button that opens the same stock on tradingview.com
   - a watchlist on the right
-  - a bottom bar on the iPhone: Picks, BTST, Trades, Market, Chart
+  - a bottom bar on the iPhone: Picks, BTST, Trades, Market, Stats
 - Runs 24/7 on the droplet, whether your PC is on or off. It scans during
   market hours (9:15–15:30 IST, Mon–Fri), starts on boot and restarts itself if it ever stops.
 - A trade is only listed after price has come back to its level and a 15-minute candle has closed
   holding it. It then says "Buy above …" (the high of that candle) with the stop beyond the level.
   Setups still waiting for that go on the Watchlist. No picks appear before 10:00 IST (changeable
   in Settings), because confirmations after the first hour are cleaner.
+- **Early picks (up to 10:30):** a long must also clear yesterday's high, and a short must break
+  yesterday's low. If the level is still inside yesterday's range, the entry is moved to yesterday's high/low.
+- **Supertrend (10, 3) on 15 minutes** is part of the score; a pick shows ✓ when it agrees.
+- **Momentum review:** at every 15-minute close after entry, a trade is checked against VWAP and Supertrend.
+  - If both turn against it, the trade is exited.
+  - If one turns, Target 2 is cut to Target 1 and the stop goes to cost once the trade is 0.5R up. If Target 1 is already booked, the rest is booked.
+  - The Trades list marks these "↻ revised".
+- **Performance tab (Stats on the iPhone):** every intraday pick and BTST trade for the month is shown, including:
+  - win rate and total R
+  - profit factor
+  - an equity curve
+  - a day-by-day table
+  Pick the month at the top, and enter ₹ per trade to see rupees.
 - Open the address on the iPhone in Safari, sign in with the password (it stays signed in for
   90 days), then **Share → Add to Home Screen** for an app icon.
 - **Dhan token:** tap **Settings** (or **Connect Dhan**) and paste the Client ID and access token
