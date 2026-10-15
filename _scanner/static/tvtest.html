@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingView app test</title>
+<style>
+  body { margin: 0; padding: 16px; background: #131722; color: #d1d4dc; font: 15px -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 8px; } p { color: #9598a1; font-size: 14px; line-height: 1.5; }
+  ol { padding-left: 0; list-style: none; counter-reset: n; }
+  li { counter-increment: n; background: #1e222d; border: 1px solid #2a2e39; border-radius: 12px; padding: 12px; margin: 10px 0; }
+  li::before { content: counter(n); display: inline-block; width: 26px; height: 26px; border-radius: 50%; background: #2962ff;
+               color: #fff; text-align: center; line-height: 26px; font-weight: 700; margin-right: 8px; }
+  a { display: inline-block; margin-top: 8px; padding: 10px 14px; border-radius: 10px; background: #2962ff; color: #fff; text-decoration: none; font-weight: 600; }
+  code { display: block; margin-top: 6px; color: #9598a1; font-size: 12px; word-break: break-all; }
+</style></head><body>
+<h1>Which link opens the TradingView app?</h1>
+<p>Open this page in <b>Safari</b> on the iPhone. Tap each button and note what happens. Come back here after each try.
+Send Claude the numbers that opened <b>SBIN's chart in the TradingView app</b>, and the numbers that opened the app but not the chart.</p>
+<ol id="list"></ol>
+<script>
+const S = "NSE:SBIN", sc = u => "shortcuts://run-shortcut?name=" + encodeURIComponent("TradingView Chart") + "&input=text&text=" + encodeURIComponent(u);
+const tests = [
+  ["Website symbol page", "https://www.tradingview.com/symbols/NSE-SBIN/"],
+  ["India site symbol page", "https://in.tradingview.com/symbols/NSE-SBIN/"],
+  ["App link: chart", "tradingview://chart?symbol=" + encodeURIComponent(S)],
+  ["App link: symbol", "tradingview://symbols/NSE-SBIN"],
+  ["App link: plain (only tests whether the app opens)", "tradingview://"],
+  ["Shortcut with symbol page", sc("https://www.tradingview.com/symbols/NSE-SBIN/")],
+  ["Shortcut with India site", sc("https://in.tradingview.com/chart/?symbol=" + encodeURIComponent(S))],
+];
+document.getElementById("list").innerHTML = tests.map(([n, u]) =>
+  `<li><b>${n}</b><code>${u.replace(/&/g, "&amp;")}</code><a href="${u.replace(/"/g, "&quot;")}">Try</a></li>`).join("");
+</script>
+</body></html>
