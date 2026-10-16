@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "16 Oct · TradingView link test"
+VERSION = "16 Oct · TradingView app + paste"
 
 
 def load_env():
@@ -981,8 +981,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, page, "text/html; charset=utf-8")
         if url.path in ("/", "/index.html"):
             self.send(200, (HERE / "static" / "index.html").read_bytes(), "text/html; charset=utf-8")
-        elif url.path == "/tvtest":
-            self.send(200, (HERE / "static" / "tvtest.html").read_bytes(), "text/html; charset=utf-8")
         elif url.path == "/api/state":
             with LOCK:
                 self.send(200, dict(STATE, local=self.is_local(), admin=self.can_admin(), cloud=CLOUD))

@@ -175,8 +175,8 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
     (no volume bars), with entry, stop and target lines, a crosshair and an OHLC readout
   - an **Open in TradingView** button that opens the same stock in the TradingView app on Android and iPhone
     or on tradingview.com on a computer. The iPhone doesn't let web pages open apps, so the first tap shows how to
-    make a one-step Apple Shortcut named **TradingView Chart** (Open URLs → Shortcut Input). The scanner passes it
-    the stock's TradingView chart address, and iOS opens that in the TradingView app. Change it under Settings.
+    make a one-step Apple Shortcut named **TradingView Chart** (Open App → TradingView). After that the button
+    copies the symbol (e.g. NSE:SBIN) and opens the app; paste it in the app's search. Change it under Settings.
   - a watchlist on the right
   - a bottom bar on the iPhone: Picks, BTST, Trades, Market, Stats
 - Runs 24/7 on the droplet, whether your PC is on or off. It scans during
