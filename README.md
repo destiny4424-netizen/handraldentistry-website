@@ -52,6 +52,9 @@ To point it at a specific file: `... | sudo BOOKS_OLD_DB=/root/books.db bash`.
   droplet picks it up by itself. It backs up the database first, and if the new version
   fails to start it goes back to the previous one automatically.
 - Backs up the database every night to `/var/lib/handral-books/backups` (45 days kept).
+- Keeps Node.js patched if anything on the droplet installed it (these apps don't use it):
+  it is updated to a release with the latest security fixes and the services using it are
+  restarted. What it did is in `journalctl -u handral-books-update`.
 - Served at a secure `https://` address with a username and password (via Caddy, which
   renews the certificate by itself). The setup prints the address and password at the
   end; to see them again: `sudo cat /etc/handral-books/login.txt`.
