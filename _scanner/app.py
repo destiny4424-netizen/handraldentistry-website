@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "16 Oct · TradingView app + paste"
+VERSION = "25 Oct · liquid F&O stocks only"
 
 
 def load_env():
@@ -122,6 +122,9 @@ N_PICKS = int(ENV.get("PICKS", "6"))                  # how many top picks to sh
 MIN_RR = float(ENV.get("MIN_RR", "1.5"))               # minimum reward:risk to the first target
 MIN_SETUP = float(ENV.get("MIN_SETUP_SCORE", "55"))    # order block / breakout score needed to go on
 OI_CHECKS = int(ENV.get("OI_CHECKS", "30"))            # shortlisted stocks to check futures OI for
+LIQ_DAYS = 20                                          # liquidity = averages over the last 20 sessions
+MIN_TURNOVER_CR = 200                                  # default: ₹200 crore traded a day on average
+MIN_VOLUME_LAKH = 5                                    # default: 5 lakh shares a day on average
 ONLY = [s.strip().upper() for s in ENV.get("SYMBOLS", "").split(",") if s.strip()]
 
 
@@ -296,6 +299,7 @@ def demo_daily(symbol, intraday):
     rng = random.Random(symbol + "daily")
     first = intraday[0]
     price, out = first["o"], []
+    demo_vol = int(rng.uniform(1e5, 1.5e7) / max(1, first["o"] / 1000))   # some demo stocks trade thin
     day0 = (first["t"] + 19800) // 86400
     for back in range(1, 100):
         day = day0 - back
@@ -305,7 +309,7 @@ def demo_daily(symbol, intraday):
         o = c * (1 + rng.gauss(0, 0.012))
         h = max(o, c) * (1 + abs(rng.gauss(0, 0.006)))
         l = min(o, c) * (1 - abs(rng.gauss(0, 0.006)))
-        out.append({"t": day * 86400 - 19800, "o": o, "h": h, "l": l, "c": c, "v": 1})
+        out.append({"t": day * 86400 - 19800, "o": o, "h": h, "l": l, "c": c, "v": demo_vol})
         price = o
     out.reverse()
     by_day = {}
@@ -351,11 +355,45 @@ def set_state(**kw):
         STATE.update(kw)
 
 
-def fetch_stock(sym, sid, demo):
-    """Order-block candles, 15-minute breakout candles and daily candles for one stock."""
+def liquidity(daily):
+    """Average daily turnover (₹ crore) and volume (shares) over the last LIQ_DAYS finished sessions."""
+    today = analysis._day(time.time())
+    past = [d for d in daily if analysis._day(d["t"]) < today][-LIQ_DAYS:]
+    if len(past) < 5:
+        return None                                    # too new to judge: keep it
+    return {"turnover_cr": round(sum(d["c"] * d["v"] for d in past) / len(past) / 1e7, 1),
+            "volume": int(sum(d["v"] for d in past) / len(past))}
+
+
+def liq_limits():
+    """(minimum turnover in ₹ crore, minimum volume in lakh shares) from Settings; 0 switches one off."""
+    t, v = SETTINGS.get("min_turnover_cr"), SETTINGS.get("min_volume_lakh")
+    return (float(MIN_TURNOVER_CR if t is None else t), float(MIN_VOLUME_LAKH if v is None else v))
+
+
+def liquid_enough(liq):
+    if not liq:
+        return True
+    min_t, min_v = liq_limits()
+    return liq["turnover_cr"] >= min_t and liq["volume"] >= min_v * 1e5
+
+
+def fetch_stock(sym, sid, demo, keep=False):
+    """Order-block candles, 15-minute breakout candles and daily candles for one stock.
+    Returns (None, None, daily) for a stock that doesn't trade enough (unless keep is set)."""
     if demo:
         candles = demo_candles(sym)
-        return candles, breakout.resample(candles, BREAKOUT_TF), demo_daily(sym, candles)
+        daily = demo_daily(sym, candles)
+        if not keep and not liquid_enough(liquidity(daily)):
+            return None, None, daily
+        return candles, breakout.resample(candles, BREAKOUT_TF), daily
+    today = datetime.now(IST).date()
+    cached = DAILY.get(sid)
+    if not cached or cached[0] != today:             # daily levels only change once a day
+        DAILY[sid] = (today, dhan_daily(sid))
+        time.sleep(0.25)
+    if not keep and not liquid_enough(liquidity(DAILY[sid][1])):
+        return None, None, DAILY[sid][1]             # thin stock: skip the intraday calls
     candles = dhan_candles(sid)
     time.sleep(0.25)                                 # Dhan data API: 5 requests a second
     tf = int(TIMEFRAME)
@@ -363,11 +401,6 @@ def fetch_stock(sym, sid, demo):
         c15 = breakout.resample(candles, BREAKOUT_TF)  # build 15m from the same data, no extra call
     else:
         c15 = breakout.resample(dhan_candles(sid, BREAKOUT_TF), BREAKOUT_TF)
-        time.sleep(0.25)
-    today = datetime.now(IST).date()
-    cached = DAILY.get(sid)
-    if not cached or cached[0] != today:             # daily levels only change once a day
-        DAILY[sid] = (today, dhan_daily(sid))
         time.sleep(0.25)
     return candles, c15, DAILY[sid][1]
 
@@ -407,14 +440,17 @@ def scan_once():
     demo = DEMO                                      # keys can be added mid-scan
     stocks = {s: s for s in DEMO_SYMBOLS} if demo else fno_stocks()
     set_state(status="scanning", total=len(stocks), scanned=0,
-              message=f"Scanning {len(stocks)} F&O stocks…")
+              message=f"Scanning {len(stocks)} F&O stocks (liquid ones only)…")
     results, candles_by, bo, funnel_in = {}, {}, {}, {}
+    thin, liq_of = [], {}
+    # Stocks with a trade still being followed are always fetched, liquid or not.
+    keep = {r["symbol"] for r in TRADES.rows} | {r["symbol"] for r in BTSTS.rows if r.get("result_r") is None}
     idx = fetch_market(demo)
     for n, (sym, sid) in enumerate(stocks.items(), 1):
         try:
             if demo != DEMO:
                 return                                   # switched to live keys: stop this scan
-            candles, c15, daily = fetch_stock(sym, sid, demo)
+            candles, c15, daily = fetch_stock(sym, sid, demo, keep=sym in keep)
         except DhanError as e:
             if e.fatal:
                 raise
@@ -423,10 +459,19 @@ def scan_once():
         except Exception as e:                       # one bad stock shouldn't stop the scan
             print(f"  {sym}: {e}", file=sys.stderr)
             continue
+        liq_of[sym] = liquidity(daily)
+        if candles is None:
+            thin.append(sym)
+            set_state(scanned=n)
+            continue
         res = analysis.analyse(candles, SWING)
+        if res and sym in keep and not liquid_enough(liq_of[sym]):
+            candles_by[sym] = candles                  # followed for its trade only, not scanned for new ones
+            res = None
         if res:
             res["vwap"] = market.vwap(candles)
             res["rvol"] = market.rvol(candles, daily)
+            res["liq"] = liq_of[sym]
             results[sym], candles_by[sym] = res, candles
             now_ts = c15[-1]["end"] if demo else time.time()
             setup, levels = breakout.detect(c15, daily, now_ts, res["price"])
@@ -524,6 +569,7 @@ def scan_once():
             c["vwap"] = round(r["vwap"], 2)
             c["vwap_ok"] = (r["price"] >= r["vwap"]) if is_bull else (r["price"] <= r["vwap"])
         c["rvol"] = r.get("rvol")
+        c["liq"] = r.get("liq")
         if nifty:
             c["market"] = ("with" if nifty["trend"] == ("Bullish" if is_bull else "Bearish")
                            else "neutral" if nifty["trend"] == "Sideways" else "against")
@@ -594,7 +640,9 @@ def scan_once():
         PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"]})
         BTST_PICKS.clear()
         BTST_PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in btst_picks})
-        STATE.update(status="live", message="", scores=scores, breakouts=breakouts, picks=top, market=mkt,
+        STATE.update(status="live", message="", scores=scores,
+                     universe={"total": len(stocks), "liquid": len(stocks) - len(thin), "skipped": len(thin),
+                               "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1]}, breakouts=breakouts, picks=top, market=mkt,
                      trades=TRADES.view(), btst=btst_state,
                      last_scan=datetime.now(IST).strftime("%H:%M"),
                      bullish=[row(s, "bull") for s in bull[:TOP_N]],
@@ -994,6 +1042,7 @@ class Handler(BaseHTTPRequestHandler):
                             "has_pin": bool(SETTINGS.get("pin_hash")), "listening": HOST == "0.0.0.0",
                             "cloud": CLOUD, "public_url": PUBLIC_URL,
                             "picks_from": SETTINGS.get("picks_from") or "10:00",
+                            "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
         elif url.path == "/api/performance":
@@ -1039,7 +1088,18 @@ class Handler(BaseHTTPRequestHandler):
                 and "09:15" <= t <= "15:30" and int(t[3:]) < 60
             if not ok:
                 return self.send(400, {"error": "Pick a time between 09:15 and 15:30."})
-            save_settings(picks_from=t)
+            liq = {}
+            for key, lo, hi in (("min_turnover_cr", 0, 5000), ("min_volume_lakh", 0, 500)):
+                if body.get(key) in (None, ""):
+                    continue
+                try:
+                    v = float(body[key])
+                except (TypeError, ValueError):
+                    v = -1
+                if not lo <= v <= hi:
+                    return self.send(400, {"error": "Liquidity: turnover 0–5000 crore, volume 0–500 lakh."})
+                liq[key] = v
+            save_settings(picks_from=t, **liq)
             WAKE.set()                                  # rescan so the change shows now
             return self.send(200, {"ok": True})
         if path == "/api/forget":

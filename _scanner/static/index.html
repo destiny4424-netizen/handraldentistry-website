@@ -397,6 +397,13 @@
       <input id="pickFrom" type="time" min="09:15" max="15:30" step="900" value="10:00">
       <div class="hint">Before this time, setups whose level has already held wait on the Watchlist. They become
       picks at this time if the level still holds. 10:00 gives cleaner confirmations.</div>
+      <b style="font-size:14px;display:block;margin-top:14px">Liquid stocks only</b>
+      <div class="hint">Only F&amp;O stocks that trade enough are scanned (averages of the last 20 sessions).
+      Thin stocks have wide spreads and jumpy moves. Set a box to 0 to switch that check off.</div>
+      <label for="minTurn">Minimum turnover a day (₹ crore)</label>
+      <input id="minTurn" type="number" inputmode="decimal" min="0" max="5000" step="10" value="200">
+      <label for="minVol">Minimum volume a day (lakh shares)</label>
+      <input id="minVol" type="number" inputmode="decimal" min="0" max="500" step="1" value="5">
       <div class="actions" style="margin-top:10px"><button type="button" id="prefSave">Save</button></div>
       <div class="err" id="prefErr"></div>
     </div>
@@ -1055,6 +1062,7 @@ function pickChips(c) {
   if (c.vwap_ok != null) out.push(c.vwap_ok ? `<span class="ok">✓ ${c.side === "bull" ? "ABOVE" : "BELOW"} VWAP ${fmt(c.vwap)}</span>`
                                             : `<span class="bad">⚠ ${c.side === "bull" ? "BELOW" : "ABOVE"} VWAP ${fmt(c.vwap)}</span>`);
   if (c.rvol != null) out.push(`<span class="${c.rvol >= 1.5 ? "ok" : ""}">RVOL ${c.rvol}×</span>`);
+  if (c.liq) out.push(`<span title="Average traded value and volume a day, last 20 sessions">₹${Math.round(c.liq.turnover_cr).toLocaleString("en-IN")} CR/DAY · ${(c.liq.volume / 1e5).toFixed(1)}L SH</span>`);
   if (c.supertrend) out.push(c.supertrend.ok ? `<span class="ok">✓ SUPERTREND ${fmt(c.supertrend.value)}</span>`
                                              : `<span class="bad">⚠ SUPERTREND AGAINST</span>`);
   if (c.rs != null) out.push(`<span class="${(c.side === "bull" ? c.rs > 0 : c.rs < 0) ? "ok" : "bad"}">VS NIFTY ${c.rs >= 0 ? "+" : ""}${c.rs}%</span>`);
@@ -1160,7 +1168,9 @@ function renderPicks() {
       <span class="pv" style="color:${up ? css("--bull") : css("--bear")}">${pct(r.pct)}</span></div>`;
   }).join("") || `<div class="empty">Waiting for scan…</div>`;
   $("secNote").textContent = pk.sectors.length ? "average move of the F&O stocks in each sector today" : "";
-  $("pickNote").textContent = pk.picks.length ? `price held the level on a 15m close · best ${pk.picks.length} after all filters · min R:R ${state.min_rr || 1.5}` : "";
+  const uv = state.universe;
+  $("pickNote").textContent = (uv ? `${uv.liquid} of ${uv.total} F&O stocks liquid enough (₹${uv.min_turnover_cr} cr+ a day) · ` : "") +
+    (pk.picks.length ? `price held the level on a 15m close · best ${pk.picks.length} after all filters · min R:R ${state.min_rr || 1.5}` : "");
   const hm = t => new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
   $("watchList").innerHTML = (pk.watch || []).map(w => `<div class="watch ${w.side}">
       <span class="badge" style="font-size:11px;padding:2px 7px">${w.side === "bull" ? "BULL" : "BEAR"}</span>
@@ -1615,6 +1625,7 @@ async function loadSettings() {
       (tk.note ? `<br><span style="color:#ffb3bf">${tk.note}</span>` : "");
   if (st.cloud) $("savedWhere").textContent = "Everything here is saved on the server, so it stays across updates and restarts.";
   $("pickFrom").value = st.picks_from || "10:00";
+  $("minTurn").value = st.min_turnover_cr ?? 200; $("minVol").value = st.min_volume_lakh ?? 5;
   $("cloudSect").hidden = !st.cloud; $("phoneSect").hidden = !!st.cloud;
   $("cloudUrl").textContent = st.public_url || location.origin;
   $("phoneOn").checked = st.phone;
@@ -1659,8 +1670,8 @@ $("forget").onclick = async () => {
 $("prefSave").onclick = async () => {
   $("prefErr").style.color = ""; $("prefErr").textContent = "";
   try {
-    await post("/api/prefs", { picks_from: $("pickFrom").value });
-    $("prefErr").style.color = "var(--bull)"; $("prefErr").textContent = `Saved. Top Picks start at ${$("pickFrom").value}. Rescanning…`;
+    await post("/api/prefs", { picks_from: $("pickFrom").value, min_turnover_cr: $("minTurn").value, min_volume_lakh: $("minVol").value });
+    $("prefErr").style.color = "var(--bull)"; $("prefErr").textContent = `Saved. Top Picks start at ${$("pickFrom").value}; stocks under ₹${$("minTurn").value} cr or ${$("minVol").value} lakh shares a day are skipped. Rescanning…`;
     setTimeout(refresh, 800);
   } catch (err) { $("prefErr").textContent = err.message; }
 };

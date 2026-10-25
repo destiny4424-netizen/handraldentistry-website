@@ -188,6 +188,10 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
   holding it. It then says "Buy above …" (the high of that candle) with the stop beyond the level.
   Setups still waiting for that go on the Watchlist. No picks appear before 10:00 IST (changeable
   in Settings), because confirmations after the first hour are cleaner.
+- **Liquid stocks only:** F&O stocks are scanned only if, over the last 20 sessions, they traded at least
+  ₹200 crore and 5 lakh shares a day on average. Thin stocks are skipped before any intraday data is fetched.
+  Change both under Settings → Top Picks; 0 switches a check off. Each pick shows its ₹ cr/day.
+  Stocks with an open trade are still followed.
 - **Early picks (up to 10:30):** a long must also clear yesterday's high, and a short must break
   yesterday's low. If the level is still inside yesterday's range, the entry is moved to yesterday's high/low.
 - **Supertrend (10, 3) on 15 minutes** is part of the score; a pick shows ✓ when it agrees.
