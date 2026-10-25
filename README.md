@@ -207,6 +207,12 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
   holding it. It then says "Buy above …" (the high of that candle) with the stop beyond the level.
   Setups still waiting for that go on the Watchlist. Picks come from the 9:30 scan onwards (changeable
   in Settings). Before 10:30, a long must also clear yesterday's high and a short yesterday's low.
+- **Intraday checks:** each pick is scored and tagged for:
+  - a 15-minute close beyond yesterday's high/low (PDH/PDL breakout, weighted the most)
+  - an opening-range breakout
+  - the CPR
+  - a big gap
+- **Phone layout:** every tab opens on its stock list. Tap a stock to scroll down to its chart.
 - **Liquid stocks only:** F&O stocks are scanned only if, over the last 20 sessions, they traded at least
   ₹200 crore and 5 lakh shares a day on average. Thin stocks are skipped before any intraday data is fetched.
   Change both under Settings → Intraday; 0 switches a check off. Settings also lists the stocks left out today. Each pick shows its ₹ cr/day.

@@ -4,8 +4,12 @@ trades with entry, stop-loss and targets.
     Scanned -> Setup (order block / HTF breakout) -> Sector agrees
             -> Good risk:reward -> OI confirms -> Top picks
 """
+from datetime import datetime, timedelta, timezone
+
 from analysis import _clamp, _day, atr
 from market import supertrend
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 SECTORS = {
     "Banks": "HDFCBANK ICICIBANK SBIN KOTAKBANK AXISBANK INDUSINDBK BANKBARODA PNB CANBK FEDERALBNK "
@@ -190,6 +194,55 @@ def trade_plan(side, price, atr, ob, bo, htf_levels, min_rr, c15=None, atr15=Non
                       f"Wait for a 15m candle to close {'above' if side == 'bull' else 'below'} {(hi if side == 'bull' else lo):.2f} after touching it"}
 
 
+def day_checks(side, c15, pdh, pdl, pdc, price):
+    """Classic intraday checks on today's closed 15-minute candles:
+    - PDH/PDL breakout: a 15m candle has closed above yesterday's high (buy) / below its low (sell)
+    - ORB: a 15m candle has closed beyond the first 15 minutes' range (9:15-9:30)
+    - CPR: price above the central pivot range (buy) / below it (sell); a narrow CPR hints at a trend day
+    - Gap: today's open against yesterday's close; a big gap often partly fills"""
+    if not c15:
+        return {}
+    today = [c for c in c15 if _day(c["t"]) == _day(c15[-1]["t"])]
+    if not today:
+        return {}
+    bull, out = side == "bull", {}
+    hm = lambda t: datetime.fromtimestamp(t + 900, IST).strftime("%H:%M")   # candle close time
+    lvl = pdh if bull else pdl
+    if lvl:
+        hit = next((c for c in today if (c["c"] > lvl if bull else c["c"] < lvl)), None)
+        still = (price > lvl) if bull else (price < lvl)
+        out["pd"] = {"ok": bool(hit and still), "level": round(lvl, 2), "time": hm(hit["t"]) if hit else None,
+                     "lost": bool(hit and not still)}
+    orh, orl = today[0]["h"], today[0]["l"]
+    brk = next((c for c in today[1:] if (c["c"] > orh if bull else c["c"] < orl)), None)
+    out["orb"] = {"ok": bool(brk), "level": round(orh if bull else orl, 2), "time": hm(brk["t"]) if brk else None}
+    if pdh and pdl and pdc:
+        pivot = (pdh + pdl + pdc) / 3
+        bc = (pdh + pdl) / 2
+        tc = 2 * pivot - bc
+        top, bot = max(tc, bc), min(tc, bc)
+        width = (top - bot) / pivot * 100
+        out["cpr"] = {"ok": price > top if bull else price < bot, "top": round(top, 2), "bottom": round(bot, 2),
+                      "narrow": width < 0.25, "width": round(width, 2)}
+        gap = (today[0]["o"] - pdc) / pdc * 100
+        out["gap"] = {"pct": round(gap, 2), "big": abs(gap) >= 3, "with": (gap > 0) == bull}
+    return out
+
+
+def check_points(ch):
+    """Score from the intraday checks (PDH/PDL breakout counts the most)."""
+    pts = 0
+    if "pd" in ch:
+        pts += 10 if ch["pd"]["ok"] else -5
+    if ch.get("orb", {}).get("ok"):
+        pts += 4
+    if "cpr" in ch:
+        pts += (3 + (2 if ch["cpr"]["narrow"] else 0)) if ch["cpr"]["ok"] else -2
+    if ch.get("gap", {}).get("big"):
+        pts -= 3                                       # gap-fill risk
+    return pts
+
+
 def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_from="10:00", early=False):
     """stocks: {symbol: {"res": order-block analysis, "bo": breakout setup or None,
     "levels": HTF levels, "c15": closed 15-minute candles}}.
@@ -239,7 +292,8 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_fr
         sources = (["Order block"] if ob else []) + ([f'{b["level"]} breakout'] if b else [])
         cands.append({"symbol": sym, "side": side, "base": base, "sector": sector_of(sym),
                       "sector_pct": s["pct"], "sector_rank": s["rank"], "price": res["price"],
-                      "pct": res["pct"], "plan": plan, "sources": sources, "supertrend": st_info})
+                      "pct": res["pct"], "plan": plan, "sources": sources, "supertrend": st_info,
+                      "checks": day_checks(side, c15, d.get("pdh"), d.get("pdl"), d.get("pdc"), res["price"])})
     cands.sort(key=lambda c: (not c["plan"]["confirmed"], -c["base"]))   # confirmed first for OI checks
     held = [c for c in cands if c["plan"]["confirmed"]]
     for c in held:
@@ -265,7 +319,8 @@ def build(stocks, min_rr=1.5, n_picks=6, min_setup=55, picks_open=True, picks_fr
             if c["side"] == "bear":
                 sector_pts = 20 - sector_pts
             st_pts = 0 if not c.get("supertrend") else (5 if c["supertrend"]["ok"] else -5)   # 15-min Supertrend
-            c["score"] = round(0.5 * c["base"] + sector_pts + oi_pts + st_pts + 10 * _clamp((c["plan"]["rr"] - 1) / 2), 1)
+            c["score"] = round(0.5 * c["base"] + sector_pts + oi_pts + st_pts + check_points(c.get("checks") or {})
+                               + 10 * _clamp((c["plan"]["rr"] - 1) / 2), 1)
             bucket.append(c)
             if bucket is strong:
                 flow[c["symbol"]]["stage"] = 5

@@ -137,7 +137,15 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    Picks come from the 9:30, 9:45, 10:00 and 10:15 scans (Settings can start them later). Up to 10:30 a
    long must clear yesterday's high and a short yesterday's low. After 10:15 there are no new picks:
    the day's list stays, each stock once, and is followed until 3:15.
-8. **Option:** a call for a buy, a put for a sell, at the money (or one strike in the money when that trades
+8. **Intraday checks** (they add to or take from the score, and show as ✓/⚠ tags on each pick):
+   - **PDH/PDL breakout on 15 minutes** (counts the most): a 15-minute candle has closed above yesterday's
+     high (buy) or below yesterday's low (sell), and price is still beyond it.
+   - **Opening range breakout:** a 15-minute candle has closed beyond the first 15 minutes' high/low.
+   - **CPR:** price above the central pivot range for a buy, below it for a sell. A narrow CPR hints at a trend day.
+   - **Gap:** a gap of 3% or more at the open is flagged (gaps often partly fill).
+   - Also on each pick: VWAP, relative volume, Supertrend, with/against NIFTY, strength vs NIFTY,
+     sector, futures OI, liquidity.
+9. **Option:** a call for a buy, a put for a sell, at the money (or one strike in the money when that trades
    thin), on this month's expiry, or next month's when this month's is 7 days away or less. Option entry, SL
    and targets are the option's price at the stock's entry, SL and targets, from its delta and gamma in Dhan's
    option chain. The lot size and ₹ risk per lot are shown.

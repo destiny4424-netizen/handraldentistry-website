@@ -42,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "25 Oct · intraday list, options, events"
+VERSION = "26 Oct · list first, PDH/PDL 15m, ORB, CPR"
 
 
 def load_env():
@@ -637,6 +637,7 @@ def scan_once():
             funnel_in[sym] = {"res": res, "bo": setup, "levels": levels,
                               "pdh": prev_days[-1]["h"] if prev_days else None,
                               "pdl": prev_days[-1]["l"] if prev_days else None,
+                              "pdc": prev_days[-1]["c"] if prev_days else None,
                               "c15": [c for c in c15 if c["end"] <= now_ts]}
         set_state(scanned=n)
 
