@@ -7,10 +7,12 @@ The steps below are for running it on a Windows PC instead.
 A live scanner that checks every NSE F&O stock for order blocks and liquidity using
 your Dhan account, and ranks the strongest bullish and bearish setups.
 
-- **Top Picks (opens first):** after every scan, all F&O stocks go through a series of filters and the
-  best 5–6 trades are shown with **entry, stop-loss, target 1, target 2, R:R and risk %**. A flow chart
+- **Intraday (opens first):** the scans at 9:30, 9:45, 10:00 and 10:15 put all liquid F&O stocks through a
+  series of filters. The best 5–6 trades are shown with **entry, stop-loss, target 1, target 2, R:R and
+  risk %**, plus a stock option (call or put) with its own entry, SL and targets. From 10:30 the tab shows
+  **Today's intraday list**: every stock given that morning, once each, to trade when its entry breaks. A flow chart
   shows how many stocks passed each filter, next to a sector strength table.
-- **Market panel (top of Top Picks):**
+- **Market panel (top of Intraday):**
   - **NIFTY 50 and BANK NIFTY** each get a **Bullish / Bearish / Sideways** verdict with the reasons: above or below
     today's open and yesterday's close, the 20-EMA on 5-minute candles, and breaks of the first-15-minute range.
   - **India VIX** is shown against its own 20-day average. **Breadth** is how many F&O stocks are up vs down.
@@ -20,7 +22,10 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
   - The header shows NIFTY's direction on every tab.
   - Each pick card shows whether it is **with or against NIFTY**, above or below **VWAP**, its **relative volume**
     and its move **vs NIFTY** today.
-- **Today's trades:** every Top Pick is **locked in the moment it first appears**, with its entry, stop and
+- **Event risk (Market panel):** Fed (FOMC) and RBI policy days, the Budget, MCX crude oil, USD/INR and world
+  headlines (war, sanctions, tariffs...) give a Low / Medium / High risk level. Picks are tagged when crude, the
+  rupee, an RBI day or the company's quarterly results affect them, with the company's latest news.
+- **Today's trades:** every intraday pick is **locked in the moment it first appears**, with its entry, stop and
   targets frozen. Later scans can bring new picks, but earlier ones never disappear. Each trade is followed
   on 5-minute candles:
   - Waiting for trigger → Triggered → T1 hit (half booked, stop moved to cost) → T2 hit, or SL hit
@@ -33,7 +38,8 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
 - **HTF Key Level Breakouts (15 min):** a second tab lists stocks whose 15-minute candle has closed
   through a higher-timeframe level. The levels are the previous day high/low, the previous week high/low,
   and daily swing highs/lows from the last 60 days.
-- **Auto-scan:** runs 20 seconds after every 15-minute candle closes (9:30, 9:45 … 15:30 IST, Mon–Fri). The header shows the time of the next scan.
+- **Auto-scan:** intraday at 9:30, 9:45, 10:00 and 10:15; BTST every 30 minutes from 11:00 to 3:00 (IST, Mon–Fri),
+  20 seconds after the candle closes. Between scans the day's trades are followed every 5 minutes. The header shows the time of the next scan.
   Use **Scan now** to rescan straight away.
 - **Breakout alerts:** turn on **🔔 Breakout alerts** and allow notifications. Each new breakout then
   pops up on your screen with a beep, and its card flashes.
@@ -99,8 +105,8 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Support and resistance are the nearest swing points.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
-## How Top Picks are chosen
-1. **Scanned:** every F&O stock.
+## How intraday picks are chosen
+1. **Scanned:** every liquid F&O stock (see Settings for the turnover and volume limits).
 2. **Strong setup:** a bullish or bearish order block, or an HTF key level breakout, with a score of at
    least 55. If a stock has both in the same direction, it gets a bonus.
 3. **Sector agrees:**
@@ -127,9 +133,14 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Bearish trades need **short build-up** (price down, OI up).
    - Short covering or long unwinding only fills in if there aren't enough picks.
    - OI against the trade removes the stock.
-7. **Top picks:** the best 6 by a score that combines setup strength, sector rank, OI and R:R.
-   **No picks before 10:00 IST** (change it in Settings → Top Picks). Earlier holds wait on the
-   Watchlist and become picks at 10:00 if the level still holds.
+7. **Intraday picks:** the best 6 by a score that combines setup strength, sector rank, OI and R:R.
+   Picks come from the 9:30, 9:45, 10:00 and 10:15 scans (Settings can start them later). Up to 10:30 a
+   long must clear yesterday's high and a short yesterday's low. After 10:15 there are no new picks:
+   the day's list stays, each stock once, and is followed until 3:15.
+8. **Option:** a call for a buy, a put for a sell, at the money (or one strike in the money when that trades
+   thin), on this month's expiry, or next month's when this month's is 7 days away or less. Option entry, SL
+   and targets are the option's price at the stock's entry, SL and targets, from its delta and gamma in Dhan's
+   option chain. The lot size and ₹ risk per lot are shown.
 
 Each pick has a status:
 - **Buy above / Sell below …:** the level has held. Enter when price breaks that 15-minute candle.

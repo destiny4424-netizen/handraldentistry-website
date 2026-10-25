@@ -32,7 +32,9 @@ from urllib.parse import parse_qs, urlparse
 import analysis
 import breakout
 import btst
+import events
 import market
+import options
 import picks
 import trades
 
@@ -40,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "25 Oct · liquid F&O stocks only"
+VERSION = "25 Oct · intraday list, options, events"
 
 
 def load_env():
@@ -180,13 +182,35 @@ def fno_stocks():
                                 f"connection and press Scan now. ({getattr(e, 'reason', e)})") from None
     f = open(cache, encoding="utf-8", errors="replace", newline="")   # streamed: the file is ~30 MB
     rows = csv.DictReader(f)
-    underlyings, equity, futures = set(), {}, {}
+    underlyings, equity, futures, names = set(), {}, {}, {}
+    opts, lots, comm = {}, {}, {}
     today = datetime.now(IST).strftime("%Y-%m-%d")
     for row in rows:
-        if row.get("SEM_EXM_EXCH_ID") != "NSE":
-            continue
+        exch, inst = row.get("SEM_EXM_EXCH_ID"), row.get("SEM_INSTRUMENT_NAME")
         sym = row.get("SEM_TRADING_SYMBOL", "")
-        if row.get("SEM_INSTRUMENT_NAME") == "FUTSTK":
+        if (exch == "MCX" and inst == "FUTCOM" and sym.startswith("CRUDEOIL-")) or \
+                (exch == "NSE" and inst == "FUTCUR" and sym.startswith("USDINR-")):
+            key = "CRUDE" if exch == "MCX" else "USDINR"
+            expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
+            if expiry > today and (key not in comm or expiry < comm[key][0]):
+                comm[key] = (expiry, row["SEM_SMST_SECURITY_ID"], inst)
+            continue
+        if exch != "NSE":
+            continue
+        if inst == "OPTSTK":                           # stock options: strikes, expiries, lot size
+            expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
+            kind = row.get("SEM_OPTION_TYPE")
+            if expiry < today or kind not in ("CE", "PE"):
+                continue
+            under = sym.rsplit("-", 3)[0]
+            try:
+                strike = float(row.get("SEM_STRIKE_PRICE") or 0)
+                lots[under] = int(float(row.get("SEM_LOT_UNITS") or 0)) or lots.get(under)
+            except ValueError:
+                continue
+            opts.setdefault(under, {}).setdefault(expiry, {})[(strike, kind)] = row["SEM_SMST_SECURITY_ID"]
+            continue
+        if inst == "FUTSTK":
             under = sym.rsplit("-", 2)[0]
             underlyings.add(under)
             expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
@@ -194,6 +218,7 @@ def fno_stocks():
                 futures[under] = (expiry, row["SEM_SMST_SECURITY_ID"])   # nearest expiry
         elif row.get("SEM_SEGMENT") == "E" and row.get("SEM_SERIES") == "EQ":
             equity[sym] = row["SEM_SMST_SECURITY_ID"]
+            names[sym] = (row.get("SM_SYMBOL_NAME") or row.get("SEM_CUSTOM_SYMBOL") or sym).strip()
         elif row.get("SEM_INSTRUMENT_NAME") == "INDEX":
             key = sym.upper().replace(" ", "")
             if key in ("NIFTY", "NIFTY50", "BANKNIFTY", "NIFTYBANK", "INDIAVIX"):
@@ -210,6 +235,11 @@ def fno_stocks():
         raise DhanError("Couldn't find F&O stocks in Dhan's scrip master file.")
     FUTURES.clear()
     FUTURES.update({u: fid for u, (_, fid) in futures.items()})
+    OPTIONS.clear()
+    OPTIONS.update(opts)
+    LOTS.update({u: l for u, l in lots.items() if l})
+    NAMES.update(names)
+    COMMODITY.update({k: (sid, inst) for k, (_, sid, inst) in comm.items()})
     return stocks
 
 
@@ -217,6 +247,10 @@ FUTURES = {}                                           # symbol -> current-month
 # Dhan security ids of the indices (IDX_I); read from the scrip master, these are fallbacks.
 INDEXES = {"NIFTY": "13", "BANKNIFTY": "25", "INDIAVIX": "21"}
 EXPIRY = {}                                            # "nifty" -> nearest NIFTY option expiry, YYYY-MM-DD
+OPTIONS = {}                                           # symbol -> {expiry: {(strike, "CE"/"PE"): security id}}
+LOTS = {}                                              # symbol -> F&O lot size
+NAMES = {}                                             # symbol -> company name (for its news)
+COMMODITY = {}                                         # "CRUDE" / "USDINR" -> (nearest futures id, instrument)
 
 
 def _rows(d):
@@ -327,7 +361,7 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
          "version": VERSION, "market": None, "trades": {"rows": [], "summary": {}},
          "btst": {"open": False, "from": "12:00", "picks": [], "book": {"rows": [], "summary": {}}},
-         "schedule": "15-min scans 9:30–12:00 for intraday · hourly scans 12:15, 13:15, 14:15 and 15:00 for BTST",
+         "schedule": "Intraday scans 9:30, 9:45, 10:00, 10:15 · the day's list from 10:30 · BTST scans every 30 min 11:00–3:00",
          "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
@@ -338,6 +372,8 @@ TRADES = trades.TradeBook(SETTINGS_DIR)                # today's locked-in picks
 BTSTS = trades.BtstBook(SETTINGS_DIR)                  # BTST/STBT picks, followed into the next session
 BTST_PICKS = {}                                        # symbol -> (BTST pick, 5m candles) for the chart
 PICK_SINCE = {}                                        # (day, symbol, side) -> first time it was picked
+OPTION_PLANS = {}                                      # (day, symbol, side) -> option plan, made when first picked
+STOCK_IDS = {}                                         # symbol -> NSE equity security id (last scan)
 DAILY = {}                                             # security id -> (IST day fetched, candles)
 LOCK = threading.Lock()
 WAKE = threading.Event()
@@ -436,9 +472,129 @@ def fetch_market(demo):
     return out
 
 
+def fetch_events(demo, vix):
+    """Scheduled events, crude oil, USD/INR, risk headlines and the results calendar."""
+    today = datetime.now(IST).date()
+    cal = events.calendar(today)
+    comm = {}
+    for key, name, seg in (("CRUDE", "Crude oil (MCX)", "MCX_COMM"), ("USDINR", "USD/INR", "NSE_CURRENCY")):
+        try:
+            if demo:
+                c = demo_candles(key)
+                f = (6000 if key == "CRUDE" else 88) / c[0]["o"]
+                c = [dict(x, o=x["o"] * f, h=x["h"] * f, l=x["l"] * f, c=x["c"] * f) for x in c]
+            elif key in COMMODITY:
+                sid, inst = COMMODITY[key]
+                c = dhan_candles(sid, "5", seg, inst)
+                time.sleep(0.25)
+            else:
+                continue
+            today_c, before = market.session(c)
+            comm[key] = events.commodity_view(name, today_c or c, before[-1]["c"] if before else None)
+        except Exception as e:                         # optional: never stop the scan for it
+            print(f"  {key}: {e}", file=sys.stderr)
+    news = events.headlines()
+    results = events.results_calendar()
+    if demo and not results:                           # show what a results warning looks like
+        results = {s: (today + timedelta(days=1 + i % 3)).isoformat() for i, s in enumerate(DEMO_SYMBOLS[::25])}
+    risk = events.risk_level(news, cal, vix, comm.get("CRUDE"))
+    return {"calendar": cal, "crude": comm.get("CRUDE"), "usdinr": comm.get("USDINR"),
+            "news": news, "results": results, "risk": risk}
+
+
+_last_chain = [0.0]
+
+
+def option_chain(sid, expiry):
+    """Dhan option chain for one stock and expiry (1 request every 3 seconds)."""
+    for seg in ("NSE_EQ", "NSE_FNO"):
+        wait = 3.1 - (time.time() - _last_chain[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_chain[0] = time.time()
+        try:
+            d = dhan_post("/optionchain", {"UnderlyingScrip": int(sid), "UnderlyingSeg": seg, "Expiry": expiry}, retries=2)
+        except DhanError:
+            continue
+        data = d.get("data") if isinstance(d, dict) else None
+        if isinstance(data, dict) and data.get("oc"):
+            return data
+    return None
+
+
+def option_plan(sym, sid, side, plan, spot, demo):
+    """Call (buy) or put (sell) to trade instead of the stock, with entry/SL/targets."""
+    kind = "CE" if side == "bull" else "PE"
+    today = datetime.now(IST).date()
+    try:
+        if demo:
+            exps, d0 = [], today.replace(day=1)
+            for m in range(3):                         # last Tuesday of this and the next two months
+                first = (d0 + timedelta(days=32 * m)).replace(day=1)
+                last = (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                exps.append((last - timedelta(days=(last.weekday() - 1) % 7)).isoformat())
+            expiry, rolled = options.choose_expiry(exps, today)
+            step = options.demo_strike_step(spot)
+            strikes = [round(spot / step) * step + i * step for i in range(-5, 6)]
+            strike = options.strikes_near(strikes, plan["entry"], kind)[0]
+            days = (datetime.fromisoformat(expiry).date() - today).days
+            iv = 28 + (hash(sym) % 12)
+            ltp, delta, gamma = options.bs(spot, strike, days, iv, kind)
+            opt = {"ltp": ltp, "delta": delta, "gamma": gamma, "iv": iv, "oi": 120000, "volume": 5000, "spread_pct": 1.2}
+            lot = max(1, round(600000 / spot / 25) * 25)
+            return options.plan(kind, opt, spot, plan, lot, expiry, rolled, strike)
+        chains = OPTIONS.get(sym)
+        if not chains:
+            return None
+        expiry, rolled = options.choose_expiry(list(chains), today)
+        if not expiry:
+            return None
+        strikes = sorted({k for (k, t) in chains[expiry] if t == kind})
+        near = options.strikes_near(strikes, plan["entry"], kind)
+        data = option_chain(sid, expiry)
+        if not data:
+            return None
+        spot = float(data.get("last_price") or spot)
+        got = [(k, options.from_chain(data, kind, k)) for k in near]
+        got = [(k, o) for k, o in got if o]
+        best = next(((k, o) for k, o in got if options.usable(o)), got[0] if got else None)
+        if not best:
+            return None
+        return options.plan(kind, best[1], spot, plan, LOTS.get(sym), expiry, rolled, best[0])
+    except Exception as e:                             # options are extra: never stop the scan
+        print(f"  {sym} option: {e}", file=sys.stderr)
+        return None
+
+
+def add_event_info(c, ev, demo, news=True):
+    """Event / crude / rupee / results flags and the latest company news on one pick."""
+    today = datetime.now(IST).date()
+    c["flags"] = events.stock_flags(c["symbol"], picks.sector_of(c["symbol"]), c["side"], ev.get("crude"),
+                                    ev.get("usdinr"), ev.get("calendar", []), ev.get("results", {}).get(c["symbol"]), today)
+    if news and not demo:
+        c["news"] = events.stock_news(NAMES.get(c["symbol"], c["symbol"]), c["symbol"])
+
+
+def intraday_list():
+    """Every intraday pick given today (9:30-10:15 scans), once each, with its live trade status."""
+    out = []
+    for r in sorted(TRADES.rows, key=lambda r: r["picked_at"]):
+        c = dict(r.get("card") or {"symbol": r["symbol"], "side": r["side"], "plan": {}})
+        c["plan"] = dict(c.get("plan") or {}, entry=r["entry"], sl=r["sl"], t1=r["t1"], t2=r["t2"])
+        c["trade"] = {k: r.get(k) for k in ("status", "result_r", "revised", "t2_now", "last", "triggered_at", "exit_at")}
+        c["since"] = datetime.fromtimestamp(r["picked_at"], IST).strftime("%H:%M")
+        c["option"] = r.get("option") or c.get("option")
+        if r.get("last") is not None:
+            c["price"] = r["last"]
+        out.append(c)
+    return out
+
+
 def scan_once():
     demo = DEMO                                      # keys can be added mid-scan
     stocks = {s: s for s in DEMO_SYMBOLS} if demo else fno_stocks()
+    STOCK_IDS.clear()
+    STOCK_IDS.update(stocks)
     set_state(status="scanning", total=len(stocks), scanned=0,
               message=f"Scanning {len(stocks)} F&O stocks (liquid ones only)…")
     results, candles_by, bo, funnel_in = {}, {}, {}, {}
@@ -500,11 +656,14 @@ def scan_once():
     bear = sorted((s for s in results if sides[s] == "bear"), key=lambda s: -results[s]["bear"]["score"])
     scores = [{"side": "bull", "score": results[s]["bull"]["score"]} for s in bull] + \
              [{"side": "bear", "score": results[s]["bear"]["score"]} for s in bear]
-    # Top picks: funnel, then futures OI for the shortlisted stocks only.
-    # No picks before the cutoff (default 10:00): early holds wait on the watchlist.
-    picks_from = SETTINGS.get("picks_from") or "10:00"
+    # Intraday picks: funnel, then futures OI for the shortlisted stocks only.
+    # Picks come from the 9:30, 9:45, 10:00 and 10:15 scans; after that the day's list is final.
+    picks_from = SETTINGS.get("intraday_from") or INTRADAY_FROM
     clock = max((d["c15"][-1]["end"] for d in funnel_in.values() if d["c15"]), default=time.time())
     session_time = datetime.fromtimestamp(clock, IST).strftime("%H:%M")
+    if demo and os.environ.get("OBS_DEMO_CLOCK"):     # testing: pretend it is this time of day
+        session_time = os.environ["OBS_DEMO_CLOCK"]
+    ev = fetch_events(demo, market.vix_view(*idx["INDIAVIX"]) if "INDIAVIX" in idx else None)
     cands, finish = picks.build(funnel_in, MIN_RR, N_PICKS, MIN_SETUP,
                                 picks_open=session_time >= picks_from, picks_from=picks_from,
                                 early=session_time <= (SETTINGS.get("pdh_rule_until") or "10:30"))
@@ -527,16 +686,19 @@ def scan_once():
                 raise
         time.sleep(0.25)
     top = finish(oi)
-    # Intraday picks only until 12:00 (Settings); after that the hourly scans are for BTST.
-    intraday_until = SETTINGS.get("intraday_until") or "12:00"
+    # Intraday picks only from the scans up to 10:15; after that the scans are for BTST.
+    intraday_until = INTRADAY_UNTIL
     top["intraday_until"] = intraday_until
-    if not demo and session_time > intraday_until and top["picks"]:
+    window_closed = session_time > intraday_until and (not demo or os.environ.get("OBS_DEMO_CLOCK"))
+    if window_closed and top["picks"]:
         gone = {c["symbol"] for c in top["picks"]}
         for f in top["flow"]:
             if f["symbol"] in gone:
                 f["stage"] = 5
         top["funnel"][-1]["count"] = 0
-        top["picks"], top["window_closed"] = [], True
+        top["picks"] = []
+    if window_closed:
+        top["window_closed"], top["watch"] = True, []
     # Each stock's real path today (every 15 minutes, % from yesterday's close) for the flow chart.
     for f in top["flow"]:
         cs, r = candles_by.get(f["symbol"]), results.get(f["symbol"])
@@ -575,9 +737,9 @@ def scan_once():
                            else "neutral" if nifty["trend"] == "Sideways" else "against")
             c["rs"] = round(r.get("pct", 0) - nifty["pct"], 2)   # strength vs NIFTY today
     # BTST / STBT from 12:00: strong closers, checked against futures OI, followed into tomorrow.
-    btst_from = "12:00"
+    btst_from = "11:00"
     btst_open = demo or session_time >= btst_from
-    btst_picks = []
+    btst_picks, skipped, btst_caution = [], [], ""
     if btst_open:
         sec_pct = {s: next((x["pct"] for x in top["sectors"] if x["name"] == picks.sector_of(s)), 0) for s in results}
         bc = btst.candidates(results, candles_by, {}, {s: d["levels"] for s, d in funnel_in.items()},
@@ -597,17 +759,45 @@ def scan_once():
                 except DhanError as e:
                     if e.fatal:
                         raise
-        btst_picks = btst.finish(bc[:15], boi, 5)
+        btst_picks = btst.finish(bc[:15], boi, 8)
+        # Events: no BTST into a company's results; fewer, stronger BTSTs before a big overnight event.
+        nxt = events._next_session(datetime.now(IST).date()).isoformat()
+        skipped = []
+        for c in btst_picks:
+            add_event_info(c, ev, demo, news=False)
+            r_on = ev["results"].get(c["symbol"])
+            if r_on and r_on <= nxt:
+                skipped.append({"symbol": c["symbol"], "why": f"results on {r_on}: overnight gap risk"})
+        btst_picks = [c for c in btst_picks if c["symbol"] not in {x["symbol"] for x in skipped}]
+        overnight = [e for e in ev["calendar"] if e["overnight"]]
+        keep_n = 3 if overnight or ev["risk"]["level"] == "High" else 5
+        btst_caution = (("Big event before tomorrow's open: " + ", ".join(e["name"] for e in overnight) + ". ")
+                        if overnight else "") + \
+                       ("Risk is high today. " if ev["risk"]["level"] == "High" else "")
+        if btst_caution:
+            btst_caution += f"Showing only the strongest {keep_n}; use smaller size."
+        btst_picks = btst_picks[:keep_n]
+        for c in btst_picks:
+            if not demo:
+                c["news"] = events.stock_news(NAMES.get(c["symbol"], c["symbol"]), c["symbol"])
+            c["option"] = option_plan(c["symbol"], STOCK_IDS.get(c["symbol"]), c["side"], c["plan"], c["price"], demo)
     btst_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
     if not demo and session_time >= "15:00":            # lock in the 3 PM list as today's BTST trades
         for c in btst_picks:
             BTSTS.record(c, btst_now)
     BTSTS.update(candles_by, btst_now)
-    btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": BTSTS.view()}
+    btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": BTSTS.view(),
+                  "skipped": skipped, "caution": btst_caution}
 
     # Lock every new pick into today's trades and follow them all through the day's candles.
     book_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
+    day_s = datetime.now(IST).strftime("%Y-%m-%d")
     for c in top["picks"]:
+        add_event_info(c, ev, demo)
+        key = (day_s, c["symbol"], c["side"])
+        if key not in OPTION_PLANS:                    # worked out once, when first picked
+            OPTION_PLANS[key] = option_plan(c["symbol"], STOCK_IDS.get(c["symbol"]), c["side"], c["plan"], c["price"], demo)
+        c["option"] = OPTION_PLANS[key]
         c["locked_new"] = TRADES.record(c, book_now)
     TRADES.update(candles_by, book_now)
     day = datetime.now(IST).date()
@@ -615,7 +805,14 @@ def scan_once():
         key = (day, c["symbol"], c["side"])
         PICK_SINCE.setdefault(key, datetime.now(IST).strftime("%H:%M"))
         c["since"] = PICK_SINCE[key]
-        c["spark"] = [round(k["c"], 2) for k in candles_by[c["symbol"]][-60:]]
+        if c["symbol"] in candles_by:
+            c["spark"] = [round(k["c"], 2) for k in candles_by[c["symbol"]][-60:]]
+    if window_closed:                                  # after 10:15: the day's list, each stock once
+        top["picks"] = intraday_list()
+        top["list"] = True
+        for c in top["picks"]:
+            if c["symbol"] in candles_by:
+                c["spark"] = [round(k["c"], 2) for k in candles_by[c["symbol"]][-60:]]
 
     def bo_row(sym):
         _, st, _, r = bo[sym]
@@ -637,11 +834,13 @@ def scan_once():
         BREAKOUTS.clear()
         BREAKOUTS.update(bo)
         PICKS.clear()
-        PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"]})
+        PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"] if c["symbol"] in candles_by})
         BTST_PICKS.clear()
         BTST_PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in btst_picks})
         STATE.update(status="live", message="", scores=scores,
+                     events={k: ev[k] for k in ("calendar", "crude", "usdinr", "news", "risk")},
                      universe={"total": len(stocks), "liquid": len(stocks) - len(thin), "skipped": len(thin),
+                               "skipped_list": sorted(thin),
                                "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1]}, breakouts=breakouts, picks=top, market=mkt,
                      trades=TRADES.view(), btst=btst_state,
                      last_scan=datetime.now(IST).strftime("%H:%M"),
@@ -649,10 +848,49 @@ def scan_once():
                      bearish=[row(s, "bear") for s in bear[:TOP_N]])
 
 
-INTRADAY_SCANS = [(9, 30 + 15 * i) if 30 + 15 * i < 60 else (9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60)
-                  for i in range(11)]                   # 9:30, 9:45 ... 12:00, after each 15-min candle
-BTST_SCANS = [(12, 15), (13, 15), (14, 15), (15, 0)]  # after each hourly candle, plus a last look at 3 PM
+INTRADAY_FROM, INTRADAY_UNTIL = "09:30", "10:15"
+INTRADAY_SCANS = [(9, 30), (9, 45), (10, 0), (10, 15)]   # after each 15-min candle; then the list is final
+BTST_SCANS = [(h, m) for h in range(11, 16) for m in (0, 30) if (h, m) <= (15, 0)]   # every half hour
 SCHEDULE = INTRADAY_SCANS + BTST_SCANS
+TRACK_EVERY = 5                                        # minutes: follow the day's trades between scans
+
+
+def track_once():
+    """Between scans: fetch only the stocks with an open trade and move their trades along."""
+    if DEMO:
+        return
+    now = time.time()
+    open_intra = {r["symbol"] for r in TRADES.rows if r.get("exit_at") is None}
+    open_btst = {r["symbol"] for r in BTSTS.rows if r.get("result_r") is None}
+    candles_by = {}
+    for sym in sorted(open_intra | open_btst):
+        sid = STOCK_IDS.get(sym)
+        if not sid:
+            continue
+        try:
+            candles_by[sym] = dhan_candles(sid)
+        except DhanError as e:
+            if e.fatal:
+                raise
+        time.sleep(0.25)
+    TRADES.update(candles_by, now)
+    BTSTS.update(candles_by, now)
+    with LOCK:
+        for sym, cs in candles_by.items():
+            if sym in PICKS:
+                PICKS[sym] = (PICKS[sym][0], cs)
+        pk = STATE.get("picks") or {}
+        if not pk.get("list") and datetime.now(IST).strftime("%H:%M") > INTRADAY_UNTIL and "funnel" in pk:
+            pk.update(list=True, window_closed=True, watch=[])   # 10:20/10:30: the day's list, no waiting for 11:00
+        if pk.get("list"):
+            pk["picks"] = intraday_list()
+            for c in pk["picks"]:
+                if c["symbol"] in candles_by:
+                    PICKS[c["symbol"]] = (c, candles_by[c["symbol"]])
+        STATE["trades"] = TRADES.view()
+        if STATE.get("btst"):
+            STATE["btst"]["book"] = BTSTS.view()
+        STATE["last_track"] = datetime.now(IST).strftime("%H:%M")
 
 
 def next_scan_time(now):
@@ -688,8 +926,20 @@ def scanner():
         now = datetime.now(IST)
         nxt = now + timedelta(minutes=SCAN_EVERY) if DEMO else next_scan_time(now)
         set_state(next_scan=nxt.strftime("%H:%M") if nxt.date() == now.date() else nxt.strftime("%a %H:%M"))
-        forced = WAKE.wait((nxt - now).total_seconds())  # True when "Scan now" or new keys
-        WAKE.clear()
+        while True:
+            now = datetime.now(IST)
+            # After the 10:15 scan, follow the day's trades every 5 minutes until the next scan.
+            tracking = not DEMO and market_open(now) and now.strftime("%H:%M") > INTRADAY_UNTIL
+            step = now.replace(second=20, microsecond=0) + timedelta(minutes=TRACK_EVERY - now.minute % TRACK_EVERY)
+            until = min(nxt, step) if tracking else nxt
+            forced = WAKE.wait(max(0, (until - now).total_seconds()))  # True when "Scan now" or new keys
+            WAKE.clear()
+            if forced or datetime.now(IST) >= nxt:
+                break
+            try:
+                track_once()
+            except Exception as e:
+                print(f"  tracking: {e}", file=sys.stderr)
 
 
 def save_keys(client_id, token):
@@ -1041,7 +1291,7 @@ class Handler(BaseHTTPRequestHandler):
                             "saved_where": str(SETTINGS_FILE), "phone": bool(SETTINGS.get("phone")),
                             "has_pin": bool(SETTINGS.get("pin_hash")), "listening": HOST == "0.0.0.0",
                             "cloud": CLOUD, "public_url": PUBLIC_URL,
-                            "picks_from": SETTINGS.get("picks_from") or "10:00",
+                            "picks_from": SETTINGS.get("intraday_from") or INTRADAY_FROM,
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
@@ -1084,10 +1334,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {"error": "Settings can only be changed on the PC."})
         if path == "/api/prefs":
             t = str(body.get("picks_from") or "").strip()
-            ok = len(t) == 5 and t[2] == ":" and t[:2].isdigit() and t[3:].isdigit() \
-                and "09:15" <= t <= "15:30" and int(t[3:]) < 60
-            if not ok:
-                return self.send(400, {"error": "Pick a time between 09:15 and 15:30."})
+            if t not in ("09:30", "09:45", "10:00", "10:15"):
+                return self.send(400, {"error": "Pick 09:30, 09:45, 10:00 or 10:15."})
             liq = {}
             for key, lo, hi in (("min_turnover_cr", 0, 5000), ("min_volume_lakh", 0, 500)):
                 if body.get(key) in (None, ""):
@@ -1099,7 +1347,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not lo <= v <= hi:
                     return self.send(400, {"error": "Liquidity: turnover 0–5000 crore, volume 0–500 lakh."})
                 liq[key] = v
-            save_settings(picks_from=t, **liq)
+            save_settings(intraday_from=t, **liq)
             WAKE.set()                                  # rescan so the change shows now
             return self.send(200, {"ok": True})
         if path == "/api/forget":

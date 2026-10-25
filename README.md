@@ -153,7 +153,7 @@ If something ever looks wrong: `systemctl status handral-books` or
 ## OrderBlock Scanner (F&O scanner on the droplet)
 
 `_scanner/` is a scanner for NSE F&O stocks using Dhan market data (it never places orders):
-order blocks, HTF key level breakouts on 15-minute candles, and **Top Picks**, the best 5–6
+order blocks, HTF key level breakouts on 15-minute candles, and **Intraday** picks, the best 5–6
 trades after sector, risk:reward and futures-OI filters, each with entry, stop-loss and targets.
 Like `_books/`, the folder is not published by GitHub Pages. Details: `_scanner/README.md`.
 
@@ -169,10 +169,29 @@ password. To see them again: `sudo cat /etc/orderblock-scanner/login.txt`.
 It sits next to Handral Books in the same Caddy web server and doesn't touch Books.
 
 ### After that
-- **Schedule:** 15-minute scans from 9:30 to 12:00 give the intraday Top Picks. After that, hourly scans at
-  12:15, 13:15, 14:15 and 15:00 build the **BTST / STBT** list: strong closers to buy (or, in F&O, sell)
-  between 3:15 and 3:25 PM and exit the next morning. The 3 PM list is locked in and followed into the
-  next session (target, stop, or 11:00 exit).
+- **Schedule:**
+  - **Intraday:** scans at 9:30, 9:45, 10:00 and 10:15 only. From 10:30, the **Intraday** tab shows
+    **Today's intraday list**: every stock those scans gave, once each, with its entry, stop and targets.
+    Any of them can be traded later in the day when its entry breaks. There are no new intraday scans
+    after 10:15. The scanner checks the list's stocks every 5 minutes to follow the trades.
+  - **BTST / STBT:** scans every 30 minutes from 11:00 to 3:00. These are strong closers to buy (or, in
+    F&O, sell) between 3:15 and 3:25 PM and exit the next morning. The 3 PM list is locked in and followed
+    into the next session (target, stop, or 11:00 exit).
+- **Options:** each intraday and BTST pick also shows a stock option to trade instead:
+  - a call for a buy, a put for a sell, at the money (or one strike in the money if that is thin)
+  - next month's expiry when this month's is 7 days away or less
+  - option entry, SL, T1 and T2 worked out from Dhan's option chain (delta/gamma) at the stock's own levels
+  - the lot size and the ₹ risk per lot
+- **Events:** the Market panel shows an event-risk level (Low / Medium / High) with:
+  - FOMC and RBI policy days, and the Union Budget
+  - MCX crude oil and USD/INR moves
+  - world and market headlines (war, sanctions, tariffs...)
+
+  Picks are tagged when crude, the rupee, an RBI day or the company's quarterly results affect them,
+  with the company's latest news. BTST leaves out stocks whose results come before the next session.
+  Before a big overnight event or on high-risk days, BTST shows only the strongest 3.
+  Dates live in `_scanner/events.py`; headlines come from Google News and results dates from NSE,
+  and both are skipped if those sites can't be reached.
 - The app looks like the TradingView app:
   - a dark theme, with a candle chart drawn by TradingView's own Lightweight Charts library
     (no volume bars), with entry, stop and target lines, a crosshair and an OHLC readout
@@ -181,16 +200,16 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
     make a one-step Apple Shortcut named **TradingView Chart** (Open App → TradingView). After that the button
     copies the symbol (e.g. NSE:SBIN) and opens the app; paste it in the app's search. Change it under Settings.
   - a watchlist on the right
-  - a bottom bar on the iPhone: Picks, BTST, Trades, Market, Stats
+  - a bottom bar on the iPhone: Intraday, BTST, Trades, Market, Stats
 - Runs 24/7 on the droplet, whether your PC is on or off. It scans during
   market hours (9:15–15:30 IST, Mon–Fri), starts on boot and restarts itself if it ever stops.
 - A trade is only listed after price has come back to its level and a 15-minute candle has closed
   holding it. It then says "Buy above …" (the high of that candle) with the stop beyond the level.
-  Setups still waiting for that go on the Watchlist. No picks appear before 10:00 IST (changeable
-  in Settings), because confirmations after the first hour are cleaner.
+  Setups still waiting for that go on the Watchlist. Picks come from the 9:30 scan onwards (changeable
+  in Settings). Before 10:30, a long must also clear yesterday's high and a short yesterday's low.
 - **Liquid stocks only:** F&O stocks are scanned only if, over the last 20 sessions, they traded at least
   ₹200 crore and 5 lakh shares a day on average. Thin stocks are skipped before any intraday data is fetched.
-  Change both under Settings → Top Picks; 0 switches a check off. Each pick shows its ₹ cr/day.
+  Change both under Settings → Intraday; 0 switches a check off. Settings also lists the stocks left out today. Each pick shows its ₹ cr/day.
   Stocks with an open trade are still followed.
 - **Early picks (up to 10:30):** a long must also clear yesterday's high, and a short must break
   yesterday's low. If the level is still inside yesterday's range, the entry is moved to yesterday's high/low.

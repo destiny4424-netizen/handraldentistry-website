@@ -57,6 +57,8 @@ class TradeBook:
             "held_at": p.get("held_at"), "status": "Waiting for trigger",
             "triggered_at": None, "t1_at": None, "exit_at": None, "exit": None,
             "result_r": None, "last": pick.get("price"),
+            "option": pick.get("option"),
+            "card": {k: v for k, v in pick.items() if k not in ("spark", "locked_new", "since")},
         })
         return True
 
