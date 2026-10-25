@@ -295,7 +295,7 @@
     .ws-main, .ws-side { display: contents; }
     .ws-side .panel, .ws-main > * { margin: 0 8px 10px; }
     .ws-side .panel { background: var(--panel); border: 1px solid #2a2e39; border-radius: 6px; padding: 12px; }
-    #msg { order: 0; } .panel.detail { order: 1; } #picksPanel, #btstPanel, #listsPanel { order: 2; }
+    #msg { order: 0; } #picksPanel, #btstPanel, #listsPanel { order: 1; } .panel.detail { order: 2; scroll-margin-top: 8px; }
     #marketPanel { order: 3; } #tradesPanel, #btstBookPanel, #strengthPanel { order: 4; } #flowPanel { order: 5; }
     #sectorPanel { order: 6; } footer { order: 9; }
     .msg { margin-top: 10px; }
@@ -451,7 +451,7 @@
 <main>
 <div class="ws-main">
   <div class="msg" id="msg"></div>
-  <section class="panel detail">
+  <section class="panel detail" id="detailPanel">
     <div class="dhead">
       <span class="s" id="dSym">—</span><span class="p" id="dPrice"></span>
       <span class="tag" id="dTag"></span>
@@ -1072,6 +1072,12 @@ function renderBtst() {
     }).join("") : `<div class="empty">The 3:00 PM BTST list is locked in here each day and followed into the next morning.</div>`;
 }
 
+// Phone: the stock list comes first; tapping a stock scrolls down to its chart.
+document.addEventListener("click", ev => {
+  if (innerWidth > 1000 || ev.target.closest("a")) return;
+  if (ev.target.closest(".pick, #listsPanel .row, .trow[data-sym]"))
+    setTimeout(() => $("detailPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+});
 // iPhone bottom bar: jump to a section (switching tab if needed)
 document.querySelectorAll(".bnav button").forEach(b => b.onclick = () => {
   const [m, target] = b.dataset.go.split(":");
@@ -1109,6 +1115,13 @@ function pickChips(c) {
   if (c.liq) out.push(`<span title="Average traded value and volume a day, last 20 sessions">₹${Math.round(c.liq.turnover_cr).toLocaleString("en-IN")} CR/DAY · ${(c.liq.volume / 1e5).toFixed(1)}L SH</span>`);
   if (c.supertrend) out.push(c.supertrend.ok ? `<span class="ok">✓ SUPERTREND ${fmt(c.supertrend.value)}</span>`
                                              : `<span class="bad">⚠ SUPERTREND AGAINST</span>`);
+  const ch = c.checks || {}, bull = c.side === "bull", hl = bull ? "PDH" : "PDL";
+  if (ch.pd) out.push(ch.pd.ok ? `<span class="ok">✓ 15M CLOSE ${bull ? "ABOVE" : "BELOW"} ${hl} ${fmt(ch.pd.level)} (${ch.pd.time})</span>`
+                     : ch.pd.lost ? `<span class="bad">⚠ BACK ${bull ? "BELOW" : "ABOVE"} ${hl} ${fmt(ch.pd.level)}</span>`
+                     : `<span class="bad">⚠ NO 15M CLOSE ${bull ? "ABOVE" : "BELOW"} ${hl} ${fmt(ch.pd.level)} YET</span>`);
+  if (ch.orb && ch.orb.ok) out.push(`<span class="ok">✓ ORB ${bull ? "HIGH" : "LOW"} BROKEN ${ch.orb.time}</span>`);
+  if (ch.cpr) out.push(`<span class="${ch.cpr.ok ? "ok" : "bad"}">${ch.cpr.ok ? "✓" : "⚠"} ${bull ? (ch.cpr.ok ? "ABOVE" : "NOT ABOVE") : (ch.cpr.ok ? "BELOW" : "NOT BELOW")} CPR${ch.cpr.narrow ? " · NARROW = TREND DAY" : ""}</span>`);
+  if (ch.gap && Math.abs(ch.gap.pct) >= 0.5) out.push(`<span class="${ch.gap.big ? "bad" : ""}">${ch.gap.big ? "⚠ " : ""}GAP ${ch.gap.pct >= 0 ? "+" : ""}${ch.gap.pct}%${ch.gap.big ? " · FILL RISK" : ""}</span>`);
   if (c.rs != null) out.push(`<span class="${(c.side === "bull" ? c.rs > 0 : c.rs < 0) ? "ok" : "bad"}">VS NIFTY ${c.rs >= 0 ? "+" : ""}${c.rs}%</span>`);
   return out.join("");
 }
@@ -1673,6 +1686,7 @@ $("alertsBtn").onclick = async () => {
   render();
 };
 document.querySelectorAll(".tab[data-mode]").forEach(t => t.onclick = () => {
+  if (innerWidth <= 1000) window.scrollTo({ top: 0 });   // phone: start at the stock list
   if (mode === t.dataset.mode) return;
   mode = t.dataset.mode; selected = null;
   try { localStorage.setItem("mode", mode); } catch {}
