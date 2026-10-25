@@ -37,7 +37,7 @@ SECTORS = {
     "Telecom": "BHARTIARTL IDEA INDUSTOWERS TATACOMM HFCL",
 }
 SECTOR_OF = {s: sec for sec, names in SECTORS.items() for s in names.split()}
-STAGES = ["Scanned", "Strong setup", "Sector agrees", "Good R:R", "Held level", "OI confirms", "Top picks"]
+STAGES = ["Scanned", "Strong setup", "Sector agrees", "Good R:R", "Held level", "OI confirms", "Intraday picks"]
 
 
 def sector_of(symbol):

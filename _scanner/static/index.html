@@ -212,6 +212,24 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chips span { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,.3); color: var(--muted); }
   .chips .ok { color: var(--bull); } .chips .bad { color: var(--liq); }
+  .optbox { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px dashed rgba(139,124,246,.55); background: rgba(139,124,246,.08); font-size: 12px; }
+  .optbox .oh { font: 700 12px var(--mono); color: #b9adff; margin-bottom: 6px; }
+  .optbox .on { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; font: 600 12px var(--mono); }
+  .optbox .on b { display: block; font-size: 13px; }
+  .optbox .om { color: var(--muted); margin-top: 6px; font-size: 11px; }
+  .news { margin-top: 8px; font-size: 12px; } .news a { color: var(--text); text-decoration: none; display: block; margin-top: 3px; }
+  .news a.good::before { content: "▲ "; color: var(--bull); } .news a.bad::before { content: "▼ "; color: var(--bear); }
+  .news a.neutral::before { content: "• "; color: var(--muted); } .news small { color: var(--muted); }
+  .caution { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: rgba(255,170,0,.12); color: #ffcf70; font-size: 13px; }
+  .tstat { font: 700 11px var(--mono); padding: 2px 8px; border-radius: 6px; background: rgba(0,0,0,.35); }
+  .evts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+  .evts .ebox { background: rgba(0,0,0,.2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-width: 0; }
+  .evts h3 { margin: 0 0 8px; font-size: 13px; } .evts .erow { font-size: 12px; margin: 5px 0; }
+  .evts .risk { font: 700 11px var(--mono); padding: 2px 8px; border-radius: 6px; margin-left: 6px; }
+  .evts .risk.High { background: rgba(240,67,93,.2); color: #ff8193; } .evts .risk.Medium { background: rgba(255,170,0,.15); color: #ffcf70; }
+  .evts .risk.Low { background: rgba(34,211,138,.15); color: var(--bull); }
+  .evts a { color: var(--text); text-decoration: none; } .evts a.risk-n::before { content: "⚠ "; color: #ffcf70; }
+  @media (max-width: 760px) { .evts { grid-template-columns: 1fr; } .optbox .on { grid-template-columns: repeat(2, 1fr); } }
   #niftyChip.Bullish { color: var(--bull); } #niftyChip.Bearish { color: #ff8193; }
   @media (max-width: 900px) { .mkt { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .tsum { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
@@ -339,7 +357,7 @@
 <header>
   <div class="logo"><i><b></b><b></b><b></b></i><span class="lname">OrderBlock</span></div>
   <nav class="tabs">
-    <button class="tab" data-mode="pk">Top Picks<span class="count" id="cntPk">0</span></button>
+    <button class="tab" data-mode="pk">Intraday<span class="count" id="cntPk">0</span></button>
     <button class="tab" data-mode="btst">BTST<span class="count" id="cntBt">0</span></button>
     <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
     <button class="tab" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
@@ -392,11 +410,11 @@
     <div class="err" id="keysErr"></div>
 
     <div class="sect">
-      <b style="font-size:14px">Top Picks</b>
-      <label for="pickFrom">Show Top Picks from (IST)</label>
-      <input id="pickFrom" type="time" min="09:15" max="15:30" step="900" value="10:00">
-      <div class="hint">Before this time, setups whose level has already held wait on the Watchlist. They become
-      picks at this time if the level still holds. 10:00 gives cleaner confirmations.</div>
+      <b style="font-size:14px">Intraday</b>
+      <label for="pickFrom">First intraday scan that gives picks (IST)</label>
+      <select id="pickFrom"><option>09:30</option><option>09:45</option><option>10:00</option><option>10:15</option></select>
+      <div class="hint">Intraday scans run at 9:30, 9:45, 10:00 and 10:15 only. Every stock given in them is collected
+      into one list (each stock once) that you can trade for the rest of the day when its entry breaks.</div>
       <b style="font-size:14px;display:block;margin-top:14px">Liquid stocks only</b>
       <div class="hint">Only F&amp;O stocks that trade enough are scanned (averages of the last 20 sessions).
       Thin stocks have wide spreads and jumpy moves. Set a box to 0 to switch that check off.</div>
@@ -404,6 +422,7 @@
       <input id="minTurn" type="number" inputmode="decimal" min="0" max="5000" step="10" value="200">
       <label for="minVol">Minimum volume a day (lakh shares)</label>
       <input id="minVol" type="number" inputmode="decimal" min="0" max="500" step="1" value="5">
+      <div class="hint" id="thinList"></div>
       <div class="actions" style="margin-top:10px"><button type="button" id="prefSave">Save</button></div>
       <div class="err" id="prefErr"></div>
     </div>
@@ -456,6 +475,7 @@
       <div><h2 class="bear-t">▼ Top losers · F&amp;O</h2><div id="mLose"></div></div>
     </div>
     <div class="tips" id="mTips"></div>
+    <div class="evts" id="mEvents"></div>
   </section>
   <section class="panel full" id="perfPanel" hidden>
     <div class="perfbar"><h2>Performance</h2><select id="perfMonth"></select>
@@ -491,14 +511,16 @@
 </div>
 <aside class="ws-side">
   <section class="panel" id="picksPanel" hidden>
-    <div class="ptitle"><h2>Top picks</h2><small id="pickNote"></small></div>
+    <div class="ptitle"><h2 id="pickTitle">Intraday picks</h2><small id="pickNote"></small></div>
     <div id="pickList"></div>
-    <div class="ptitle" style="margin-top:18px"><h2>Watchlist</h2><small>good setups that have not held their level yet — not trades until they do</small></div>
+    <div class="ptitle" id="watchTitle" style="margin-top:18px"><h2>Watchlist</h2><small>good setups that have not held their level yet — not trades until they do</small></div>
     <div id="watchList"></div>
   </section>
   <section class="panel" id="btstPanel" hidden>
     <div class="ptitle"><h2>BTST / STBT</h2><small id="btstNote"></small></div>
+    <div class="caution" id="btstCaution" hidden></div>
     <div id="btstList"></div>
+    <div class="hint" id="btstSkipped" style="margin-top:10px"></div>
   </section>
   <section class="panel" id="listsPanel">
     <div class="cols">
@@ -509,7 +531,7 @@
 </aside>
 </main>
 <nav class="bnav" id="bnav">
-  <button data-go="pk:picksPanel"><span>◎</span>Picks</button>
+  <button data-go="pk:picksPanel"><span>◎</span>Intraday</button>
   <button data-go="btst:btstPanel"><span>☾</span>BTST</button>
   <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
   <button data-go="pk:marketPanel"><span>▲</span>Market</button>
@@ -997,7 +1019,7 @@ function renderPerf() {
     pts.forEach((v, i) => i ? ctx.lineTo(xx(i), y(v)) : ctx.moveTo(xx(i), y(v))); ctx.stroke(); ctx.lineWidth = 1;
     ctx.fillStyle = css("--muted"); ctx.font = `11px ${css("--mono")}`; ctx.fillText(`Equity curve: ${cum >= 0 ? "+" : ""}${cum.toFixed(2)}R`, 12, 16);
   };
-  sec($("perfIntra"), "Intraday (Top Picks)", d.intraday, "intra");
+  sec($("perfIntra"), "Intraday", d.intraday, "intra");
   sec($("perfBtst"), "BTST / STBT", d.btst, "btst");
 }
 $("perfMonth").onchange = () => { perfMonth = $("perfMonth").value; loadPerf(); };
@@ -1006,8 +1028,10 @@ $("perfRisk").oninput = () => { try { localStorage.setItem("perfRisk", $("perfRi
 // ---------- BTST ----------
 function renderBtst() {
   const b = state.btst || { open: false, from: "12:00", picks: [], book: { rows: [], summary: {} } };
-  $("btstNote").textContent = b.open ? "strong closers · enter 3:15–3:25 PM · exit next morning"
-                                     : `opens at ${b.from} · hourly scans 12:15, 13:15, 14:15, 15:00`;
+  $("btstNote").textContent = b.open ? "strong closers · scans every 30 min · enter 3:15–3:25 PM · exit next morning"
+                                     : `opens at ${b.from} · scans every 30 min 11:00–3:00`;
+  $("btstCaution").hidden = !b.caution; $("btstCaution").textContent = b.caution ? "⚠ " + b.caution : "";
+  $("btstSkipped").innerHTML = (b.skipped || []).length ? "Left out: " + b.skipped.map(x => `<b>${esc(x.symbol)}</b> (${esc(x.why)})`).join(", ") : "";
   const list = $("btstList");
   list.innerHTML = b.picks.length ? b.picks.map((c, i) => {
     const p = c.plan, bull = c.side === "bull";
@@ -1017,15 +1041,17 @@ function renderBtst() {
         ${c.oi ? `<span class="oi">${c.oi.kind} · OI ${pct(c.oi.oi_pct)}</span>` : ""}</div>
       <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)}</div><canvas data-spark="${i}"></canvas></div>
       <div class="why2">${c.why.map(w => `<span>${w}</span>`).join("")}</div>
+      ${(c.flags || []).length ? `<div class="chips">${flagChips(c)}</div>` : ""}
       <div class="nums" style="margin-top:8px">
         <div>${bull ? "BUY ~" : "SELL ~"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
         <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
         <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
       <div class="action">${bull ? "Buy" : "Sell (futures)"} between 3:15 and 3:25 PM near ${fmt(p.entry)} · stop ${fmt(p.sl)} · exit tomorrow at T1/T2, the stop, or by 11:00</div>
+      ${optBox(c.option, bull, true)}${newsList(c)}
     </div>`;
   }).join("") : `<div class="empty">${b.open ? "No stock closes strong enough right now. The next hourly scan may find some." : `BTST picks appear from ${b.from}, after the first hourly scan.`}</div>`;
   list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, b.picks[+cv.dataset.spark]));
-  list.querySelectorAll(".pick").forEach(el => el.onclick = () => { selected = [el.dataset.sym, el.dataset.side]; hl(); loadChart(); });
+  list.querySelectorAll(".pick").forEach(el => el.onclick = ev => { if (ev.target.closest("a")) return; selected = [el.dataset.sym, el.dataset.side]; hl(); loadChart(); });
   const hl = () => list.querySelectorAll(".pick").forEach(el => el.classList.toggle("sel", !!selected && el.dataset.sym === selected[0]));
   if (!selected || !b.picks.some(c => c.symbol === selected[0])) selected = b.picks[0] ? [b.picks[0].symbol, b.picks[0].side] : null;
   hl(); loadChart();
@@ -1055,6 +1081,24 @@ document.querySelectorAll(".bnav button").forEach(b => b.onclick = () => {
 });
 
 // ---------- Market context ----------
+function flagChips(c) {
+  return (c.flags || []).map(f => `<span class="${f.ok ? "ok" : "bad"}">${f.ok ? "✓" : "⚠"} ${esc(f.text).toUpperCase()}</span>`).join("");
+}
+function optBox(o, bull, btst) {
+  if (!o) return "";
+  const n = v => Number(v).toFixed(2);
+  return `<div class="optbox"><div class="oh">OPTION · BUY ${esc(o.label)}${o.rolled ? " · next month (this month's expiry is too close)" : ""}</div>
+    <div class="on"><div>ENTRY ~<b>${n(o.entry)}</b></div><div style="color:#ff8193">SL<b>${n(o.sl)}</b></div>
+      <div style="color:${css("--bull")}">T1<b>${n(o.t1)}</b></div><div style="color:${css("--bull")}">T2<b>${n(o.t2)}</b></div></div>
+    <div class="om">Premium now ${n(o.ltp)} · delta ${o.delta}${o.iv ? ` · IV ${o.iv}%` : ""}${o.lot ? ` · lot ${o.lot} · risk ₹${Number(o.risk_lot).toLocaleString("en-IN")}/lot` : ""}${o.spread_pct != null ? ` · spread ${o.spread_pct}%` : ""}.
+      ${btst ? `Buy the ${o.kind === "CE" ? "call" : "put"} at 3:15–3:25 PM; exit tomorrow when the stock hits its SL/T1/T2 or by 11:00.`
+             : `Buy the ${o.kind === "CE" ? "call" : "put"} when the stock ${bull ? "breaks above" : "breaks below"} its entry; option levels match the stock's SL/T1/T2.`}</div></div>`;
+}
+function newsList(c) {
+  const ns = c.news || [];
+  return ns.length ? `<div class="news">${ns.map(n => `<a class="${n.tone || "neutral"}" href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}${n.results ? " <small>(results)</small>" : ""} <small>${esc(n.source || "")}</small></a>`).join("")}</div>` : "";
+}
+function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch])); }
 function pickChips(c) {
   const out = [];
   if (c.market) out.push(c.market === "with" ? `<span class="ok">✓ WITH NIFTY</span>`
@@ -1088,6 +1132,21 @@ function moverRows(list, up) {
     <span class="p">${fmt(r.price)}</span>${r.rvol != null ? `<span class="rv ${r.rvol >= 2 ? "hot" : ""}">${r.rvol}× vol</span>` : "<span></span>"}
     <span class="c" style="color:${up ? css("--bull") : css("--bear")}">${pct(r.pct)}</span></div>`).join("")
     || `<div class="empty">Waiting for scan…</div>`;
+}
+function renderEvents(e) {
+  if (!e) { $("mEvents").innerHTML = ""; return; }
+  const r = e.risk || { level: "Low", why: [] };
+  const comm = x => x ? `<div class="erow">${esc(x.name)} <b style="font-family:var(--mono)">${fmt(x.price)}</b>
+      <span style="color:${x.pct >= 0 ? css("--bull") : css("--bear")}">${pct(x.pct)}</span></div>` : "";
+  const cal = (e.calendar || []).map(v => `<div class="erow"><b>${esc(v.label)}</b> · ${esc(v.name)} (${esc(v.when)})<br><span style="color:var(--muted)">${esc(v.note)}</span></div>`).join("")
+    || `<div class="erow" style="color:var(--muted)">No Fed, RBI or Budget event in the next 7 days.</div>`;
+  const news = (e.news || []).slice(0, 6).map(n => `<div class="erow"><a class="${n.tone === "risk" ? "risk-n" : ""}" href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a>
+      <span style="color:var(--muted)"> · ${esc(n.source || "")}</span></div>`).join("") || `<div class="erow" style="color:var(--muted)">Headlines not available right now.</div>`;
+  $("mEvents").innerHTML = `<div class="ebox"><h3>Event risk<span class="risk ${r.level}">${r.level.toUpperCase()}</span></h3>
+      ${r.why.length ? r.why.map(w => `<div class="erow">• ${esc(w)}</div>`).join("") : `<div class="erow" style="color:var(--muted)">Nothing unusual today.</div>`}
+      ${comm(e.crude)}${comm(e.usdinr)}
+      <h3 style="margin-top:12px">Coming up</h3>${cal}</div>
+    <div class="ebox"><h3>Headlines</h3>${news}</div>`;
 }
 function renderMarket(m) {
   const chip = $("niftyChip");
@@ -1124,6 +1183,7 @@ function renderMarket(m) {
   else if (hm >= 900 && hm < 930) tips.push(`<span class="warn">After 3:00 PM: no new entries, manage open trades and exit before close</span>`);
   tips.push(`<span>Risk 1–2% of capital per trade at most, always with the stop-loss</span>`);
   $("mTips").innerHTML = tips.join("");
+  renderEvents(state.events);
 }
 
 // ---------- Today's trades ----------
@@ -1169,8 +1229,13 @@ function renderPicks() {
   }).join("") || `<div class="empty">Waiting for scan…</div>`;
   $("secNote").textContent = pk.sectors.length ? "average move of the F&O stocks in each sector today" : "";
   const uv = state.universe;
-  $("pickNote").textContent = (uv ? `${uv.liquid} of ${uv.total} F&O stocks liquid enough (₹${uv.min_turnover_cr} cr+ a day) · ` : "") +
-    (pk.picks.length ? `price held the level on a 15m close · best ${pk.picks.length} after all filters · min R:R ${state.min_rr || 1.5}` : "");
+  $("pickTitle").textContent = pk.list ? "Today's intraday list" : "Intraday picks";
+  $("watchTitle").hidden = $("watchList").hidden = !!pk.list;
+  $("pickNote").textContent = pk.list
+    ? `every stock given by the 9:30–10:15 scans, once each · trade any of them later today when its entry breaks · no new intraday scans after 10:15`
+    : (uv ? `${uv.liquid} of ${uv.total} F&O stocks liquid enough (₹${uv.min_turnover_cr} cr+ a day) · ` : "") +
+      `scans at 9:30, 9:45, 10:00, 10:15` +
+      (pk.picks.length ? ` · price held the level on a 15m close · best ${pk.picks.length} after all filters · min R:R ${state.min_rr || 1.5}` : "");
   const hm = t => new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
   $("watchList").innerHTML = (pk.watch || []).map(w => `<div class="watch ${w.side}">
       <span class="badge" style="font-size:11px;padding:2px 7px">${w.side === "bull" ? "BULL" : "BEAR"}</span>
@@ -1180,7 +1245,8 @@ function renderPicks() {
   const changed = list.dataset.sig !== sig; list.dataset.sig = sig;
   if (!pk.picks.length) {
     list.innerHTML = `<div class="empty">${!state.last_scan ? "Waiting for scan…"
-      : pk.picks_open === false ? `Top Picks open at ${pk.picks_from}. Until then, setups whose level holds wait on the Watchlist below.`
+      : pk.list ? "No intraday picks were given today (9:30–10:15 scans)."
+      : pk.picks_open === false ? `Intraday picks start with the ${pk.picks_from} scan. Until then, setups whose level holds wait on the Watchlist below.`
       : "No stock passes every filter right now. The next scan may find some."}</div>`;
   } else {
     list.innerHTML = pk.picks.map((c, i) => {
@@ -1191,18 +1257,21 @@ function renderPicks() {
           <span class="oi">${oi ? `${oi.kind} · OI ${pct(oi.oi_pct)}` : "OI n/a"}</span></div>
         <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)} · ${c.sector} (${pct(c.sector_pct)}, rank ${c.sector_rank})<br>
           ${c.sources.join(" + ")} · <span class="held">✓ held the level ${hm(p.held_at)}</span><br>
-          <span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since} · in Today's trades</div>
-          <canvas data-spark="${i}"></canvas></div>
-        <div class="chips">${pickChips(c)}</div>
+          ${c.trade ? `<span class="tstat">${esc(c.trade.status)}${c.trade.result_r != null ? ` · ${c.trade.result_r >= 0 ? "+" : ""}${c.trade.result_r}R` : ""}</span> · given at the ${c.since} scan`
+                    : `<span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since} · in Today's trades`}</div>
+          ${c.spark ? `<canvas data-spark="${i}"></canvas>` : ""}</div>
+        <div class="chips">${pickChips(c)}${flagChips(c)}</div>
         <div class="nums">
           <div>${bull ? "BUY ABOVE" : "SELL BELOW"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
           <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
           <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
-        <div class="action">${p.triggered_at ? `In trade since ${hm(p.triggered_at)} · stop ${fmt(p.sl)}` : `${p.action} (break of the 15m candle that held the level) · stop ${fmt(p.sl)}`}</div>
+        <div class="action">${c.trade ? (c.trade.revised ? `↻ ${esc(c.trade.revised)}` : c.trade.triggered_at ? `Triggered ${hm(c.trade.triggered_at)} · stop ${fmt(p.sl)}` : `${esc(p.action || "")} · stop ${fmt(p.sl)} · still valid until 3:00 PM`)
+          : p.triggered_at ? `In trade since ${hm(p.triggered_at)} · stop ${fmt(p.sl)}` : `${p.action} (break of the 15m candle that held the level) · stop ${fmt(p.sl)}`}</div>
+        ${optBox(c.option, bull)}${newsList(c)}
       </div>`;
     }).join("");
     list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, pk.picks[+cv.dataset.spark]));
-    list.querySelectorAll(".pick").forEach(el => el.onclick = () => { selected = [el.dataset.sym, el.dataset.side]; highlightPicks(); loadChart(); });
+    list.querySelectorAll(".pick").forEach(el => el.onclick = ev => { if (ev.target.closest("a")) return; selected = [el.dataset.sym, el.dataset.side]; highlightPicks(); loadChart(); });
   }
   const ok = selected && pk.picks.some(c => c.symbol === selected[0] && c.side === selected[1]);
   if (!ok) selected = pk.picks[0] ? [pk.picks[0].symbol, pk.picks[0].side] : null;
@@ -1624,7 +1693,9 @@ async function loadSettings() {
       (tk.last_renewed ? ` · last renewed ${tk.last_renewed}` : "") +
       (tk.note ? `<br><span style="color:#ffb3bf">${tk.note}</span>` : "");
   if (st.cloud) $("savedWhere").textContent = "Everything here is saved on the server, so it stays across updates and restarts.";
-  $("pickFrom").value = st.picks_from || "10:00";
+  $("pickFrom").value = st.picks_from || "09:30";
+  $("thinList").innerHTML = (state.universe && state.universe.skipped_list || []).length
+    ? `Not scanned today (too thin, ${state.universe.skipped_list.length}): ${state.universe.skipped_list.map(esc).join(", ")}` : "";
   $("minTurn").value = st.min_turnover_cr ?? 200; $("minVol").value = st.min_volume_lakh ?? 5;
   $("cloudSect").hidden = !st.cloud; $("phoneSect").hidden = !!st.cloud;
   $("cloudUrl").textContent = st.public_url || location.origin;
@@ -1671,7 +1742,7 @@ $("prefSave").onclick = async () => {
   $("prefErr").style.color = ""; $("prefErr").textContent = "";
   try {
     await post("/api/prefs", { picks_from: $("pickFrom").value, min_turnover_cr: $("minTurn").value, min_volume_lakh: $("minVol").value });
-    $("prefErr").style.color = "var(--bull)"; $("prefErr").textContent = `Saved. Top Picks start at ${$("pickFrom").value}; stocks under ₹${$("minTurn").value} cr or ${$("minVol").value} lakh shares a day are skipped. Rescanning…`;
+    $("prefErr").style.color = "var(--bull)"; $("prefErr").textContent = `Saved. Intraday picks from the ${$("pickFrom").value} scan; stocks under ₹${$("minTurn").value} cr or ${$("minVol").value} lakh shares a day are skipped. Rescanning…`;
     setTimeout(refresh, 800);
   } catch (err) { $("prefErr").textContent = err.message; }
 };
