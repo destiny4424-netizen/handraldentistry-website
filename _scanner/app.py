@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, urlparse
 
 import analysis
 import breakout
+import bullion
 import btst
 import events
 import market
@@ -42,7 +43,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "26 Oct · list first, PDH/PDL 15m, ORB, CPR"
+VERSION = "27 Oct · MCX gold & silver positional screener"
 
 
 def load_env():
@@ -167,19 +168,31 @@ def dhan_post(path, body, retries=3):
     raise DhanError("Dhan kept rate-limiting the requests")
 
 
+MASTER_LOCK = threading.Lock()
+
+
+def scrip_master():
+    """Path of Dhan's instrument list, downloaded again when older than 20 hours."""
+    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    cache = SETTINGS_DIR / "scrip-master.csv"
+    with MASTER_LOCK:                                  # the F&O and bullion scans both read it
+        fresh = cache.exists() and time.time() - cache.stat().st_mtime < 20 * 3600
+        if not fresh:
+            try:
+                with urllib.request.urlopen(SCRIP_MASTER, timeout=60) as r:
+                    tmp = cache.with_suffix(".tmp")
+                    tmp.write_bytes(r.read())
+                    os.replace(tmp, cache)
+            except (urllib.error.URLError, TimeoutError) as e:
+                if not cache.exists():
+                    raise DhanError("Couldn't download Dhan's list of instruments. Check your internet "
+                                    f"connection and press Scan now. ({getattr(e, 'reason', e)})") from None
+    return cache
+
+
 def fno_stocks():
     """{symbol: NSE equity security id} for every stock with NSE stock futures."""
-    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-    cache = SETTINGS_DIR / "scrip-master.csv"          # Dhan's instrument list, refreshed daily
-    fresh = cache.exists() and time.time() - cache.stat().st_mtime < 20 * 3600
-    if not fresh:
-        try:
-            with urllib.request.urlopen(SCRIP_MASTER, timeout=60) as r:
-                cache.write_bytes(r.read())
-        except (urllib.error.URLError, TimeoutError) as e:
-            if not cache.exists():
-                raise DhanError("Couldn't download Dhan's list of F&O stocks. Check your internet "
-                                f"connection and press Scan now. ({getattr(e, 'reason', e)})") from None
+    cache = scrip_master()
     f = open(cache, encoding="utf-8", errors="replace", newline="")   # streamed: the file is ~30 MB
     rows = csv.DictReader(f)
     underlyings, equity, futures, names = set(), {}, {}, {}
@@ -275,12 +288,12 @@ def dhan_futures_oi(fut_id):
     return _rows(dhan_post("/charts/intraday", body))
 
 
-def dhan_daily(security_id, segment="NSE_EQ", instrument="EQUITY"):
-    """About 4 months of daily candles, for the HTF key levels."""
+def dhan_daily(security_id, segment="NSE_EQ", instrument="EQUITY", days=120):
+    """Daily candles, about 4 months by default (for the HTF key levels)."""
     now = datetime.now(IST)
     body = {"securityId": str(security_id), "exchangeSegment": segment, "instrument": instrument,
             "expiryCode": 0, "oi": False,
-            "fromDate": (now - timedelta(days=120)).strftime("%Y-%m-%d"),
+            "fromDate": (now - timedelta(days=days)).strftime("%Y-%m-%d"),
             "toDate": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
     return _rows(dhan_post("/charts/historical", body))
 
@@ -362,7 +375,7 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
          "version": VERSION, "market": None, "trades": {"rows": [], "summary": {}},
          "btst": {"open": False, "from": "12:00", "picks": [], "book": {"rows": [], "summary": {}}},
          "schedule": "Intraday scans 9:30, 9:45, 10:00, 10:15 · the day's list from 10:30 · BTST scans every 30 min 11:00–3:00",
-         "bullish": [], "bearish": [], "scores": [],
+         "bullion": None, "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
 CANDLES = {}
@@ -588,6 +601,120 @@ def intraday_list():
             c["price"] = r["last"]
         out.append(c)
     return out
+
+
+# ── MCX gold & silver (positional, daily candles) ───────────────────────────
+BULLION_EVERY = 30                                     # minutes between refreshes while MCX is open
+BULLION_WAKE = threading.Event()
+BULLION_CANDLES = {}                                   # "GOLD" / "SILVER" -> daily candles of the near contract
+BULLION_SYMBOLS = {s for rows in bullion.CONTRACTS.values() for s, _, _ in rows}
+
+
+def mcx_contracts():
+    """{symbol: [(expiry, security id)]} for MCX gold and silver futures still trading, and the
+    USD/INR futures id."""
+    today = datetime.now(IST).strftime("%Y-%m-%d")
+    out, usd = {}, None
+    with open(scrip_master(), encoding="utf-8", errors="replace", newline="") as f:
+        for row in csv.DictReader(f):
+            exch, inst = row.get("SEM_EXM_EXCH_ID"), row.get("SEM_INSTRUMENT_NAME")
+            sym = row.get("SEM_TRADING_SYMBOL", "")
+            expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
+            if expiry <= today:
+                continue
+            if exch == "MCX" and inst == "FUTCOM" and sym.split("-")[0] in BULLION_SYMBOLS:
+                out.setdefault(sym.split("-")[0], []).append((expiry, row["SEM_SMST_SECURITY_ID"]))
+            elif exch == "NSE" and inst == "FUTCUR" and sym.startswith("USDINR-") and (not usd or expiry < usd[0]):
+                usd = (expiry, row["SEM_SMST_SECURITY_ID"])
+    return out, usd[1] if usd else None
+
+
+def demo_bullion(metal):
+    """Two years of made-up daily candles: gold trending up, silver up but stretched."""
+    rng = random.Random(metal + "bullion")
+    price, drift, vol = (72000, .0009, .009) if metal == "GOLD" else (82000, .0011, .015)
+    if metal == "USDINR":
+        price, drift, vol = 84.0, .0001, .002
+    day, out = (int(time.time()) + 19800) // 86400 - 730, []
+    while day <= (int(time.time()) + 19800) // 86400 - 1:
+        day += 1
+        if (day + 3) % 7 >= 5:
+            continue
+        o = price
+        c = o * (1 + drift + rng.gauss(0, vol))
+        out.append({"t": day * 86400 - 19800, "o": o, "h": max(o, c) * (1 + abs(rng.gauss(0, vol / 2))),
+                    "l": min(o, c) * (1 - abs(rng.gauss(0, vol / 2))), "c": c, "v": int(rng.uniform(5e3, 2e4))})
+        price = c
+    return out
+
+
+def mcx_open(now=None):
+    now = now or datetime.now(IST)
+    return now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) <= (23, 30)
+
+
+def bullion_once():
+    demo, today = DEMO, datetime.now(IST).strftime("%Y-%m-%d")
+    if demo:
+        contracts = {s: [(_add_days(today, 38), s + "1"), (_add_days(today, 98), s + "2")]
+                     for s in BULLION_SYMBOLS}
+        daily = {m: demo_bullion(m) for m in ("GOLD", "SILVER", "USDINR")}
+    else:
+        contracts, usd_id = mcx_contracts()
+        daily = {}
+        for metal in ("GOLD", "SILVER"):
+            rows = sorted(contracts.get(metal, []))
+            if not rows:
+                raise DhanError(f"No {metal} futures found in Dhan's MCX contract list.", fatal=False)
+            daily[metal] = dhan_daily(rows[0][1], "MCX_COMM", "FUTCOM", days=730)
+            time.sleep(0.25)
+        try:
+            daily["USDINR"] = dhan_daily(usd_id, "NSE_CURRENCY", "FUTCUR", days=150) if usd_id else []
+        except DhanError as e:
+            if e.fatal:
+                raise
+            daily["USDINR"] = []
+    metals = []
+    for metal in ("GOLD", "SILVER"):
+        r = bullion.screen(metal, daily[metal])
+        if r:
+            metals.append(r)
+            with LOCK:
+                BULLION_CANDLES[metal] = daily[metal]
+    view = {"metals": metals, "ratio": bullion.ratio_view(daily["GOLD"], daily["SILVER"]),
+            "usdinr": bullion.usdinr_view(daily.get("USDINR") or []),
+            "contracts": bullion.contract_plan({s: contracts.get(s, []) for s in sorted(BULLION_SYMBOLS)}, today),
+            "updated": datetime.now(IST).strftime("%d %b %H:%M"), "error": None}
+    if not metals:
+        view["error"] = "Dhan returned too little daily history for gold and silver futures."
+    set_state(bullion=view)
+
+
+def _add_days(d, n):
+    return (datetime.strptime(d, "%Y-%m-%d") + timedelta(days=n)).strftime("%Y-%m-%d")
+
+
+def bullion_loop():
+    while True:
+        try:
+            bullion_once()
+        except DhanError as e:
+            set_state(bullion=dict(STATE.get("bullion") or {}, error=str(e)))
+        except Exception as e:
+            set_state(bullion=dict(STATE.get("bullion") or {}, error=f"Gold & silver scan failed: {e}"))
+        wait = BULLION_EVERY * 60 if mcx_open() or DEMO else 3 * 3600
+        BULLION_WAKE.wait(wait)
+        BULLION_WAKE.clear()
+
+
+def bullion_payload(symbol):
+    with LOCK:
+        candles = BULLION_CANDLES.get(symbol)
+        m = next((x for x in (STATE.get("bullion") or {}).get("metals", []) if x["symbol"] == symbol), None)
+    if not candles or not m:
+        return None
+    return {"symbol": symbol, "price": m["price"], "pct": m["pct"], "side": "bull", "bullion": m,
+            "candles": [{k: x[k] for k in "tohlcv"} for x in candles[-180:]]}
 
 
 def scan_once():
@@ -954,6 +1081,7 @@ def save_keys(client_id, token):
     with LOCK:
         CANDLES.clear()
     WAKE.set()
+    BULLION_WAKE.set()
 
 
 def forget_keys():
@@ -963,6 +1091,7 @@ def forget_keys():
     set_state(demo=True, status="starting", message="Dhan keys removed. Showing demo data.",
               bullish=[], bearish=[], scores=[], last_scan=None)
     WAKE.set()
+    BULLION_WAKE.set()
 
 
 # ── Keeping the Dhan token alive ────────────────────────────────────────────
@@ -1310,6 +1439,9 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/breakout":
             p = breakout_payload(q.get("symbol", [""])[0].upper())
             self.send(200 if p else 404, p or {"error": "not found"})
+        elif url.path == "/api/bullion":
+            p = bullion_payload(q.get("symbol", [""])[0].upper())
+            self.send(200 if p else 404, p or {"error": "not found"})
         elif url.path == "/api/chart":
             p = chart_payload(q.get("symbol", [""])[0].upper(), q.get("side", ["bull"])[0])
             self.send(200 if p else 404, p or {"error": "not found"})
@@ -1328,6 +1460,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(401, {"error": "Sign in first."})
         if path == "/api/scan":
             WAKE.set()
+            return self.send(200, {"ok": True})
+        if path == "/api/bullion/scan":
+            BULLION_WAKE.set()
             return self.send(200, {"ok": True})
         if path == "/api/logout":
             return self.send_cookie("", 0)
@@ -1417,6 +1552,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     threading.Thread(target=scanner, daemon=True).start()
     threading.Thread(target=token_keeper, daemon=True).start()
+    threading.Thread(target=bullion_loop, daemon=True).start()
     try:
         server = ThreadingHTTPServer((HOST, PORT), Handler)
     except OSError:
