@@ -41,6 +41,18 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
 - **Auto-scan:** intraday at 9:30, 9:45, 10:00 and 10:15; BTST every 30 minutes from 11:00 to 3:00 (IST, Mon–Fri),
   20 seconds after the candle closes. Between scans the day's trades are followed every 5 minutes. The header shows the time of the next scan.
   Use **Scan now** to rescan straight away.
+- **Gold & Silver (MCX, positional):** a tab for long futures held 3–4 months. Every 30 minutes while MCX is
+  open it reads about 2 years of daily candles of the near GOLD and SILVER futures and gives each metal a verdict:
+  - **BUY**: uptrend (price and the 50-day average above the 200-day) and price is near the 50-day average, or a
+    fresh breakout to a 60-day high from a tight base. **BUY ON DIP**: uptrend but stretched; a limit-buy zone is shown.
+    **WAIT**: above the 200-day but the 50-day hasn't crossed it. **AVOID**: downtrend.
+  - A score out of 100 from 8 checks: trend, slope of both averages, 20-week EMA, 3-month return, weekly RSI, stretch.
+  - Entry, stop-loss (under the 50-day average or the 20-day low, 1.5–4 ATR away), targets at 2R and 3R, and a
+    trailing rule (20-week EMA on weekly closes).
+  - Risk and value per lot for GOLD, GOLDM, GOLDGUINEA, GOLDPETAL, SILVER, SILVERM and SILVERMIC; enter your capital
+    and risk % to see how many lots fit.
+  - The gold/silver ratio (which metal is cheaper), the USD/INR trend, and which expiry to buy with the date to roll
+    it (7 days before expiry, ahead of MCX's delivery period).
 - **Breakout alerts:** turn on **🔔 Breakout alerts** and allow notifications. Each new breakout then
   pops up on your screen with a beep, and its card flashes.
 

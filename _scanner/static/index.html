@@ -295,8 +295,8 @@
     .ws-main, .ws-side { display: contents; }
     .ws-side .panel, .ws-main > * { margin: 0 8px 10px; }
     .ws-side .panel { background: var(--panel); border: 1px solid #2a2e39; border-radius: 6px; padding: 12px; }
-    #msg { order: 0; } #picksPanel, #btstPanel, #listsPanel { order: 1; } .panel.detail { order: 2; scroll-margin-top: 8px; }
-    #marketPanel { order: 3; } #tradesPanel, #btstBookPanel, #strengthPanel { order: 4; } #flowPanel { order: 5; }
+    #msg { order: 0; } #picksPanel, #btstPanel, #listsPanel, #bullionPanel { order: 1; } .panel.detail { order: 2; scroll-margin-top: 8px; }
+    #marketPanel, #bullInfoPanel { order: 3; } #tradesPanel, #btstBookPanel, #strengthPanel { order: 4; } #flowPanel { order: 5; }
     #sectorPanel { order: 6; } footer { order: 9; }
     .msg { margin-top: 10px; }
     #chart { height: 360px; }
@@ -319,7 +319,7 @@
   @media (max-width: 520px) { .cols { grid-template-columns: 1fr; } }
   /* last word: TradingView header on every screen size */
   header button, header .tab, header .chip, header .live { white-space: nowrap; flex-shrink: 0; }
-  @media (max-width: 1500px) { header #auto, header #tf { display: none; } }
+  @media (max-width: 1500px) { header #auto, header #tf, header .lname { display: none; } }
   @media (max-width: 1000px) {
     header { flex-wrap: nowrap !important; height: auto !important; min-height: 48px; overflow-x: auto; overflow-y: hidden;
              padding: env(safe-area-inset-top) 8px 0 !important; gap: 6px; scrollbar-width: none; }
@@ -350,6 +350,23 @@
   .ptable td.l { font-family: inherit; }
   .perfsec details { margin-top: 10px; } .perfsec summary { cursor: pointer; color: var(--accent); font-size: 13px; margin-bottom: 6px; }
   @media (max-width: 1000px) { .perfgrid { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .bverdict { font: 800 12px var(--mono); padding: 3px 9px; border-radius: 6px; letter-spacing: .04em; }
+  .bv-BUY { background: var(--bull); color: #fff; } .bv-BUY-ON-DIP { background: rgba(8,153,129,.2); color: var(--bull); }
+  .bv-WAIT { background: rgba(255,152,0,.18); color: var(--liq); } .bv-AVOID { background: rgba(242,54,69,.18); color: var(--bear); }
+  .bstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+  .bstats div { background: rgba(0,0,0,.28); border-radius: 8px; padding: 5px 7px; font-size: 10px; color: var(--muted); font-weight: 700; }
+  .bstats b { display: block; font: 600 13px var(--mono); color: var(--text); margin-top: 1px; }
+  .btbl { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .btbl th { text-align: left; color: var(--muted); font-weight: 600; padding: 5px 4px; border-bottom: 1px solid var(--line); }
+  .btbl td { padding: 5px 4px; border-bottom: 1px solid #22262f; font-family: var(--mono); }
+  .bgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .bgrid > div { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; }
+  .bgrid h3 { margin: 0 0 8px; font-size: 14px; }
+  .bgrid p, .bgrid li { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 4px 0; }
+  .bgrid ul { margin: 0; padding-left: 18px; }
+  .bsize { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+  .bsize input { width: 120px; padding: 6px 8px; border-radius: 6px; border: 1px solid #343c49; background: var(--card); color: var(--text); font: 13px var(--mono); }
+  @media (max-width: 1000px) { .bgrid { grid-template-columns: 1fr; } .bstats { grid-template-columns: repeat(2, 1fr); } }
   .revised { display: block; font-size: 11px; color: var(--liq); margin-top: 3px; }
 </style>
 </head>
@@ -361,6 +378,7 @@
     <button class="tab" data-mode="btst">BTST<span class="count" id="cntBt">0</span></button>
     <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
     <button class="tab" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
+    <button class="tab" data-mode="mcx">Gold &amp; Silver<span class="count" id="cntMcx">0</span></button>
     <button class="tab" data-mode="perf">Performance</button>
     <span class="spacer"></span>
     <button class="tab alerts" id="alertsBtn" title="Pop-up and sound when a new breakout appears">🔔 Breakout alerts: off</button>
@@ -477,6 +495,29 @@
     <div class="tips" id="mTips"></div>
     <div class="evts" id="mEvents"></div>
   </section>
+  <section class="panel full" id="bullInfoPanel" hidden>
+    <div class="ptitle"><h2>MCX gold &amp; silver · positional longs (3–4 months)</h2><small id="bullUpdated"></small></div>
+    <div class="bsize" style="margin-bottom:12px">
+      <label>Capital ₹ <input id="bCap" type="number" min="0" step="10000" placeholder="e.g. 500000"></label>
+      <label>Risk per trade % <input id="bRisk" type="number" min="0.1" max="10" step="0.1" placeholder="2"></label>
+      <span>Lots are worked out so that hitting the stop loses at most this much.</span>
+    </div>
+    <div class="bgrid">
+      <div><h3>Which metal</h3><div id="bRatio"></div><div id="bUsd"></div></div>
+      <div><h3>Which contract to buy</h3><div id="bContracts"></div></div>
+      <div><h3>How the verdict is made</h3><ul>
+        <li><b>BUY</b>: uptrend (price and the 50-day average above the 200-day) and price is in the buy zone near the 50-day average, or a fresh breakout to a 60-day high from a tight base.</li>
+        <li><b>BUY ON DIP</b>: uptrend, but price is stretched. Put a limit buy in the zone shown.</li>
+        <li><b>WAIT</b>: above the 200-day, but the 50-day has not crossed above it yet.</li>
+        <li><b>AVOID</b>: downtrend. No long futures.</li>
+        <li>Score: 8 checks on daily and weekly candles (trend, slope, weekly EMA, 3-month return, weekly RSI, stretch).</li></ul></div>
+      <div><h3>Managing the trade</h3><ul>
+        <li>Stop-loss sits under the 50-day average or the last 20-day low, 1.5–4 ATR from entry. Act on a <b>daily close</b> below it.</li>
+        <li>Targets are 2R and 3R. At T1 book half, then trail under the 20-week EMA on weekly closes.</li>
+        <li>MCX gold and silver futures settle by <b>delivery</b>: roll to the next contract before the roll date shown, never hold into the delivery period.</li>
+        <li>Leverage cuts both ways: one lot of GOLD moves ₹100 per ₹1, SILVER ₹30. Keep spare margin for swings and margin hikes.</li></ul></div>
+    </div>
+  </section>
   <section class="panel full" id="perfPanel" hidden>
     <div class="perfbar"><h2>Performance</h2><select id="perfMonth"></select>
       <label>Risk per trade ₹ <input id="perfRisk" type="number" min="0" step="100" placeholder="e.g. 1000"></label>
@@ -522,6 +563,11 @@
     <div id="btstList"></div>
     <div class="hint" id="btstSkipped" style="margin-top:10px"></div>
   </section>
+  <section class="panel" id="bullionPanel" hidden>
+    <div class="ptitle"><h2>Gold &amp; Silver · MCX futures</h2><small>daily candles · long only · hold 3–4 months</small></div>
+    <div class="caution" id="bullErr" hidden></div>
+    <div id="bullList"></div>
+  </section>
   <section class="panel" id="listsPanel">
     <div class="cols">
       <div><h2 class="bull-t">↗ Bullish</h2><div class="list" id="bullList"></div></div>
@@ -535,6 +581,7 @@
   <button data-go="btst:btstPanel"><span>☾</span>BTST</button>
   <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
   <button data-go="pk:marketPanel"><span>▲</span>Market</button>
+  <button data-go="mcx:bullionPanel"><span>◆</span>Gold</button>
   <button data-go="perf:perfPanel"><span>%</span>Stats</button>
 </nav>
 
@@ -543,7 +590,7 @@
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 let state = null, selected = null, mode = "pk", alertsOn = false, seen = null;
-try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo", "perf"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
+try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo", "mcx", "perf"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
 const view = () => mode === "ob" ? { bullish: state.bullish, bearish: state.bearish, scores: state.scores }
                                  : state.breakouts || { bullish: [], bearish: [], scores: [] };
 
@@ -570,15 +617,16 @@ function setLive(cls, text) { $("live").className = "live " + cls; $("liveText")
 
 function render() {
   const s = state;
-  $("tf").textContent = mode === "ob" ? s.timeframe + "m" : mode === "btst" ? "1h" : s.breakout_tf + "m";
+  $("tf").textContent = mode === "ob" ? s.timeframe + "m" : mode === "btst" ? "1h" : mode === "mcx" ? "1D" : s.breakout_tf + "m";
+  $("cntMcx").textContent = ((s.bullion || {}).metals || []).filter(m => m.verdict === "BUY").length;
   $("cntBt").textContent = (s.btst && s.btst.picks || []).length;
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
   const show = { pk: ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"],
                  btst: ["marketPanel", "btstBookPanel", "btstPanel"], ob: ["strengthPanel", "listsPanel"], bo: ["strengthPanel", "listsPanel"],
-                 perf: ["perfPanel"] };
+                 mcx: ["bullInfoPanel", "bullionPanel"], perf: ["perfPanel"] };
   document.body.classList.toggle("noside", mode === "perf");
-  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel", "perfPanel"]
+  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel", "perfPanel", "bullInfoPanel", "bullionPanel"]
     .forEach(id => $(id).hidden = !show[mode].includes(id));
   document.querySelectorAll(".bnav button").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode && b.dataset.go !== "pk:tradesPanel" && b.dataset.go !== "pk:marketPanel"));
   renderMarket(s.market);
@@ -611,6 +659,7 @@ function render() {
 
   if (mode === "pk") { renderPicks(); return; }
   if (mode === "btst") { renderBtst(); return; }
+  if (mode === "mcx") { renderBullion(); return; }
   if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); } return; }
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
@@ -714,7 +763,7 @@ async function loadChart() {
   const id = ++chartReq;
   try {
     const sym = encodeURIComponent(selected[0]);
-    const url = mode === "pk" ? `/api/pick?symbol=${sym}` : mode === "btst" ? `/api/btst?symbol=${sym}` : mode === "ob" ? `/api/chart?symbol=${sym}&side=${selected[1]}` : `/api/breakout?symbol=${sym}`;
+    const url = mode === "mcx" ? `/api/bullion?symbol=${sym}` : mode === "pk" ? `/api/pick?symbol=${sym}` : mode === "btst" ? `/api/btst?symbol=${sym}` : mode === "ob" ? `/api/chart?symbol=${sym}&side=${selected[1]}` : `/api/breakout?symbol=${sym}`;
     const r = await fetch(url, { cache: "no-store" });
     if (id !== chartReq) return;
     chartData = r.ok ? await r.json() : null;
@@ -731,6 +780,7 @@ function drawChart() {
   names.forEach((n, i) => $("n" + (i + 1)).textContent = n);
   lwcShow(d);
   if (!d) { ["dSym", "dPrice", "dTag", "lZone", "lSup", "lRes", "lLiq"].forEach(i => $(i).textContent = i[0] === "l" ? "—" : ""); $("dSym").textContent = "—"; return; }
+  if (d.bullion) return drawBullion(d, ctx, w, h);
   if (d.pick) return drawPick(d, ctx, w, h);
   if (d.levels) return drawBreakout(d, ctx, w, h);
   const bull = d.side === "bull", list = bull ? state.bullish : state.bearish;
@@ -932,7 +982,7 @@ function lwcShow(d) {
   lwcInit();
   const tv = $("tvLink");
   if (d) {
-    const sym = "NSE:" + d.symbol.replace(/[&-]/g, "_"), web = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}`;
+    const sym = d.bullion ? `MCX:${d.symbol}1!` : "NSE:" + d.symbol.replace(/[&-]/g, "_"), web = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}`;
     const ua = navigator.userAgent, android = /Android/i.test(ua), ios = /iPhone|iPad|iPod/i.test(ua);
     tv.hidden = false; tv.dataset.sym = sym;
     tv.textContent = android || ios ? "Open in TradingView app ↗" : "Open in TradingView ↗";
@@ -954,7 +1004,12 @@ function lwcShow(d) {
   };
   const bull = d.side === "bull", col = bull ? "#089981" : "#f23645", marks = [];
   const at = t => { const k = d.candles.find(q => q.t >= t); return k ? k.t + IST_OFF : null; };
-  if (d.pick) {
+  if (d.bullion) {
+    const b = d.bullion, p = b.plan;
+    line(b.sma50, "#2962ff", "50-day", 3); line(b.sma_long, "#ff9800", `${b.long_n}-day`, 3);
+    line(b.zone[0], "rgba(8,153,129,.6)", "Zone", 1); line(b.zone[1], "rgba(8,153,129,.6)", "Zone", 1);
+    if (p) { line(p.entry, "#d1d4dc", "Buy", 0, 2); line(p.sl, "#f23645", "SL"); line(p.t1, "#089981", "T1"); line(p.t2, "#089981", "T2"); }
+  } else if (d.pick) {
     const p = d.pick.plan;
     line(p.entry, "#d1d4dc", bull ? "Buy above" : "Sell below", 0, 2);
     line(p.sl, "#f23645", "SL"); line(p.t1, "#089981", "T1"); line(p.t2, "#089981", "T2");
@@ -1085,6 +1140,84 @@ document.querySelectorAll(".bnav button").forEach(b => b.onclick = () => {
   if (mode !== m) { mode = m; selected = null; try { localStorage.setItem("mode", mode); } catch {} render(); }
   setTimeout(() => $(target).scrollIntoView({ behavior: "smooth", block: "start" }), 50);
 });
+
+// ---------- MCX gold & silver ----------
+try { $("bCap").value = localStorage.getItem("bCap") || ""; $("bRisk").value = localStorage.getItem("bRisk") || ""; } catch {}
+["bCap", "bRisk"].forEach(i => $(i).oninput = () => { try { localStorage.setItem(i, $(i).value); } catch {} renderBullion(); });
+const inr = v => "₹" + Math.round(v).toLocaleString("en-IN");
+const n0 = v => v == null ? "—" : Math.round(v).toLocaleString("en-IN");
+function renderBullion() {
+  const b = state.bullion || {}, metals = b.metals || [];
+  $("bullUpdated").textContent = b.updated ? `updated ${b.updated} · refreshes every 30 min while MCX is open` : "loading…";
+  $("bullErr").hidden = !b.error; $("bullErr").textContent = b.error ? "⚠ " + b.error : "";
+  const cap = +$("bCap").value || 0, riskPct = +$("bRisk").value || 2, budget = cap * riskPct / 100;
+  const list = $("bullList");
+  list.innerHTML = metals.length ? metals.map(m => {
+    const p = m.plan, vcls = "bv-" + m.verdict.replace(/ /g, "-");
+    const lots = p ? `<table class="btbl"><tr><th>Contract</th><th>Lot</th><th>Risk/lot</th><th>Value/lot</th>${cap ? "<th>Lots</th>" : ""}</tr>
+      ${p.lots.map(l => `<tr><td>${l.symbol}</td><td>${l.size}</td><td>${inr(l.risk_lot)}</td><td>${inr(l.value)}</td>${cap ? `<td><b>${Math.floor(budget / l.risk_lot)}</b></td>` : ""}</tr>`).join("")}</table>
+      ${m.symbol === "GOLD" ? `<div class="hint" style="font-size:11px;color:var(--muted);margin-top:4px">GOLDGUINEA (per 8 g) and GOLDPETAL (per 1 g) quote their own prices: place their orders at the same % levels (SL −${p.risk_pct}%, T1 +${p.t1_pct}%, T2 +${p.t2_pct}%).</div>` : ""}
+      ${cap ? `<div class="hint" style="font-size:11px;color:var(--muted);margin-top:4px">Risk budget ${inr(budget)} (${riskPct}% of ${inr(cap)}). 0 lots means the stop is too wide for your budget on that contract: use a smaller one.</div>` : ""}` : "";
+    return `<div class="pick bull" data-sym="${m.symbol}" data-side="bull">
+      <div class="top"><span class="bverdict ${vcls}">${m.verdict}</span><span class="nm">${m.symbol}</span>
+        <span class="px">${n0(m.price)} <span style="color:${m.pct >= 0 ? css("--bull") : css("--bear")}">${pct(m.pct)}</span></span>
+        <span class="oi">score ${m.score}/100</span></div>
+      <div class="action" style="font-family:inherit;font-weight:600">${esc(m.action)}</div>
+      ${p ? `<div class="nums" style="margin-top:8px">
+        <div>${m.verdict === "BUY" ? "BUY ~" : "LIMIT BUY"}<b>${n0(p.entry)}</b></div><div class="sl">SL<b>${n0(p.sl)}</b></div>
+        <div class="tg">T1 +${p.t1_pct}%<b>${n0(p.t1)}</b></div><div class="tg">T2 +${p.t2_pct}%<b>${n0(p.t2)}</b></div>
+        <div>RISK<b>${p.risk_pct}%</b></div><div>R:R<b>1:3</b></div></div>` : ""}
+      <div class="bstats"><div>50-DAY<b>${n0(m.sma50)}</b></div><div>${m.long_n}-DAY<b>${n0(m.sma_long)}</b></div>
+        <div>20-WEEK EMA<b>${n0(m.ema20w)}</b></div><div>BUY ZONE<b>${n0(m.zone[0])}–${n0(m.zone[1])}</b></div>
+        <div>3M / 6M<b>${m.ret3m ?? "—"}% / ${m.ret6m ?? "—"}%</b></div><div>RSI W / D<b>${m.rsi_w ?? "—"} / ${m.rsi_d ?? "—"}</b></div>
+        <div>FROM 52W HIGH<b>${m.off_high}%</b></div><div>ATR (DAY)<b>${n0(m.atr)} · ${m.atr_pct}%</b></div></div>
+      <div class="chips">${m.checks.map(c => `<span class="${c.ok ? "ok" : "bad"}">${c.ok ? "✓" : "✗"} ${esc(c.text).toUpperCase()}</span>`).join("")}</div>
+      ${lots}
+      ${p ? `<div class="hint" style="font-size:12px;color:var(--muted);margin-top:6px">${esc(p.trail)}.</div>` : ""}
+    </div>`;
+  }).join("") : `<div class="empty">${b.error ? "No data yet." : "Loading gold and silver…"}</div>`;
+  const r = b.ratio;
+  $("bRatio").innerHTML = r ? `<p>Gold/silver ratio <b style="color:var(--text)">${r.ratio}</b> (1-year range ${r.lo}–${r.hi}${r.chg_3m != null ? `, ${r.chg_3m >= 0 ? "+" : ""}${r.chg_3m} in 3 months` : ""}).
+    ${r.favour ? `Favours <b style="color:var(--text)">${r.favour}</b>: ` : ""}${esc(r.why)}.</p>` : "<p>—</p>";
+  $("bUsd").innerHTML = b.usdinr ? `<p>${esc(b.usdinr.text)}.</p>` : "";
+  $("bContracts").innerHTML = (b.contracts || []).length ? `<table class="btbl"><tr><th>Contract</th><th>Buy expiry</th><th>Roll by</th><th>Next</th></tr>
+    ${b.contracts.map(c => `<tr><td>${c.symbol}</td><td>${fmtDay(c.expiry)} <small style="color:var(--muted)">${c.days_left}d</small></td><td>${fmtDay(c.roll_by)}</td><td>${c.next ? fmtDay(c.next) : "—"}</td></tr>`).join("")}</table>
+    <p>For a 3–4 month hold you will usually roll once or twice. Expiries under 3 weeks away are skipped. When rolling, sell the old contract and buy the next one on the same day.</p>` : "<p>—</p>";
+  list.querySelectorAll(".pick").forEach(el => el.onclick = () => { selected = [el.dataset.sym, "bull"]; hl(); loadChart(); });
+  const hl = () => list.querySelectorAll(".pick").forEach(el => el.classList.toggle("sel", !!selected && el.dataset.sym === selected[0]));
+  if (!selected || !metals.some(m => m.symbol === selected[0])) { selected = metals[0] ? [metals[0].symbol, "bull"] : null; }
+  hl();
+  if (b.updated !== renderBullion.at || (selected && selected[0]) !== renderBullion.sel) {   // chart only when data or choice changes
+    renderBullion.at = b.updated; renderBullion.sel = selected && selected[0]; loadChart();
+  }
+}
+const fmtDay = d => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit" });
+function drawBullion(d, ctx, w, h) {
+  const m = d.bullion, p = m.plan;
+  $("dSym").textContent = d.symbol + " · MCX";
+  $("dPrice").innerHTML = `${n0(d.price)} <span style="color:${d.pct >= 0 ? css("--bull") : css("--bear")}">${pct(d.pct)}</span>`;
+  $("dTag").className = "tag " + (m.uptrend ? "bull" : "bear");
+  $("dTag").textContent = `${m.verdict} · score ${m.score}`;
+  ["Buy", "Stop-loss", "Target 1", "Target 2"].forEach((n, i) => $("n" + (i + 1)).textContent = n);
+  if (lwc) lwcLegend(null);                            // the legend was drawn before the name changed
+  $("lZone").textContent = p ? n0(p.entry) : "—"; $("lSup").textContent = p ? n0(p.sl) : "—";
+  $("lRes").textContent = p ? n0(p.t1) : "—"; $("lLiq").textContent = p ? n0(p.t2) : "—";
+  const k = d.candles, padR = 70, padT = 14, padB = 30, plotW = w - padR;
+  const ext = p ? [p.sl, p.t2] : [];
+  let lo = Math.min(...ext, ...k.map(q => q.l)), hi = Math.max(...ext, ...k.map(q => q.h));
+  const pad = (hi - lo) * .05; lo -= pad; hi += pad;
+  const y = v => padT + (hi - v) / (hi - lo) * (h - padT - padB), cw = plotW / k.length, x = i => cw * (i + .5);
+  tvBack(ctx, { c: k, w, h, plotW, padT, padB, lo, hi, x, y, cw });
+  if (w < 20) return;
+  const line = (v, color, dash) => { if (v == null) return; ctx.setLineDash(dash); ctx.strokeStyle = color; ctx.beginPath(); ctx.moveTo(0, y(v)); ctx.lineTo(plotW, y(v)); ctx.stroke(); ctx.setLineDash([]); };
+  line(m.sma50, "#2962ff", [3, 3]); line(m.sma_long, "#ff9800", [3, 3]);
+  if (p) { line(p.entry, "#ffffff", []); line(p.sl, css("--bear"), [4, 3]); line(p.t1, css("--bull"), [6, 4]); line(p.t2, css("--bull"), [6, 4]); }
+  k.forEach((q, i) => {
+    const cc = q.c >= q.o ? css("--bull") : css("--bear"); ctx.strokeStyle = cc; ctx.fillStyle = cc;
+    ctx.beginPath(); ctx.moveTo(x(i), y(q.h)); ctx.lineTo(x(i), y(q.l)); ctx.stroke();
+    const bw = Math.max(1, cw * .62); ctx.fillRect(x(i) - bw / 2, y(Math.max(q.o, q.c)), bw, Math.max(1, Math.abs(y(q.o) - y(q.c))));
+  });
+}
 
 // ---------- Market context ----------
 function flagChips(c) {
@@ -1769,7 +1902,7 @@ $("phoneSave").onclick = async () => {
     $("phoneErr").style.color = "var(--bull)"; $("phoneErr").textContent = $("phoneOn").checked ? "Saved. Phone access is on." : "Saved. Phone access is off.";
   } catch (err) { $("phoneErr").style.color = ""; $("phoneErr").textContent = err.message; }
 };
-$("scan").onclick = async () => { $("scan").disabled = true; await fetch("/api/scan", { method: "POST" }); setTimeout(refresh, 800); };
+$("scan").onclick = async () => { $("scan").disabled = true; await post(mode === "mcx" ? "/api/bullion/scan" : "/api/scan", {}).catch(() => {}); setTimeout(refresh, 1500); };
 window.addEventListener("resize", () => { if (state) { if (mode === "pk") renderPicks(); drawChart(); } });
 refresh();
 setInterval(refresh, 5000);
