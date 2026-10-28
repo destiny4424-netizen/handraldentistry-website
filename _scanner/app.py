@@ -44,7 +44,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "28 Oct · intraday = PDH/PDL breakouts on volume, new BTST"
+VERSION = "28 Oct · fresh performance record"
 
 
 def load_env():
@@ -382,6 +382,29 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
 CANDLES = {}
 BREAKOUTS = {}                                         # symbol -> (15m candles, setup, levels, result)
 PICKS = {}                                             # symbol -> pick (with its 5m candles)
+PERF_RESET = "2026-10-28-breakouts"                   # bump to start the performance record afresh
+
+
+def reset_performance():
+    """Once per PERF_RESET: move every recorded trade out of the performance record (into
+    old-trades/<reset>/), so the new setup's results aren't mixed with the old one's."""
+    if SETTINGS.get("perf_reset") == PERF_RESET:
+        return
+    old = SETTINGS_DIR / "old-trades" / PERF_RESET
+    try:
+        files = list(SETTINGS_DIR.glob("trades-*.json")) + [f for f in [SETTINGS_DIR / "btst.json"] if f.exists()]
+        if files:
+            old.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                f.replace(old / f.name)
+        save_settings(perf_reset=PERF_RESET)
+        SETTINGS["perf_reset"] = PERF_RESET
+        print(f"Performance reset: {len(files)} old trade files moved to {old}")
+    except OSError as e:
+        print(f"Performance reset failed: {e}", file=sys.stderr)
+
+
+reset_performance()
 TRADES = trades.TradeBook(SETTINGS_DIR)                # today's locked-in picks, followed to the end
 BTSTS = trades.BtstBook(SETTINGS_DIR)                  # BTST/STBT picks, followed into the next session
 BTST_PICKS = {}                                        # symbol -> (BTST pick, 5m candles) for the chart
