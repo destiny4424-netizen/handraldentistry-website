@@ -30,6 +30,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import analysis
+import backtest
 import breakout
 import bullion
 import btst
@@ -44,7 +45,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "28 Oct · fresh performance record"
+VERSION = "28 Oct · backtest"
 
 
 def load_env():
@@ -297,6 +298,14 @@ def dhan_daily(security_id, segment="NSE_EQ", instrument="EQUITY", days=120):
             "fromDate": (now - timedelta(days=days)).strftime("%Y-%m-%d"),
             "toDate": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
     return _rows(dhan_post("/charts/historical", body))
+
+
+def dhan_range(security_id, start, end, interval="5", segment="NSE_EQ", instrument="EQUITY"):
+    """Intraday candles between two dates (inclusive), for the backtest."""
+    body = {"securityId": str(security_id), "exchangeSegment": segment, "instrument": instrument,
+            "interval": str(interval), "oi": False,
+            "fromDate": start.strftime("%Y-%m-%d 09:15:00"), "toDate": end.strftime("%Y-%m-%d 15:30:00")}
+    return _rows(dhan_post("/charts/intraday", body))
 
 
 def dhan_candles(security_id, interval=TIMEFRAME, segment="NSE_EQ", instrument="EQUITY"):
@@ -740,6 +749,57 @@ def bullion_payload(symbol):
         return None
     return {"symbol": symbol, "price": m["price"], "pct": m["pct"], "side": "bull", "bullion": m,
             "candles": [{k: x[k] for k in "tohlcv"} for x in candles[-180:]]}
+
+
+BACKTEST = {"status": "idle", "message": ""}
+BACKTEST_SESSIONS = 60
+
+
+def _history(sid, segment="NSE_EQ", instrument="EQUITY", days=90):
+    """5-minute candles for the last `days` calendar days before today, in 30-day pieces."""
+    today = datetime.now(IST).date()
+    out, end = {}, today - timedelta(days=1)
+    start = today - timedelta(days=days)
+    while end >= start:
+        s0 = max(start, end - timedelta(days=29))
+        for c in dhan_range(sid, s0, end, "5", segment, instrument):
+            out[c["t"]] = c
+        time.sleep(0.6 if market_open() else 0.25)    # gentle while the live scanner is running
+        end = s0 - timedelta(days=1)
+    return [out[t] for t in sorted(out)]
+
+
+def backtest_job():
+    """Download ~3 months of 5-minute history and replay the intraday and BTST setups on it."""
+    try:
+        demo = DEMO
+        if demo:
+            BACKTEST.update(message="Making demo history…")
+            data, nifty = backtest.demo_data(DEMO_SYMBOLS[:150], sessions=BACKTEST_SESSIONS + 5)
+        else:
+            stocks = fno_stocks()
+            data = {}
+            for n, (sym, sid) in enumerate(stocks.items(), 1):
+                BACKTEST.update(message=f"Downloading history {n}/{len(stocks)}: {sym}…")
+                try:
+                    daily = dhan_daily(sid, days=230)
+                    time.sleep(0.25)
+                    if not liquid_enough(liquidity(daily)):
+                        continue
+                    data[sym] = {"c5": backtest.pack(_history(sid)), "daily": daily}   # compact: ~48 B a candle
+                except DhanError as e:
+                    if e.fatal:
+                        raise
+            BACKTEST.update(message="Downloading NIFTY history…")
+            nifty = _history(INDEXES["NIFTY"], "IDX_I", "INDEX")
+        rep = backtest.run(data, nifty, N_PICKS, BACKTEST_SESSIONS, progress=lambda m: BACKTEST.update(message=m))
+        rep.update(ran_at=datetime.now(IST).strftime("%d %b %Y %H:%M"), demo=demo)
+        (SETTINGS_DIR / "backtest.json").write_text(json.dumps(rep), encoding="utf-8")
+        BACKTEST.update(status="done", message="")
+    except DhanError as e:
+        BACKTEST.update(status="error", message=str(e))
+    except Exception as e:
+        BACKTEST.update(status="error", message=f"Backtest failed: {e}")
 
 
 def scan_once():
@@ -1444,6 +1504,12 @@ class Handler(BaseHTTPRequestHandler):
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
+        elif url.path == "/api/backtest":
+            try:
+                rep = json.loads((SETTINGS_DIR / "backtest.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                rep = None
+            self.send(200, {"job": dict(BACKTEST), "report": rep})
         elif url.path == "/api/performance":
             month = (q.get("month", [""])[0] or datetime.now(IST).strftime("%Y-%m"))[:7]
             if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
@@ -1487,6 +1553,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_cookie("", 0)
         if not self.can_admin():                        # everything below changes settings
             return self.send(403, {"error": "Settings can only be changed on the PC."})
+        if path == "/api/backtest":
+            if BACKTEST["status"] == "running":
+                return self.send(200, {"ok": True, "running": True})
+            BACKTEST.update(status="running", message="Starting…")
+            threading.Thread(target=backtest_job, daemon=True).start()
+            return self.send(200, {"ok": True})
         if path == "/api/prefs":
             t = str(body.get("picks_from") or "").strip()
             if t not in ("09:30", "09:45", "10:00", "10:15"):
