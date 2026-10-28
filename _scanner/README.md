@@ -118,6 +118,12 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Support and resistance are the nearest swing points.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
+## Starting the performance record afresh
+`PERF_RESET` in `app.py` names the current record. When it changes, the next start moves every
+recorded trade (`trades-*.json`, `btst.json`) to `old-trades/<name>/` in the settings folder. Performance
+and Today's trades then start from zero. The files are kept there, not deleted, in case they are ever wanted.
+The last reset was on 28 Oct 2026, when intraday switched to PDH/PDL breakouts.
+
 ## How intraday picks are chosen
 Intraday is one setup only: a **15-minute breakout of yesterday's high (buy) or low (sell) on volume**.
 Order blocks have their own tab and are not mixed in. Scans run every 15 minutes from 9:30 to 14:00,
