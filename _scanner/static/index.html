@@ -431,8 +431,8 @@
       <b style="font-size:14px">Intraday</b>
       <label for="pickFrom">First intraday scan that gives picks (IST)</label>
       <select id="pickFrom"><option>09:30</option><option>09:45</option><option>10:00</option><option>10:15</option></select>
-      <div class="hint">Intraday scans run at 9:30, 9:45, 10:00 and 10:15 only. Every stock given in them is collected
-      into one list (each stock once) that you can trade for the rest of the day when its entry breaks.</div>
+      <div class="hint">Intraday = 15-minute breakouts of yesterday's high/low on volume. Scans every 15 minutes from this
+      time to 14:00. Every breakout goes into one list (each stock once) to trade when its entry breaks.</div>
       <b style="font-size:14px;display:block;margin-top:14px">Liquid stocks only</b>
       <div class="hint">Only F&amp;O stocks that trade enough are scanned (averages of the last 20 sessions).
       Thin stocks have wide spreads and jumpy moves. Set a box to 0 to switch that check off.</div>
@@ -554,7 +554,7 @@
   <section class="panel" id="picksPanel" hidden>
     <div class="ptitle"><h2 id="pickTitle">Intraday picks</h2><small id="pickNote"></small></div>
     <div id="pickList"></div>
-    <div class="ptitle" id="watchTitle" style="margin-top:18px"><h2>Watchlist</h2><small>good setups that have not held their level yet — not trades until they do</small></div>
+    <div class="ptitle" id="watchTitle" style="margin-top:18px"><h2>Watchlist</h2><small>close to yesterday's high/low, or broke out but not clean yet — not trades until a 15m close beyond the level on volume</small></div>
     <div id="watchList"></div>
   </section>
   <section class="panel" id="btstPanel" hidden>
@@ -1013,7 +1013,9 @@ function lwcShow(d) {
     const p = d.pick.plan;
     line(p.entry, "#d1d4dc", bull ? "Buy above" : "Sell below", 0, 2);
     line(p.sl, "#f23645", "SL"); line(p.t1, "#089981", "T1"); line(p.t2, "#089981", "T2");
-    if (p.held_at && at(p.held_at)) marks.push({ time: at(p.held_at), position: bull ? "belowBar" : "aboveBar", color: col, shape: bull ? "arrowUp" : "arrowDown", text: "HELD" });
+    if (d.pick.level) line(d.pick.level, bull ? "#22d38a" : "#ff5d73", d.pick.level_name || (bull ? "PDH" : "PDL"), 0, 2);
+    const brk = /breakout/i.test(p.basis || "");
+    if (p.held_at && at(p.held_at)) marks.push({ time: at(p.held_at), position: bull ? "belowBar" : "aboveBar", color: col, shape: bull ? "arrowUp" : "arrowDown", text: brk ? (d.pick.retest ? "RETEST" : "BREAKOUT") : "HELD" });
   } else if (d.levels) {
     line(d.level_price, col, d.level, 0, 2); line(d.stop, "#f23645", "Stop"); line(d.target, "#089981", "Target");
     d.levels.filter(l => Math.abs(l.price - d.level_price) > 1e-6).forEach(l => line(l.price, "#5d6776", l.name, 3));
@@ -1083,8 +1085,8 @@ $("perfRisk").oninput = () => { try { localStorage.setItem("perfRisk", $("perfRi
 // ---------- BTST ----------
 function renderBtst() {
   const b = state.btst || { open: false, from: "12:00", picks: [], book: { rows: [], summary: {} } };
-  $("btstNote").textContent = b.open ? "strong closers · scans every 30 min · enter 3:15–3:25 PM · exit next morning"
-                                     : `opens at ${b.from} · scans every 30 min 11:00–3:00`;
+  $("btstNote").textContent = b.open ? "closing at the day's high/low above yesterday's high (below its low) on 1.5×+ volume, best at a 20-day breakout, with OI build-up · enter 3:15–3:25 PM · exit next morning"
+                                     : `opens at ${b.from} · final list at 3:00 PM`;
   $("btstCaution").hidden = !b.caution; $("btstCaution").textContent = b.caution ? "⚠ " + b.caution : "";
   $("btstSkipped").innerHTML = (b.skipped || []).length ? "Left out: " + b.skipped.map(x => `<b>${esc(x.symbol)}</b> (${esc(x.why)})`).join(", ") : "";
   const list = $("btstList");
@@ -1249,6 +1251,13 @@ function pickChips(c) {
   if (c.supertrend) out.push(c.supertrend.ok ? `<span class="ok">✓ SUPERTREND ${fmt(c.supertrend.value)}</span>`
                                              : `<span class="bad">⚠ SUPERTREND AGAINST</span>`);
   const ch = c.checks || {}, bull = c.side === "bull", hl = bull ? "PDH" : "PDL";
+  if (c.vol_x != null) {
+    out.push(`<span class="ok">✓ 15M CLOSE ${bull ? "ABOVE PDH" : "BELOW PDL"} ${fmt(c.level)} AT ${c.broke_at}</span>`);
+    out.push(`<span class="${c.vol_x >= 2 ? "ok" : ""}">BREAKOUT VOLUME ${c.vol_x}×</span>`);
+    if (c.retest) out.push(`<span class="ok">✓ RETESTED ${hl} AND HELD</span>`);
+    if (c.gap) out.push(`<span>GAP ${bull ? "ABOVE" : "BELOW"} ${hl}</span>`);
+    if ((c.also || []).length) out.push(`<span class="ok">✓ ALSO ${bull ? "ABOVE LAST WEEK'S HIGH" : "BELOW LAST WEEK'S LOW"}</span>`);
+  }
   if (ch.pd) out.push(ch.pd.ok ? `<span class="ok">✓ 15M CLOSE ${bull ? "ABOVE" : "BELOW"} ${hl} ${fmt(ch.pd.level)} (${ch.pd.time})</span>`
                      : ch.pd.lost ? `<span class="bad">⚠ BACK ${bull ? "BELOW" : "ABOVE"} ${hl} ${fmt(ch.pd.level)}</span>`
                      : `<span class="bad">⚠ NO 15M CLOSE ${bull ? "ABOVE" : "BELOW"} ${hl} ${fmt(ch.pd.level)} YET</span>`);
@@ -1375,13 +1384,11 @@ function renderPicks() {
   }).join("") || `<div class="empty">Waiting for scan…</div>`;
   $("secNote").textContent = pk.sectors.length ? "average move of the F&O stocks in each sector today" : "";
   const uv = state.universe;
-  $("pickTitle").textContent = pk.list ? "Today's intraday list" : "Intraday picks";
-  $("watchTitle").hidden = $("watchList").hidden = !!pk.list;
-  $("pickNote").textContent = pk.list
-    ? `every stock given by the 9:30–10:15 scans, once each · trade any of them later today when its entry breaks · no new intraday scans after 10:15`
-    : (uv ? `${uv.liquid} of ${uv.total} F&O stocks liquid enough (₹${uv.min_turnover_cr} cr+ a day) · ` : "") +
-      `scans at 9:30, 9:45, 10:00, 10:15` +
-      (pk.picks.length ? ` · price held the level on a 15m close · best ${pk.picks.length} after all filters · min R:R ${state.min_rr || 1.5}` : "");
+  $("pickTitle").textContent = "Today's breakouts";
+  $("watchTitle").hidden = $("watchList").hidden = !!pk.window_closed;
+  $("pickNote").textContent = `15-min close above yesterday's high (buy) / below its low (sell) on 1.5×+ volume, holding, with VWAP + Supertrend` +
+    ` · scans every 15 min 9:30–${pk.intraday_until || "14:00"} · each stock once, newest first` +
+    (uv ? ` · ${uv.liquid} of ${uv.total} liquid F&O stocks scanned` : "");
   const hm = t => new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
   $("watchList").innerHTML = (pk.watch || []).map(w => `<div class="watch ${w.side}">
       <span class="badge" style="font-size:11px;padding:2px 7px">${w.side === "bull" ? "BULL" : "BEAR"}</span>
@@ -1391,18 +1398,18 @@ function renderPicks() {
   const changed = list.dataset.sig !== sig; list.dataset.sig = sig;
   if (!pk.picks.length) {
     list.innerHTML = `<div class="empty">${!state.last_scan ? "Waiting for scan…"
-      : pk.list ? "No intraday picks were given today (9:30–10:15 scans)."
+      : pk.list ? `No clean breakout yet today. Each 15-minute scan (9:30–${pk.intraday_until || "14:00"}) checks every liquid F&O stock; stocks close to yesterday's high/low are on the Watchlist below.`
       : pk.picks_open === false ? `Intraday picks start with the ${pk.picks_from} scan. Until then, setups whose level holds wait on the Watchlist below.`
       : "No stock passes every filter right now. The next scan may find some."}</div>`;
   } else {
     list.innerHTML = pk.picks.map((c, i) => {
       const p = c.plan, bull = c.side === "bull", oi = c.oi;
       return `<div class="pick ${c.side}${changed ? " enter" : ""}" style="animation-delay:${changed ? i * 60 : 0}ms" data-sym="${c.symbol}" data-side="${c.side}">
-        <div class="top"><span class="badge">${bull ? "BULL" : "BEAR"}</span><span class="nm">${c.symbol}</span>
+        <div class="top"><span class="badge">${bull ? "BUY" : "SELL"}</span><span class="nm">${c.symbol}</span>${c.fresh ? `<span class="tstat" style="color:#ffcf70">NEW</span>` : ""}
           <span class="px">${fmt(c.price)} <span style="color:${c.pct >= 0 ? css("--bull") : css("--bear")}">${pct(c.pct)}</span></span>
           <span class="oi">${oi ? `${oi.kind} · OI ${pct(oi.oi_pct)}` : "OI n/a"}</span></div>
         <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)} · ${c.sector} (${pct(c.sector_pct)}, rank ${c.sector_rank})<br>
-          ${c.sources.join(" + ")} · <span class="held">✓ held the level ${hm(p.held_at)}</span><br>
+          ${c.sources.join(" + ")} · <span class="held">${c.vol_x != null ? `✓ broke out ${c.broke_at}` : `✓ held the level ${hm(p.held_at)}`}</span><br>
           ${c.trade ? `<span class="tstat">${esc(c.trade.status)}${c.trade.result_r != null ? ` · ${c.trade.result_r >= 0 ? "+" : ""}${c.trade.result_r}R` : ""}</span> · given at the ${c.since} scan`
                     : `<span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since} · in Today's trades`}</div>
           ${c.spark ? `<canvas data-spark="${i}"></canvas>` : ""}</div>

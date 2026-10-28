@@ -34,6 +34,7 @@ import breakout
 import bullion
 import btst
 import events
+import intraday
 import market
 import options
 import picks
@@ -43,7 +44,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "27 Oct · MCX gold & silver positional screener"
+VERSION = "28 Oct · intraday = PDH/PDL breakouts on volume, new BTST"
 
 
 def load_env():
@@ -374,7 +375,7 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
          "version": VERSION, "market": None, "trades": {"rows": [], "summary": {}},
          "btst": {"open": False, "from": "12:00", "picks": [], "book": {"rows": [], "summary": {}}},
-         "schedule": "Intraday scans 9:30, 9:45, 10:00, 10:15 · the day's list from 10:30 · BTST scans every 30 min 11:00–3:00",
+         "schedule": "Breakout scans every 15 min 9:30–2:00 · BTST from 11:00, final at 3:00",
          "bullion": None, "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
@@ -588,10 +589,10 @@ def add_event_info(c, ev, demo, news=True):
         c["news"] = events.stock_news(NAMES.get(c["symbol"], c["symbol"]), c["symbol"])
 
 
-def intraday_list():
-    """Every intraday pick given today (9:30-10:15 scans), once each, with its live trade status."""
+def intraday_list(fresh=()):
+    """Every intraday pick given today, once each (newest first), with its live trade status."""
     out = []
-    for r in sorted(TRADES.rows, key=lambda r: r["picked_at"]):
+    for r in sorted(TRADES.rows, key=lambda r: -r["picked_at"]):
         c = dict(r.get("card") or {"symbol": r["symbol"], "side": r["side"], "plan": {}})
         c["plan"] = dict(c.get("plan") or {}, entry=r["entry"], sl=r["sl"], t1=r["t1"], t2=r["t2"])
         c["trade"] = {k: r.get(k) for k in ("status", "result_r", "revised", "t2_now", "last", "triggered_at", "exit_at")}
@@ -599,6 +600,7 @@ def intraday_list():
         c["option"] = r.get("option") or c.get("option")
         if r.get("last") is not None:
             c["price"] = r["last"]
+        c["fresh"] = r["symbol"] in fresh
         out.append(c)
     return out
 
@@ -724,7 +726,7 @@ def scan_once():
     STOCK_IDS.update(stocks)
     set_state(status="scanning", total=len(stocks), scanned=0,
               message=f"Scanning {len(stocks)} F&O stocks (liquid ones only)…")
-    results, candles_by, bo, funnel_in = {}, {}, {}, {}
+    results, candles_by, bo, funnel_in, daily_by = {}, {}, {}, {}, {}
     thin, liq_of = [], {}
     # Stocks with a trade still being followed are always fetched, liquid or not.
     keep = {r["symbol"] for r in TRADES.rows} | {r["symbol"] for r in BTSTS.rows if r.get("result_r") is None}
@@ -755,7 +757,7 @@ def scan_once():
             res["vwap"] = market.vwap(candles)
             res["rvol"] = market.rvol(candles, daily)
             res["liq"] = liq_of[sym]
-            results[sym], candles_by[sym] = res, candles
+            results[sym], candles_by[sym], daily_by[sym] = res, candles, daily
             now_ts = c15[-1]["end"] if demo else time.time()
             setup, levels = breakout.detect(c15, daily, now_ts, res["price"])
             if setup:
@@ -765,7 +767,7 @@ def scan_once():
                               "pdh": prev_days[-1]["h"] if prev_days else None,
                               "pdl": prev_days[-1]["l"] if prev_days else None,
                               "pdc": prev_days[-1]["c"] if prev_days else None,
-                              "c15": [c for c in c15 if c["end"] <= now_ts]}
+                              "c15": [c for c in c15 if c["end"] <= now_ts], "now": now_ts}
         set_state(scanned=n)
 
     def row(sym, side):
@@ -792,9 +794,11 @@ def scan_once():
     if demo and os.environ.get("OBS_DEMO_CLOCK"):     # testing: pretend it is this time of day
         session_time = os.environ["OBS_DEMO_CLOCK"]
     ev = fetch_events(demo, market.vix_view(*idx["INDIAVIX"]) if "INDIAVIX" in idx else None)
-    cands, finish = picks.build(funnel_in, MIN_RR, N_PICKS, MIN_SETUP,
-                                picks_open=session_time >= picks_from, picks_from=picks_from,
-                                early=session_time <= (SETTINGS.get("pdh_rule_until") or "10:30"))
+    nifty = market.index_view("NIFTY 50", idx["NIFTY"][0]) if "NIFTY" in idx else None
+    # Intraday = 15-minute PDH/PDL breakouts on volume only (order blocks have their own tab).
+    window_closed = session_time > INTRADAY_UNTIL and (not demo or os.environ.get("OBS_DEMO_CLOCK"))
+    cands, finish = intraday.build(funnel_in, N_PICKS, picks_open=picks_from <= session_time and not window_closed,
+                                   nifty_trend=nifty["trend"] if nifty else None)
     oi = {}
     checks = cands[:OI_CHECKS]
     for n, c in enumerate(checks, 1):
@@ -814,17 +818,7 @@ def scan_once():
                 raise
         time.sleep(0.25)
     top = finish(oi)
-    # Intraday picks only from the scans up to 10:15; after that the scans are for BTST.
-    intraday_until = INTRADAY_UNTIL
-    top["intraday_until"] = intraday_until
-    window_closed = session_time > intraday_until and (not demo or os.environ.get("OBS_DEMO_CLOCK"))
-    if window_closed and top["picks"]:
-        gone = {c["symbol"] for c in top["picks"]}
-        for f in top["flow"]:
-            if f["symbol"] in gone:
-                f["stage"] = 5
-        top["funnel"][-1]["count"] = 0
-        top["picks"] = []
+    top["intraday_until"], top["picks_from"] = INTRADAY_UNTIL, picks_from
     if window_closed:
         top["window_closed"], top["watch"] = True, []
     # Each stock's real path today (every 15 minutes, % from yesterday's close) for the flow chart.
@@ -842,7 +836,6 @@ def scan_once():
         if o:
             f["oi"] = f'{o["kind"]} · OI {o["oi_pct"]:+.2f}%'
     # Market context: index direction, VIX, breadth, movers, and how each pick sits against it.
-    nifty = market.index_view("NIFTY 50", idx["NIFTY"][0]) if "NIFTY" in idx else None
     bank = market.index_view("BANK NIFTY", idx["BANKNIFTY"][0]) if "BANKNIFTY" in idx else None
     vix = market.vix_view(*idx["INDIAVIX"]) if "INDIAVIX" in idx else None
     br = market.breadth([r["pct"] for r in results.values()])
@@ -870,7 +863,7 @@ def scan_once():
     btst_picks, skipped, btst_caution = [], [], ""
     if btst_open:
         sec_pct = {s: next((x["pct"] for x in top["sectors"] if x["name"] == picks.sector_of(s)), 0) for s in results}
-        bc = btst.candidates(results, candles_by, {}, {s: d["levels"] for s, d in funnel_in.items()},
+        bc = btst.candidates(results, candles_by, daily_by, {s: d["levels"] for s, d in funnel_in.items()},
                              sec_pct, nifty["trend"] if nifty else "Sideways",
                              time.time() if not demo else max(cs[-1]["t"] + 300 for cs in candles_by.values()))
         boi = {}
@@ -935,12 +928,13 @@ def scan_once():
         c["since"] = PICK_SINCE[key]
         if c["symbol"] in candles_by:
             c["spark"] = [round(k["c"], 2) for k in candles_by[c["symbol"]][-60:]]
-    if window_closed:                                  # after 10:15: the day's list, each stock once
-        top["picks"] = intraday_list()
-        top["list"] = True
-        for c in top["picks"]:
-            if c["symbol"] in candles_by:
-                c["spark"] = [round(k["c"], 2) for k in candles_by[c["symbol"]][-60:]]
+    # The Intraday tab always shows the day's list: every breakout given today, once each, newest first.
+    fresh = {c["symbol"] for c in top["picks"]}
+    top["picks"] = intraday_list(fresh)
+    top["list"] = True
+    for c in top["picks"]:
+        if c["symbol"] in candles_by:
+            c["spark"] = [round(k["c"], 2) for k in candles_by[c["symbol"]][-60:]]
 
     def bo_row(sym):
         _, st, _, r = bo[sym]
@@ -976,9 +970,11 @@ def scan_once():
                      bearish=[row(s, "bear") for s in bear[:TOP_N]])
 
 
-INTRADAY_FROM, INTRADAY_UNTIL = "09:30", "10:15"
-INTRADAY_SCANS = [(9, 30), (9, 45), (10, 0), (10, 15)]   # after each 15-min candle; then the list is final
-BTST_SCANS = [(h, m) for h in range(11, 16) for m in (0, 30) if (h, m) <= (15, 0)]   # every half hour
+INTRADAY_FROM, INTRADAY_UNTIL = "09:30", intraday.LAST_ENTRY
+# Every 15 minutes from 9:30 to 14:00 (right after each 15-min candle closes) for breakouts;
+# then 14:30 and 15:00 for BTST. BTST is also worked out in every scan from 11:00.
+INTRADAY_SCANS = [(9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60) for i in range(19)]   # 9:30 ... 14:00
+BTST_SCANS = [(14, 30), (15, 0)]
 SCHEDULE = INTRADAY_SCANS + BTST_SCANS
 TRACK_EVERY = 5                                        # minutes: follow the day's trades between scans
 
