@@ -118,6 +118,22 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Support and resistance are the nearest swing points.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
+## Backtest
+**Performance → Run backtest** replays the intraday and BTST rules over the last 60 sessions:
+- **Data:** about 3 months of 5-minute candles for every liquid F&O stock, downloaded from Dhan in 30-day
+  pieces (around 10 minutes; slower during market hours so the live scanner isn't held up).
+- **Intraday:** for each day it rebuilds what each 15-minute scan (9:30–14:00) would have seen, using
+  closed candles only. It runs the same `intraday.build()`, locks the picks like Today's trades, and
+  follows them on that day's 5-minute candles: trigger, T1/T2, stop, momentum review, 3:15 close.
+  - An entry only counts from the moment the pick was given.
+  - If price had already jumped past the entry at that moment, the fill is at the next candle's open.
+- **BTST:** picked at 3:00 PM with the same rules, bought at the 3:20 price, and followed into the next
+  session (target, stop or 11:00).
+- **Not replayed:** futures OI, news/events and option prices; today's liquid-stock list is used throughout.
+- **Results:** in R, before brokerage and slippage, saved in `backtest.json` in the settings folder.
+- **Sanity check:** on random-walk data the intraday rules come out near breakeven (as they should), so
+  the replay isn't seeing the future.
+
 ## Starting the performance record afresh
 `PERF_RESET` in `app.py` names the current record. When it changes, the next start moves every
 recorded trade (`trades-*.json`, `btst.json`) to `old-trades/<name>/` in the settings folder. Performance

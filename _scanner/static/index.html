@@ -523,6 +523,10 @@
       <label>Risk per trade ₹ <input id="perfRisk" type="number" min="0" step="100" placeholder="e.g. 1000"></label>
       <small style="color:var(--muted)">Every pick the scanner gives is recorded and scored here. R = multiples of the risk; enter your ₹ risk per trade to see rupees.</small></div>
     <div class="perfgrid"><div class="perfsec" id="perfIntra"></div><div class="perfsec" id="perfBtst"></div></div>
+    <div class="perfbar" style="margin-top:22px"><h2>Backtest</h2><button id="btRun">Run backtest · last 60 sessions</button>
+      <small id="btStatus" style="color:var(--muted)"></small></div>
+    <div class="hint" id="btNote" style="margin:4px 0 10px"></div>
+    <div class="perfgrid"><div class="perfsec" id="btIntra"></div><div class="perfsec" id="btBtst"></div></div>
   </section>
   <section class="panel full" id="btstBookPanel" hidden>
     <div class="ptitle"><h2>BTST trades</h2><small>the 3 PM list is locked in and followed into the next morning: exit at target, stop, or 11:00</small></div>
@@ -660,7 +664,7 @@ function render() {
   if (mode === "pk") { renderPicks(); return; }
   if (mode === "btst") { renderBtst(); return; }
   if (mode === "mcx") { renderBullion(); return; }
-  if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); } return; }
+  if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); loadBacktest(); } return; }
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
   document.querySelector("#bearList").previousElementSibling.textContent = mode === "ob" ? "↘ Bearish" : "↘ Breakdowns";
@@ -1039,13 +1043,18 @@ async function loadPerf() {
   renderPerf();
 }
 function renderPerf() {
+  renderBacktest();
   const d = perfData; if (!d) return;
   perfMonth = d.month;
   $("perfMonth").innerHTML = d.months.map(m => `<option value="${m}"${m === d.month ? " selected" : ""}>${new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</option>`).join("");
+  perfSec($("perfIntra"), "Intraday", d.intraday, "intra");
+  perfSec($("perfBtst"), "BTST / STBT", d.btst, "btst");
+}
+function perfSec(el, title, part, kind) {
   const risk = +$("perfRisk").value || 0;
   const rs = v => v == null ? "—" : `${v >= 0 ? "+" : ""}${v}R${risk ? ` <small style="color:var(--muted)">(₹${Math.round(v * risk).toLocaleString("en-IN")})</small>` : ""}`;
   const col = v => v == null ? "" : v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
-  const sec = (el, title, part, kind) => {
+  {
     const sm = part.summary;
     el.innerHTML = `<h3>${title}</h3>
       <div class="kpis">
@@ -1075,10 +1084,34 @@ function renderPerf() {
     ctx.strokeStyle = cum >= 0 ? css("--bull") : css("--bear"); ctx.lineWidth = 2; ctx.beginPath();
     pts.forEach((v, i) => i ? ctx.lineTo(xx(i), y(v)) : ctx.moveTo(xx(i), y(v))); ctx.stroke(); ctx.lineWidth = 1;
     ctx.fillStyle = css("--muted"); ctx.font = `11px ${css("--mono")}`; ctx.fillText(`Equity curve: ${cum >= 0 ? "+" : ""}${cum.toFixed(2)}R`, 12, 16);
-  };
-  sec($("perfIntra"), "Intraday", d.intraday, "intra");
-  sec($("perfBtst"), "BTST / STBT", d.btst, "btst");
+  }
 }
+// ---------- Backtest ----------
+let btData = null, btTimer = null;
+async function loadBacktest() {
+  try { const r = await fetch("/api/backtest", { cache: "no-store" }); if (r.ok) btData = await r.json(); } catch {}
+  renderBacktest();
+  clearTimeout(btTimer);
+  if (btData && btData.job.status === "running" && mode === "perf") btTimer = setTimeout(loadBacktest, 3000);
+}
+function renderBacktest() {
+  const d = btData; if (!d) return;
+  const job = d.job, rep = d.report, running = job.status === "running";
+  $("btRun").disabled = running;
+  $("btRun").textContent = running ? "Running…" : rep ? "Run again · last 60 sessions" : "Run backtest · last 60 sessions";
+  $("btStatus").textContent = running ? job.message : job.status === "error" ? "⚠ " + job.message
+    : rep ? `Last run ${rep.ran_at}${rep.demo ? " (demo data)" : ""} · ${rep.sessions} sessions ${rep.from} → ${rep.to} · ${rep.stocks} liquid F&O stocks` : "Not run yet. Takes about 10 minutes (downloads ~3 months of 5-minute candles).";
+  if (!rep) { $("btNote").textContent = ""; $("btIntra").innerHTML = $("btBtst").innerHTML = ""; return; }
+  const dd = s => s.max_drawdown != null ? ` · worst drawdown ${s.max_drawdown}R` : "";
+  $("btNote").textContent = rep.notes + ` Intraday: ${rep.intraday.summary.closed} trades${dd(rep.intraday.summary)}. BTST: ${rep.btst.summary.closed} trades${dd(rep.btst.summary)}.`;
+  perfSec($("btIntra"), "Backtest · Intraday breakouts", rep.intraday, "intra");
+  perfSec($("btBtst"), "Backtest · BTST / STBT", rep.btst, "btst");
+}
+$("btRun").onclick = async () => {
+  if (!confirm("Run the backtest now? It downloads about 3 months of candles for every liquid F&O stock (around 10 minutes).")) return;
+  try { await post("/api/backtest", {}); } catch (err) { $("btStatus").textContent = "⚠ " + err.message; return; }
+  loadBacktest();
+};
 $("perfMonth").onchange = () => { perfMonth = $("perfMonth").value; loadPerf(); };
 $("perfRisk").oninput = () => { try { localStorage.setItem("perfRisk", $("perfRisk").value); } catch {} renderPerf(); };
 

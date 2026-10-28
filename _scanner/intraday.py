@@ -53,6 +53,8 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
     today = [c for c in closed if _day(c["t"]) == day]
     if not today:
         return None, 0, None
+    if not any(c["c"] > pdh or c["c"] < pdl for c in today):
+        return None, 0, None                           # nothing broke yet: skip the heavier work
     usual, overall = usual_volume(closed, day)
     a15 = atr(closed)[-1] or price * 0.004
     best, best_stage, best_side = None, 0, None

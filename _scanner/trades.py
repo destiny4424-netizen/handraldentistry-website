@@ -78,6 +78,8 @@ class TradeBook:
         r_of = lambda price: round(((price - entry) if bull else (entry - price)) / risk, 2)
         # From the close of the 15-minute candle that held the level (the entry is its break).
         start = r["held_at"] + 900 if r.get("held_at") else r["picked_at"] - 300
+        start = max(start, r["picked_at"] - 60)                  # nothing before the pick was given counts
+        slip = 0.0
         state = {"status": "Waiting for trigger", "triggered_at": None, "t1_at": None,
                  "exit_at": None, "exit": None, "result_r": None, "revised": None, "t2_now": t2}
         stop = sl0
@@ -106,6 +108,8 @@ class TradeBook:
                     break
                 if (hi >= entry) if bull else (lo <= entry):
                     state.update(status="Triggered", triggered_at=c["t"])
+                    # Already past the entry when the candle opened: filled at the open, not at the entry.
+                    slip = max(0.0, ((c["o"] - entry) if bull else (entry - c["o"])) / risk)
                     hit_stop = lo <= stop if bull else hi >= stop
                     if hit_stop:                                 # same candle went both ways: assume the stop
                         state.update(status="SL hit", exit_at=c["t"], exit=stop, result_r=r_of(stop))
@@ -160,6 +164,9 @@ class TradeBook:
             px = last["c"]                                       # square off at the last price
             state.update(status="Closed at 3:15", exit_at=now_ts, exit=px,
                          result_r=r_of(px) if not state["t1_at"] else round((r_of(t1) + r_of(px)) / 2, 2))
+        if slip and state["result_r"] is not None:
+            state["result_r"] = round(state["result_r"] - slip, 2)
+        state["slip_r"] = round(slip, 2) if slip else None
         r.update(state)
         if last:
             r["last"] = last["c"]
