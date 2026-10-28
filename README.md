@@ -170,11 +170,13 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
 
 ### After that
 - **Schedule:**
-  - **Intraday:** scans at 9:30, 9:45, 10:00 and 10:15 only. From 10:30, the **Intraday** tab shows
-    **Today's intraday list**: every stock those scans gave, once each, with its entry, stop and targets.
-    Any of them can be traded later in the day when its entry breaks. There are no new intraday scans
-    after 10:15. The scanner checks the list's stocks every 5 minutes to follow the trades.
-  - **BTST / STBT:** scans every 30 minutes from 11:00 to 3:00. These are strong closers to buy (or, in
+  - **Intraday:** one setup only. A 15-minute candle has to close above yesterday's high (buy) or below
+    its low (sell) on 1.5× the usual volume, hold the level, and agree with VWAP and Supertrend.
+    Scans every 15 minutes from 9:30 to 14:00. Every breakout goes into **Today's breakouts**,
+    each stock once, newest first, and is followed until 3:15. Order blocks stay on their own tab.
+  - **BTST / STBT:** worked out from 11:00, with the final list at 3:00. A BTST must close at the day's
+    high, above yesterday's high, on 1.5× volume and up 1.5–6%. A 20-day breakout and OI build-up rank
+    higher. These are strong closers to buy (or, in
     F&O, sell) between 3:15 and 3:25 PM and exit the next morning. The 3 PM list is locked in and followed
     into the next session (target, stop, or 11:00 exit).
 - **Options:** each intraday and BTST pick also shows a stock option to trade instead:
@@ -203,22 +205,14 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
   - a bottom bar on the iPhone: Intraday, BTST, Trades, Market, Stats
 - Runs 24/7 on the droplet, whether your PC is on or off. It scans during
   market hours (9:15–15:30 IST, Mon–Fri), starts on boot and restarts itself if it ever stops.
-- A trade is only listed after price has come back to its level and a 15-minute candle has closed
-  holding it. It then says "Buy above …" (the high of that candle) with the stop beyond the level.
-  Setups still waiting for that go on the Watchlist. Picks come from the 9:30 scan onwards (changeable
-  in Settings). Before 10:30, a long must also clear yesterday's high and a short yesterday's low.
-- **Intraday checks:** each pick is scored and tagged for:
-  - a 15-minute close beyond yesterday's high/low (PDH/PDL breakout, weighted the most)
-  - an opening-range breakout
-  - the CPR
-  - a big gap
+- An intraday trade is listed when a 15-minute candle closes beyond yesterday's high/low on volume.
+  It then says "Buy above …" (the breakout candle's high) with the stop just beyond the broken level.
+  Stocks close to the level go on the Watchlist.
 - **Phone layout:** every tab opens on its stock list. Tap a stock to scroll down to its chart.
 - **Liquid stocks only:** F&O stocks are scanned only if, over the last 20 sessions, they traded at least
   ₹200 crore and 5 lakh shares a day on average. Thin stocks are skipped before any intraday data is fetched.
   Change both under Settings → Intraday; 0 switches a check off. Settings also lists the stocks left out today. Each pick shows its ₹ cr/day.
   Stocks with an open trade are still followed.
-- **Early picks (up to 10:30):** a long must also clear yesterday's high, and a short must break
-  yesterday's low. If the level is still inside yesterday's range, the entry is moved to yesterday's high/low.
 - **Supertrend (10, 3) on 15 minutes** is part of the score; a pick shows ✓ when it agrees.
 - **Momentum review:** at every 15-minute close after entry, a trade is checked against VWAP and Supertrend.
   - If both turn against it, the trade is exited.

@@ -38,8 +38,9 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
 - **HTF Key Level Breakouts (15 min):** a second tab lists stocks whose 15-minute candle has closed
   through a higher-timeframe level. The levels are the previous day high/low, the previous week high/low,
   and daily swing highs/lows from the last 60 days.
-- **Auto-scan:** intraday at 9:30, 9:45, 10:00 and 10:15; BTST every 30 minutes from 11:00 to 3:00 (IST, Mon–Fri),
-  20 seconds after the candle closes. Between scans the day's trades are followed every 5 minutes. The header shows the time of the next scan.
+- **Auto-scan:** every 15 minutes from 9:30 to 14:00 for intraday breakouts (BTST worked out in each scan
+  from 11:00), then 14:30 and 15:00 (IST, Mon–Fri), 20 seconds after the candle closes. After 14:00 the
+  day's trades are followed every 5 minutes. The header shows the time of the next scan.
   Use **Scan now** to rescan straight away.
 - **Gold & Silver (MCX, positional):** a tab for long futures held 3–4 months. Every 30 minutes while MCX is
   open it reads about 2 years of daily candles of the near GOLD and SILVER futures and gives each metal a verdict:
@@ -118,55 +119,56 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
 ## How intraday picks are chosen
-1. **Scanned:** every liquid F&O stock (see Settings for the turnover and volume limits).
-2. **Strong setup:** a bullish or bearish order block, or an HTF key level breakout, with a score of at
-   least 55. If a stock has both in the same direction, it gets a bonus.
-3. **Sector agrees:**
-   - Bullish setups must be in a sector that is up and in the top half of the sectors today.
-   - Bearish setups must be in a sector that is down and in the bottom half.
-   - Sectors come from a built-in list. Stocks not on it follow the overall market.
-4. **Good R:R:** the trade plan must work.
-   - **Level:** the top of the order block (bottom for shorts), or the broken key level.
-   - **Stop-loss:** just beyond the zone, or beyond the breakout candle.
-   - **Targets:** the next key levels (swing high, previous day/week high, and so on), or 2R and 3R if
-     there aren't any.
-   - Target 1 must be at least 1.5R away. Price must not already be more than 1R past the entry.
-5. **Held level (price action):** the trade is only given after price has **come back to the level
-   and held it**:
-   - Price touches the zone again, after the order block or breakout formed.
-   - A **closed 15-minute candle** then finishes back on the right side of the level. For a buy, it
-     closes above the zone top with a green body or a long lower wick, without closing below the zone.
-   - **Entry** is the break of that candle: **buy above its high** (sell below its low).
-   - **Stop-loss** goes just beyond that candle and the zone. Targets are the next key levels.
-   - If a candle closes through the far side of the zone, the setup is dropped.
-   - Setups that haven't held yet go on the **Watchlist**, with what to wait for. They are never picks.
-6. **OI confirms:** futures open interest today, checked for the 30 best candidates.
-   - Bullish trades need **long build-up** (price up, OI up).
-   - Bearish trades need **short build-up** (price down, OI up).
-   - Short covering or long unwinding only fills in if there aren't enough picks.
-   - OI against the trade removes the stock.
-7. **Intraday picks:** the best 6 by a score that combines setup strength, sector rank, OI and R:R.
-   Picks come from the 9:30, 9:45, 10:00 and 10:15 scans (Settings can start them later). Up to 10:30 a
-   long must clear yesterday's high and a short yesterday's low. After 10:15 there are no new picks:
-   the day's list stays, each stock once, and is followed until 3:15.
-8. **Intraday checks** (they add to or take from the score, and show as ✓/⚠ tags on each pick):
-   - **PDH/PDL breakout on 15 minutes** (counts the most): a 15-minute candle has closed above yesterday's
-     high (buy) or below yesterday's low (sell), and price is still beyond it.
-   - **Opening range breakout:** a 15-minute candle has closed beyond the first 15 minutes' high/low.
-   - **CPR:** price above the central pivot range for a buy, below it for a sell. A narrow CPR hints at a trend day.
-   - **Gap:** a gap of 3% or more at the open is flagged (gaps often partly fill).
-   - Also on each pick: VWAP, relative volume, Supertrend, with/against NIFTY, strength vs NIFTY,
-     sector, futures OI, liquidity.
-9. **Option:** a call for a buy, a put for a sell, at the money (or one strike in the money when that trades
-   thin), on this month's expiry, or next month's when this month's is 7 days away or less. Option entry, SL
-   and targets are the option's price at the stock's entry, SL and targets, from its delta and gamma in Dhan's
-   option chain. The lot size and ₹ risk per lot are shown.
+Intraday is one setup only: a **15-minute breakout of yesterday's high (buy) or low (sell) on volume**.
+Order blocks have their own tab and are not mixed in. Scans run every 15 minutes from 9:30 to 14:00,
+20 seconds after each candle closes, over every liquid F&O stock.
+1. **Broke PDH/PDL:** a 15-minute candle closed above yesterday's high (or below its low). If a later candle
+   closes back through the level, that breakout has failed. A fresh break after that counts again.
+2. **Volume 1.5×+:** the breakout candle traded at least 1.5× the usual volume for that time of day
+   (the average of the same 15 minutes on the previous sessions).
+3. **Strong candle:** it closed in the top 40% of its range (bottom 40% for a sell) with a real body.
+   A gap open beyond the level also counts.
+4. **Holding:** no 15-minute close back through the level since, and price is no more than 1R past the
+   entry. If it ran further, it waits on the Watchlist for a retest.
+5. **Trend agrees:** price is on the right side of VWAP, and the 15-minute Supertrend agrees.
+6. **Intraday picks:** the best 6, ranked by:
+   - breakout volume (counts the most)
+   - candle strength and how fresh the breakout is
+   - a retest of the level that held
+   - also clearing last week's high/low
+   - relative volume for the day
+   - sector and NIFTY direction
+   - futures OI (build-up adds, the opposite subtracts)
+- **Entry:** above the breakout candle's high (below its low for a sell). After a retest, entry is on the
+  retest candle.
+- **Stop-loss:** just beyond the broken level, which should now act as support (resistance). It is never
+  tighter than 0.6 or wider than 2 ATR of the 15-minute candles.
+- **Targets:** the next higher-timeframe level (last week's high, swing highs), or 1.5R and 3R.
+- **Today's breakouts list:** every pick is locked in once (each stock once, newest first) and followed until 3:15:
+  - waiting for trigger, then triggered
+  - T1 (half booked, stop to cost), then T2
+  - SL, or exited when momentum fades
+- **Watchlist:** stocks within 0.5% of yesterday's high/low on good volume, and breakouts that are extended
+  or not yet backed by VWAP/Supertrend.
 
-Each pick has a status:
-- **Buy above / Sell below …:** the level has held. Enter when price breaks that 15-minute candle.
-- **Triggered:** price has broken the candle, so the trade is on. The card shows the time and the stop.
+## How BTST / STBT is chosen
+Worked out in every scan from 11:00; the 3:00 PM list is locked in. A BTST buy needs **all** of these:
+- up 1.5–6% today (bigger moves often give back the next morning)
+- closing in the top 20% of the day's range, and still at the last hour's high
+- above yesterday's high, and above VWAP
+- volume at least 1.5× a normal day (projected for the full day)
+- NIFTY not bearish
 
-"Picked" shows when the stock first became a pick today.
+STBT is the mirror image. The rest is ranked:
+- closing strength and volume
+- a 20-day high/low breakout (big plus)
+- above (below) the 20-day average close
+- sector agrees
+- long build-up in futures OI
+Long unwinding (money leaving) removes the stock, and so do results due before the next session.
+- **Stop-loss:** beyond the last hour's low, 0.5–2.5% away.
+- **Targets:** the next level, or 1.2R and 2.2R.
+- **Exit:** next morning at T1/T2, the stop, or by 11:00.
 
 ## How an HTF key level breakout is found
 1. **Key levels** come from daily candles:
