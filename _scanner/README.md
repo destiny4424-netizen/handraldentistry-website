@@ -118,6 +118,60 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Support and resistance are the nearest swing points.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
+## Risk engine
+Set in Settings → Risk engine. The defaults are for a ₹1,50,000 account:
+- **Risk a trade:** 1% of capital (₹1,500). Each pick shows its size: shares = risk ÷ distance to the stop.
+  - Intraday position value is capped at 2× capital (intraday margin); BTST at 1×, because it is held overnight.
+  - The option is sized in lots the same way. If 1 lot risks more than ₹1,500, the card says to trade the
+    stock instead.
+- **Daily loss limit:** 3% of capital (−3R). Once today's closed + open trades reach it, no new intraday
+  trades are taken for the day.
+- **At most 3 intraday trades open at a time, and at most 5 new intraday trades a day.**
+- **At most 2 BTST/STBT trades a night:** the best 2 are taken, the rest are shown as backups.
+
+Picks the risk engine blocks are listed ("Not taken"), but they don't go into Today's trades or Performance.
+The bar above the Intraday list shows today's result, open trades, trades taken, and OK / FULL / STOPPED.
+The backtest applies the same rules.
+
+## Score breakdown
+Each pick's score (out of 100) is shown in parts.
+- **Intraday:**
+  - Volume /25 (breakout candle vs usual for that time)
+  - Candle /20 (close near the high, real body)
+  - Structure /15 (fresh breakout, retest, also beyond last week's high/low)
+  - Trend /25 (VWAP, Supertrend, sector, NIFTY)
+  - RVOL+OI /15
+- **BTST:**
+  - Close /25
+  - Volume /25
+  - Breakout /20 (20-day high/low)
+  - Trend /15
+  - OI /15
+
+## Learning journal
+Performance → Learning journal groups the finished trades (backtest or live, whichever has more) by how each
+trade looked when it was given. For intraday these are:
+- breakout volume
+- time of breakout
+- buy/sell
+- with/against NIFTY
+- retest
+- gap
+- score
+- sector
+
+For BTST they are:
+- side
+- 20-day breakout
+- the day's move
+- volume
+- score
+- sector
+
+For each group it compares win rate and average R. Clear differences (groups of 8+ trades, 0.3R+ apart) become
+plain insights. A group that loses money becomes a suggestion. Suggestions are advice only: rules change when
+you ask for it.
+
 ## Backtest
 **Performance → Run backtest** replays the intraday and BTST rules over the last 60 sessions:
 - **Data:** about 3 months of 5-minute candles for every liquid F&O stock, downloaded from Dhan in 30-day

@@ -36,16 +36,18 @@ import bullion
 import btst
 import events
 import intraday
+import journal
 import market
 import options
 import picks
+import risk
 import trades
 
 HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "28 Oct · backtest"
+VERSION = "29 Oct · risk engine, score breakdown, journal"
 
 
 def load_env():
@@ -792,7 +794,8 @@ def backtest_job():
                         raise
             BACKTEST.update(message="Downloading NIFTY history…")
             nifty = _history(INDEXES["NIFTY"], "IDX_I", "INDEX")
-        rep = backtest.run(data, nifty, N_PICKS, BACKTEST_SESSIONS, progress=lambda m: BACKTEST.update(message=m))
+        rep = backtest.run(data, nifty, N_PICKS, BACKTEST_SESSIONS, progress=lambda m: BACKTEST.update(message=m),
+                           rcfg=risk.config(SETTINGS))
         rep.update(ran_at=datetime.now(IST).strftime("%d %b %Y %H:%M"), demo=demo)
         (SETTINGS_DIR / "backtest.json").write_text(json.dumps(rep), encoding="utf-8")
         BACKTEST.update(status="done", message="")
@@ -981,14 +984,19 @@ def scan_once():
         if btst_caution:
             btst_caution += f"Showing only the strongest {keep_n}; use smaller size."
         btst_picks = btst_picks[:keep_n]
-        for c in btst_picks:
+        rcfg = risk.config(SETTINGS)
+        for i, c in enumerate(btst_picks):
             if not demo:
                 c["news"] = events.stock_news(NAMES.get(c["symbol"], c["symbol"]), c["symbol"])
             c["option"] = option_plan(c["symbol"], STOCK_IDS.get(c["symbol"]), c["side"], c["plan"], c["price"], demo)
+            c["size"] = risk.size_stock(c["plan"], rcfg, btst=True)
+            c["opt_size"] = risk.size_option(c["option"], rcfg)
+            c["take"] = i < rcfg["btst_max"]               # the risk engine takes only the best few overnight
     btst_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
     if not demo and session_time >= "15:00":            # lock in the 3 PM list as today's BTST trades
         for c in btst_picks:
-            BTSTS.record(c, btst_now)
+            if c.get("take"):
+                BTSTS.record(c, btst_now)
     BTSTS.update(candles_by, btst_now)
     btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": BTSTS.view(),
                   "skipped": skipped, "caution": btst_caution}
@@ -996,14 +1004,26 @@ def scan_once():
     # Lock every new pick into today's trades and follow them all through the day's candles.
     book_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
     day_s = datetime.now(IST).strftime("%Y-%m-%d")
+    rcfg = risk.config(SETTINGS)
+    TRADES.update(candles_by, book_now)                # up-to-date results before the risk check
+    blocked = []
     for c in top["picks"]:
         add_event_info(c, ev, demo)
         key = (day_s, c["symbol"], c["side"])
         if key not in OPTION_PLANS:                    # worked out once, when first picked
             OPTION_PLANS[key] = option_plan(c["symbol"], STOCK_IDS.get(c["symbol"]), c["side"], c["plan"], c["price"], demo)
         c["option"] = OPTION_PLANS[key]
+        c["size"] = risk.size_stock(c["plan"], rcfg)
+        c["opt_size"] = risk.size_option(c["option"], rcfg)
+        if any(r["symbol"] == c["symbol"] and r["side"] == c["side"] for r in TRADES.rows):
+            continue                                   # already in today's list
+        st = risk.day_status(TRADES.rows, rcfg)
+        if st["blocked"]:
+            blocked.append({"symbol": c["symbol"], "side": c["side"], "why": st["blocked"]})
+            continue
         c["locked_new"] = TRADES.record(c, book_now)
     TRADES.update(candles_by, book_now)
+    risk_state = dict(rcfg, **risk.day_status(TRADES.rows, rcfg), skipped=blocked)
     day = datetime.now(IST).date()
     for c in top["picks"]:
         key = (day, c["symbol"], c["side"])
@@ -1043,7 +1063,7 @@ def scan_once():
         BTST_PICKS.clear()
         BTST_PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in btst_picks})
         STATE.update(status="live", message="", scores=scores,
-                     events={k: ev[k] for k in ("calendar", "crude", "usdinr", "news", "risk")},
+                     events={k: ev[k] for k in ("calendar", "crude", "usdinr", "news", "risk")}, risk=risk_state,
                      universe={"total": len(stocks), "liquid": len(stocks) - len(thin), "skipped": len(thin),
                                "skipped_list": sorted(thin),
                                "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1]}, breakouts=breakouts, picks=top, market=mkt,
@@ -1095,6 +1115,8 @@ def track_once():
                 if c["symbol"] in candles_by:
                     PICKS[c["symbol"]] = (c, candles_by[c["symbol"]])
         STATE["trades"] = TRADES.view()
+        rcfg = risk.config(SETTINGS)
+        STATE["risk"] = dict(rcfg, **risk.day_status(TRADES.rows, rcfg), skipped=(STATE.get("risk") or {}).get("skipped", []))
         if STATE.get("btst"):
             STATE["btst"]["book"] = BTSTS.view()
         STATE["last_track"] = datetime.now(IST).strftime("%H:%M")
@@ -1501,9 +1523,25 @@ class Handler(BaseHTTPRequestHandler):
                             "has_pin": bool(SETTINGS.get("pin_hash")), "listening": HOST == "0.0.0.0",
                             "cloud": CLOUD, "public_url": PUBLIC_URL,
                             "picks_from": SETTINGS.get("intraday_from") or INTRADAY_FROM,
+                            "risk": risk.config(SETTINGS),
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
+        elif url.path == "/api/journal":
+            live = []
+            for f in sorted(SETTINGS_DIR.glob("trades-*.json")):
+                try:
+                    live += json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+            try:
+                bt = json.loads((SETTINGS_DIR / "backtest.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                bt = None
+            self.send(200, {
+                "live": {"intraday": journal.analyse(live), "btst": journal.analyse(BTSTS.rows, "btst")},
+                "backtest": {"intraday": journal.analyse(bt["intraday"]["trades"]),
+                             "btst": journal.analyse(bt["btst"]["trades"], "btst"), "ran_at": bt.get("ran_at")} if bt else None})
         elif url.path == "/api/backtest":
             try:
                 rep = json.loads((SETTINGS_DIR / "backtest.json").read_text(encoding="utf-8"))
@@ -1574,6 +1612,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not lo <= v <= hi:
                     return self.send(400, {"error": "Liquidity: turnover 0–5000 crore, volume 0–500 lakh."})
                 liq[key] = v
+            for k, (lo, hi) in risk.LIMITS.items():
+                v = body.get("risk_" + k)
+                if v in (None, ""):
+                    continue
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    v = None
+                if v is None or not lo <= v <= hi:
+                    return self.send(400, {"error": f"Risk setting {k.replace('_', ' ')} must be between {lo:g} and {hi:g}."})
+                liq["risk_" + k] = int(v) if k in ("capital", "max_open", "max_trades", "btst_max") else v
             save_settings(intraday_from=t, **liq)
             WAKE.set()                                  # rescan so the change shows now
             return self.send(200, {"ok": True})

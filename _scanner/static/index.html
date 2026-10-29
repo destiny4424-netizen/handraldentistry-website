@@ -212,6 +212,17 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chips span { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,.3); color: var(--muted); }
   .chips .ok { color: var(--bull); } .chips .bad { color: var(--liq); }
+  .riskbar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 4px 0 10px; padding: 8px 10px;
+    border-radius: 8px; background: rgba(0,0,0,.25); font: 600 12px var(--mono); }
+  .riskbar .st { padding: 2px 8px; border-radius: 6px; } .riskbar .st.OK { background: rgba(34,211,138,.15); color: var(--bull); }
+  .riskbar .st.FULL { background: rgba(255,170,0,.15); color: #ffcf70; } .riskbar .st.STOPPED { background: rgba(240,67,93,.2); color: #ff8193; }
+  .parts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+  .parts div { font: 600 10px var(--mono); color: var(--muted); } .parts i { display: block; height: 5px; border-radius: 3px; background: rgba(255,255,255,.08); margin-top: 3px; overflow: hidden; }
+  .parts i b { display: block; height: 100%; background: linear-gradient(90deg, #2962ff, #22d38a); }
+  .sizebox { margin-top: 8px; padding: 7px 10px; border-radius: 8px; background: rgba(41,98,255,.12); font: 600 12px var(--mono); }
+  .sizebox small { color: var(--muted); font-weight: 400; }
+  .jr { margin-top: 10px; } .jr .ins { padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.2); margin: 6px 0; font-size: 13px; }
+  .jr .ins b { color: #ffcf70; }
   .optbox { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px dashed rgba(139,124,246,.55); background: rgba(139,124,246,.08); font-size: 12px; }
   .optbox .oh { font: 700 12px var(--mono); color: #b9adff; margin-bottom: 6px; }
   .optbox .on { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; font: 600 12px var(--mono); }
@@ -441,6 +452,15 @@
       <label for="minVol">Minimum volume a day (lakh shares)</label>
       <input id="minVol" type="number" inputmode="decimal" min="0" max="500" step="1" value="5">
       <div class="hint" id="thinList"></div>
+      <b style="font-size:14px;display:block;margin-top:14px">Risk engine</b>
+      <div class="hint">Every pick is sized so that hitting its stop loses about your risk a trade. New intraday trades stop
+      for the day at the loss limit, or when too many are open or taken.</div>
+      <label for="rkCap">Capital (₹)</label><input id="rkCap" type="number" inputmode="numeric" min="10000" step="10000">
+      <label for="rkPct">Risk a trade (% of capital)</label><input id="rkPct" type="number" inputmode="decimal" min="0.1" max="5" step="0.1">
+      <label for="rkDay">Daily loss limit (% of capital)</label><input id="rkDay" type="number" inputmode="decimal" min="0.5" max="20" step="0.5">
+      <label for="rkOpen">Most intraday trades open at once</label><input id="rkOpen" type="number" inputmode="numeric" min="1" max="20">
+      <label for="rkMax">Most new intraday trades a day</label><input id="rkMax" type="number" inputmode="numeric" min="1" max="50">
+      <label for="rkBtst">Most BTST trades a night</label><input id="rkBtst" type="number" inputmode="numeric" min="0" max="10">
       <div class="actions" style="margin-top:10px"><button type="button" id="prefSave">Save</button></div>
       <div class="err" id="prefErr"></div>
     </div>
@@ -527,6 +547,9 @@
       <small id="btStatus" style="color:var(--muted)"></small></div>
     <div class="hint" id="btNote" style="margin:4px 0 10px"></div>
     <div class="perfgrid"><div class="perfsec" id="btIntra"></div><div class="perfsec" id="btBtst"></div></div>
+    <div class="perfbar" style="margin-top:22px"><h2>Learning journal</h2>
+      <small style="color:var(--muted)">What worked and what failed, grouped by how each trade looked when it was given. Suggestions are advice: tell Claude which to apply.</small></div>
+    <div class="perfgrid"><div class="perfsec" id="jrIntra"></div><div class="perfsec" id="jrBtst"></div></div>
   </section>
   <section class="panel full" id="btstBookPanel" hidden>
     <div class="ptitle"><h2>BTST trades</h2><small>the 3 PM list is locked in and followed into the next morning: exit at target, stop, or 11:00</small></div>
@@ -557,6 +580,7 @@
 <aside class="ws-side">
   <section class="panel" id="picksPanel" hidden>
     <div class="ptitle"><h2 id="pickTitle">Intraday picks</h2><small id="pickNote"></small></div>
+    <div class="riskbar" id="riskBar" hidden></div>
     <div id="pickList"></div>
     <div class="ptitle" id="watchTitle" style="margin-top:18px"><h2>Watchlist</h2><small>close to yesterday's high/low, or broke out but not clean yet — not trades until a 15m close beyond the level on volume</small></div>
     <div id="watchList"></div>
@@ -664,7 +688,7 @@ function render() {
   if (mode === "pk") { renderPicks(); return; }
   if (mode === "btst") { renderBtst(); return; }
   if (mode === "mcx") { renderBullion(); return; }
-  if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); loadBacktest(); } return; }
+  if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); loadBacktest(); loadJournal(); } return; }
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
   document.querySelector("#bearList").previousElementSibling.textContent = mode === "ob" ? "↘ Bearish" : "↘ Breakdowns";
@@ -1086,6 +1110,31 @@ function perfSec(el, title, part, kind) {
     ctx.fillStyle = css("--muted"); ctx.font = `11px ${css("--mono")}`; ctx.fillText(`Equity curve: ${cum >= 0 ? "+" : ""}${cum.toFixed(2)}R`, 12, 16);
   }
 }
+// ---------- Learning journal ----------
+let jrData = null;
+async function loadJournal() {
+  try { const r = await fetch("/api/journal", { cache: "no-store" }); if (r.ok) jrData = await r.json(); } catch {}
+  renderJournal();
+}
+function jrPart(title, j) {
+  if (!j || !j.overall.n) return `<h3>${title}</h3><div class="hint">No finished trades yet.</div>`;
+  const col = v => v == null ? "" : v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
+  return `<h3>${title} <small style="color:var(--muted)">${j.overall.n} trades · ${j.overall.win_rate}% won · ${j.overall.avg_r >= 0 ? "+" : ""}${j.overall.avg_r}R a trade</small></h3>
+    <div class="jr">${j.insights.length ? j.insights.map(i => `<div class="ins">${esc(i.text)}${i.suggest ? `<br><b>Suggestion:</b> ${esc(i.suggest)}` : ""}</div>`).join("")
+      : `<div class="hint">No clear difference yet (each group needs ${j.min_n}+ trades).</div>`}</div>
+    <details><summary>All groups</summary>${j.groups.map(g => `<table class="ptable"><tr><th>${esc(g.name)}</th><th>Trades</th><th>Won</th><th>Avg R</th><th>Total</th></tr>
+      ${g.buckets.map(b => `<tr><td class="l">${esc(b.label)}</td><td>${b.n}</td><td>${b.win_rate ?? "—"}%</td>
+        <td style="color:${col(b.avg_r)}">${b.avg_r ?? "—"}</td><td style="color:${col(b.total_r)}">${b.total_r}</td></tr>`).join("")}</table>`).join("")}</details>`;
+}
+function renderJournal() {
+  const d = jrData; if (!d) return;
+  const src = d.backtest && d.backtest.intraday.overall.n >= (d.live.intraday.overall.n || 0) ? "backtest" : "live";
+  const pick = k => src === "backtest" ? d.backtest[k] : d.live[k];
+  const lbl = src === "backtest" ? `from the backtest (${d.backtest.ran_at})` : "from live paper trades";
+  $("jrIntra").innerHTML = jrPart(`Intraday · ${lbl}`, pick("intraday"));
+  $("jrBtst").innerHTML = jrPart(`BTST · ${lbl}`, pick("btst"));
+}
+
 // ---------- Backtest ----------
 let btData = null, btTimer = null;
 async function loadBacktest() {
@@ -1093,6 +1142,8 @@ async function loadBacktest() {
   renderBacktest();
   clearTimeout(btTimer);
   if (btData && btData.job.status === "running" && mode === "perf") btTimer = setTimeout(loadBacktest, 3000);
+  else if (btData && btData.job.status === "done" && renderBacktest.wasRunning) loadJournal();
+  renderBacktest.wasRunning = btData && btData.job.status === "running";
 }
 function renderBacktest() {
   const d = btData; if (!d) return;
@@ -1137,6 +1188,7 @@ function renderBtst() {
         <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
         <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
       <div class="action">${bull ? "Buy" : "Sell (futures)"} between 3:15 and 3:25 PM near ${fmt(p.entry)} · stop ${fmt(p.sl)} · exit tomorrow at T1/T2, the stop, or by 11:00</div>
+      ${partsBars(c)}${c.take === false ? `<div class="caution">Backup only: the risk engine takes the best ${(state.risk || {}).btst_max || 2} BTST trades a night.</div>` : sizeBox(c, true)}
       ${optBox(c.option, bull, true)}${newsList(c)}
     </div>`;
   }).join("") : `<div class="empty">${b.open ? "No stock closes strong enough right now. The next hourly scan may find some." : `BTST picks appear from ${b.from}, after the first hourly scan.`}</div>`;
@@ -1255,6 +1307,33 @@ function drawBullion(d, ctx, w, h) {
 }
 
 // ---------- Market context ----------
+const PART_MAX = { volume: 25, candle: 20, structure: 15, trend: 25, participation: 15, close: 25, breakout: 20, oi: 15 };
+const PART_NAME = { volume: "Volume", candle: "Candle", structure: "Structure", trend: "Trend", participation: "RVOL+OI",
+                    close: "Close", breakout: "Breakout", oi: "OI" };
+function partsBars(c) {
+  if (!c.parts) return "";
+  return `<div class="parts">${Object.entries(c.parts).map(([k, v]) => `<div>${PART_NAME[k] || k} ${Math.round(v)}/${PART_MAX[k] || 20}
+    <i><b style="width:${Math.max(0, Math.min(100, v / (PART_MAX[k] || 20) * 100))}%"></b></i></div>`).join("")}</div>`;
+}
+function sizeBox(c, btst) {
+  const z = c.size, o = c.opt_size, rk = state.risk || {};
+  if (!z && !o) return "";
+  const inr = v => "₹" + Math.round(v).toLocaleString("en-IN");
+  return `<div class="sizebox">${z ? `SIZE ${z.qty} shares <small>(${inr(z.value)}${z.capped ? `, capped at ${btst ? "1×" : "2×"} capital` : ""})</small> · risk ${inr(z.risk)} · T1 +${inr(z.t1_gain)}` : ""}
+    ${o ? `<br>OPTION ${o.lots > 0 ? `${o.lots} lot${o.lots > 1 ? "s" : ""} <small>(${inr(o.cost)})</small> · risk ${inr(o.risk)}` : `<small>${esc(o.note)}</small>`}` : ""}
+    ${rk.capital ? `<br><small>Sized for ${inr(rk.capital)} capital, ${rk.risk_pct}% (${inr(rk.risk_amt)}) risk a trade</small>` : ""}</div>`;
+}
+function renderRiskBar() {
+  const r = state.risk, el = $("riskBar");
+  if (!r || !r.capital) { el.hidden = true; return; }
+  el.hidden = false;
+  const inr = v => "₹" + Math.round(v).toLocaleString("en-IN");
+  el.innerHTML = `<span class="st ${r.status}">RISK ${r.status}</span>
+    <span>Today ${r.day_r >= 0 ? "+" : ""}${r.day_r}R (${r.day_rs >= 0 ? "+" : "−"}${inr(Math.abs(r.day_rs))}) · stop at ${r.limit_r}R</span>
+    <span>Open ${r.open}/${r.max_open}</span><span>Trades ${r.taken}/${r.max_trades}</span>
+    ${r.blocked ? `<span style="color:#ffcf70">${esc(r.blocked)}</span>` : ""}
+    ${(r.skipped || []).length ? `<span style="color:var(--muted)">Not taken: ${r.skipped.map(x => esc(x.symbol)).join(", ")}</span>` : ""}`;
+}
 function flagChips(c) {
   return (c.flags || []).map(f => `<span class="${f.ok ? "ok" : "bad"}">${f.ok ? "✓" : "⚠"} ${esc(f.text).toUpperCase()}</span>`).join("");
 }
@@ -1418,6 +1497,7 @@ function renderPicks() {
   $("secNote").textContent = pk.sectors.length ? "average move of the F&O stocks in each sector today" : "";
   const uv = state.universe;
   $("pickTitle").textContent = "Today's breakouts";
+  renderRiskBar();
   $("watchTitle").hidden = $("watchList").hidden = !!pk.window_closed;
   $("pickNote").textContent = `15-min close above yesterday's high (buy) / below its low (sell) on 1.5×+ volume, holding, with VWAP + Supertrend` +
     ` · scans every 15 min 9:30–${pk.intraday_until || "14:00"} · each stock once, newest first` +
@@ -1453,7 +1533,7 @@ function renderPicks() {
           <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
         <div class="action">${c.trade ? (c.trade.revised ? `↻ ${esc(c.trade.revised)}` : c.trade.triggered_at ? `Triggered ${hm(c.trade.triggered_at)} · stop ${fmt(p.sl)}` : `${esc(p.action || "")} · stop ${fmt(p.sl)} · still valid until 3:00 PM`)
           : p.triggered_at ? `In trade since ${hm(p.triggered_at)} · stop ${fmt(p.sl)}` : `${p.action} (break of the 15m candle that held the level) · stop ${fmt(p.sl)}`}</div>
-        ${optBox(c.option, bull)}${newsList(c)}
+        ${partsBars(c)}${sizeBox(c)}${optBox(c.option, bull)}${newsList(c)}
       </div>`;
     }).join("");
     list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, pk.picks[+cv.dataset.spark]));
@@ -1883,6 +1963,9 @@ async function loadSettings() {
   $("pickFrom").value = st.picks_from || "09:30";
   $("thinList").innerHTML = (state.universe && state.universe.skipped_list || []).length
     ? `Not scanned today (too thin, ${state.universe.skipped_list.length}): ${state.universe.skipped_list.map(esc).join(", ")}` : "";
+  const rk = st.risk || {};
+  $("rkCap").value = rk.capital ?? 150000; $("rkPct").value = rk.risk_pct ?? 1; $("rkDay").value = rk.daily_loss_pct ?? 3;
+  $("rkOpen").value = rk.max_open ?? 3; $("rkMax").value = rk.max_trades ?? 5; $("rkBtst").value = rk.btst_max ?? 2;
   $("minTurn").value = st.min_turnover_cr ?? 200; $("minVol").value = st.min_volume_lakh ?? 5;
   $("cloudSect").hidden = !st.cloud; $("phoneSect").hidden = !!st.cloud;
   $("cloudUrl").textContent = st.public_url || location.origin;
@@ -1928,7 +2011,9 @@ $("forget").onclick = async () => {
 $("prefSave").onclick = async () => {
   $("prefErr").style.color = ""; $("prefErr").textContent = "";
   try {
-    await post("/api/prefs", { picks_from: $("pickFrom").value, min_turnover_cr: $("minTurn").value, min_volume_lakh: $("minVol").value });
+    await post("/api/prefs", { picks_from: $("pickFrom").value, min_turnover_cr: $("minTurn").value, min_volume_lakh: $("minVol").value,
+      risk_capital: $("rkCap").value, risk_risk_pct: $("rkPct").value, risk_daily_loss_pct: $("rkDay").value,
+      risk_max_open: $("rkOpen").value, risk_max_trades: $("rkMax").value, risk_btst_max: $("rkBtst").value });
     $("prefErr").style.color = "var(--bull)"; $("prefErr").textContent = `Saved. Intraday picks from the ${$("pickFrom").value} scan; stocks under ₹${$("minTurn").value} cr or ${$("minVol").value} lakh shares a day are skipped. Rescanning…`;
     setTimeout(refresh, 800);
   } catch (err) { $("prefErr").textContent = err.message; }

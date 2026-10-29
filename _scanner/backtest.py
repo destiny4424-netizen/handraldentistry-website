@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 import btst
 import intraday
 import market
+import risk
 import trades
 from analysis import _day
 from breakout import htf_levels, resample
@@ -64,7 +65,7 @@ def _report(rows):
     for r in rows:
         by_day.setdefault(r["day"], []).append(r)
     keep = ("day", "symbol", "side", "status", "entry", "sl", "t1", "t2", "result_r", "revised", "picked_at",
-            "triggered_at", "exit", "gap_pct", "basis")
+            "triggered_at", "exit", "gap_pct", "basis", "f")
     sm = trades._stats(rows)
     sm["max_drawdown"] = _max_drawdown([r["result_r"] for r in rows if r.get("result_r") is not None])
     sm["days"] = len(by_day)
@@ -85,10 +86,12 @@ def _unpack(a, i, j):
             for k in range(i * 6, j * 6, 6)]
 
 
-def run(data, nifty5, n_picks=6, sessions=60, progress=None):
+def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
     """data: {symbol: {"c5": 5-minute candles (list or pack()ed), "daily": daily candles}},
     nifty5: NIFTY 5-minute candles."""
     say = progress or (lambda msg: None)
+    rcfg = rcfg or risk.config({})
+    blocked_n = 0
     by_sym = {}
     for sym in list(data):
         d = data[sym]
@@ -162,13 +165,22 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None):
             if not funnel:
                 continue
             _, finish = intraday.build(funnel, n_picks, True, nifty_trend(now))
-            for c in finish({})["picks"]:
+            picks_now = finish({})["picks"]
+            if picks_now:
+                book.update({sym: x["c5w"] for sym, x in ctx.items()}, now)   # results so far, for the risk check
+            for c in picks_now:
+                if any(r["symbol"] == c["symbol"] and r["side"] == c["side"] for r in book.rows):
+                    continue
+                if risk.day_status(book.rows, rcfg)["blocked"]:
+                    blocked_n += 1
+                    continue
                 book.record(c, now)
         book.update({sym: x["c5w"] for sym, x in ctx.items()}, _ts(day, 15 * 60 + 30))
         for r in book.rows:
             r["day"] = datetime.fromtimestamp(_ts(day, 600), IST).strftime("%Y-%m-%d")
             r["basis"] = (r.get("card") or {}).get("plan", {}).get("basis")
             r.pop("card", None)
+            r.pop("option", None)
         intra_rows += book.rows
 
         # BTST at 15:00, followed into the next session.
@@ -180,7 +192,7 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None):
             cands = btst.candidates(results, {s: v["upto"] for s, v in snap.items()},
                                     {s: ctx[s]["daily"] for s in snap}, {s: ctx[s]["levels"] for s in snap},
                                     {s: sectors.get(sector_of(s), 0) for s in snap}, nifty_trend(now) or "Sideways", now)
-            for c in btst.finish(cands[:15], {}, 5):
+            for c in btst.finish(cands[:15], {}, 5)[:rcfg["btst_max"]]:
                 if bbook.record(c, now):
                     # Bought near the close (3:15-3:25), not at 3:00: use the 3:20 candle's close.
                     late = [x for x in ctx[c["symbol"]]["today5"] if x["t"] <= _ts(day, 15 * 60 + 20)]
@@ -192,7 +204,8 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None):
     first = datetime.fromtimestamp(_ts(test_days[0], 600), IST).strftime("%Y-%m-%d") if test_days else None
     last = datetime.fromtimestamp(_ts(test_days[-1], 600), IST).strftime("%Y-%m-%d") if test_days else None
     return {"from": first, "to": last, "sessions": len(test_days), "stocks": len(by_sym),
-            "intraday": _report(intra_rows), "btst": _report(btst_rows),
+            "intraday": _report(intra_rows), "btst": _report(btst_rows), "blocked": blocked_n,
+            "risk": {k: rcfg[k] for k in risk.DEFAULTS},
             "notes": "Same rules as the live scanner, replayed scan by scan on past candles. Not replayed: futures OI, "
                      "news/events and option prices. Results in R, before brokerage and slippage."}
 

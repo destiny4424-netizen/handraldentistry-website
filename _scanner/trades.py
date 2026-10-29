@@ -16,6 +16,17 @@ def _hm(t):
     return (d.hour, d.minute)
 
 
+def features(pick):
+    """What the pick looked like when it was given (for the learning journal)."""
+    keys = ("side", "sector", "score", "parts", "vol_x", "broke_at", "retest", "gap", "nifty", "rvol", "pct", "at20")
+    f = {k: pick.get(k) for k in keys if pick.get(k) is not None}
+    if pick.get("also"):
+        f["also"] = True
+    if (pick.get("plan") or {}).get("rr") is not None:
+        f["rr"] = pick["plan"]["rr"]
+    return f
+
+
 class TradeBook:
     def __init__(self, folder):
         self.folder = folder
@@ -58,6 +69,7 @@ class TradeBook:
             "triggered_at": None, "t1_at": None, "exit_at": None, "exit": None,
             "result_r": None, "last": pick.get("price"),
             "option": pick.get("option"),
+            "f": features(pick),
             "card": {k: v for k, v in pick.items() if k not in ("spark", "locked_new", "since")},
         })
         return True
@@ -221,7 +233,8 @@ class BtstBook:
         self.rows.append({"symbol": pick["symbol"], "side": pick["side"], "day": day, "picked_at": now_ts,
                           "entry": round(p["entry"], 2), "sl": round(p["sl"], 2), "t1": round(p["t1"], 2),
                           "t2": round(p["t2"], 2), "status": "Holding overnight", "gap_pct": None,
-                          "t1_at": None, "exit_at": None, "exit": None, "result_r": None, "last": pick["price"]})
+                          "t1_at": None, "exit_at": None, "exit": None, "result_r": None, "last": pick["price"],
+                          "f": features(pick)})
         return True
 
     def update(self, candles_by_symbol, now_ts):
