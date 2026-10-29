@@ -118,13 +118,17 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
         word = "Buy above" if side == "bull" else "Sell below"
         name = "PDH" if side == "bull" else "PDL"
         age = len([c for c in today if c["t"] > brk["t"]])
-        score = (30 * _clamp((vol_x - 1) / 2) + 15 * _clamp((close_pos - 0.5) / 0.5) + 10 * _clamp(body)
-                 + (10 if retest else 0) + 10 * (1 - _clamp(age / 8)) + (5 if also else 0)
-                 + (5 if st_ok else 0) + (5 if vwap_ok and vwap else 0))
+        # Score out of 100, in five parts (shown on each pick):
+        parts = {"volume": 25 * _clamp((vol_x - 1) / 2),                                   # /25
+                 "candle": 12 * _clamp((close_pos - 0.5) / 0.5) + 8 * (1 if gap else _clamp(body)),   # /20
+                 "structure": min(15, 8 * (1 - _clamp(age / 8)) + (5 if retest else 0) + (2 if also else 0)),  # /15
+                 "trend": (5 if st_ok else 0) + (5 if vwap_ok and vwap else 0),             # /25 with sector + NIFTY
+                 "participation": 0.0}                                                      # /15: RVOL + OI
+        score = sum(parts.values())
         res = {"side": side, "level": round(L, 2), "level_name": name, "vol_x": round(vol_x, 1),
                "close_pos": round(close_pos, 2), "gap": gap, "retest": bool(retest), "extended": extended,
                "supertrend": {"ok": st_ok, "value": round(st[-1][0], 2)} if st else None, "vwap_ok": vwap_ok,
-               "broke_at": _hm(brk["end"]), "also": also, "score": round(score, 1),
+               "broke_at": _hm(brk["end"]), "also": also, "score": round(score, 1), "parts": parts, "age": age,
                "plan": {"basis": f"{name} breakout · 15m" + (" (gap)" if gap else "") + (" · retest" if retest else ""),
                         "entry": round(entry, 2), "sl": round(sl, 2), "t1": round(t1, 2), "t2": round(t2, 2),
                         "zone": (round(min(L, brk["c"]), 2), round(max(L, brk["c"]), 2)),
@@ -153,12 +157,15 @@ def build(stocks, n_picks=6, picks_open=True, nifty_trend=None):
         if b and stage >= 5:
             s = sec[sector_of(sym)]
             sector_ok = (s["pct"] > 0) if side == "bull" else (s["pct"] < 0)
-            nifty_pts = 0
-            if nifty_trend:
-                nifty_pts = 10 if nifty_trend == ("Bullish" if side == "bull" else "Bearish") else \
-                            0 if nifty_trend == "Sideways" else -10
+            with_n = nifty_trend == ("Bullish" if side == "bull" else "Bearish")
+            nifty_pts = 10 if with_n else 5 if nifty_trend in (None, "Sideways") else 0
             rv = res.get("rvol") or 1
-            b["base"] = round(b["score"] + (10 if sector_ok else 0) + nifty_pts + 10 * _clamp((rv - 1) / 2), 1)
+            parts = dict(b["parts"])
+            parts["trend"] += (5 if sector_ok else 0) + nifty_pts
+            parts["participation"] = 7 * _clamp((rv - 1) / 2)
+            b["parts"] = parts
+            b["nifty"] = "with" if with_n else "sideways" if nifty_trend in (None, "Sideways") else "against"
+            b["base"] = round(sum(parts.values()), 1)
             cands.append(dict(b, symbol=sym, price=price, pct=res["pct"], sector=sector_of(sym),
                               sector_pct=s["pct"], sector_rank=s["rank"],
                               sources=[b["plan"]["basis"]]))
@@ -188,8 +195,10 @@ def build(stocks, n_picks=6, picks_open=True, nifty_trend=None):
             c["oi"] = oi
             want = "LONG BUILD-UP" if c["side"] == "bull" else "SHORT BUILD-UP"
             ok2 = "SHORT COVERING" if c["side"] == "bull" else "LONG UNWINDING"
-            c["score"] = round(c["base"] + (15 if oi and oi["kind"] == want else 5 if oi and oi["kind"] == ok2
-                                            else -10 if oi else 0), 1)
+            c["parts"] = dict(c["parts"], participation=c["parts"]["participation"] +
+                              (8 if oi and oi["kind"] == want else 4 if oi is None or oi["kind"] == ok2 else 0))
+            c["parts"] = {k: round(v, 1) for k, v in c["parts"].items()}
+            c["score"] = round(sum(c["parts"].values()), 1)
         ranked = sorted(cands, key=lambda c: -c["score"])
         top = ranked[:n_picks] if picks_open else []
         for c in top:

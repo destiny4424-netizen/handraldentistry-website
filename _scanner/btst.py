@@ -13,6 +13,7 @@ Exit next morning at T1/T2, the stop, or by 11:00.
 from analysis import _clamp, _day, atr
 from breakout import resample
 from market import session
+from picks import sector_of
 
 MAX_RISK = 2.5                                         # % of price; wider stops are skipped
 MIN_RISK = 0.5
@@ -81,11 +82,15 @@ def candidates(results, candles_by, daily_by, levels_by, sector_pct, nifty_trend
             why.append(f"{'above' if bull else 'below'} its 20-day average")
         if sector_ok:
             why.append("sector agrees")
-        base = (20 * _clamp((strength - 0.8) / 0.2) + 20 * _clamp((rvol - 1.5) / 2) + (15 if at20 else 0)
-                + (10 if trend else 0) + (10 if sector_ok else 0) + 10 * _clamp((abs(pct) - 1.5) / 3)
-                - (5 if abs(pct) > 5 else 0))
+        parts = {"close": 25 * _clamp((strength - 0.8) / 0.2),                          # /25
+                 "volume": 25 * _clamp((rvol - 1.5) / 2),                                  # /25
+                 "breakout": (20 if at20 else 8) - (5 if abs(pct) > 5 else 0),             # /20
+                 "trend": (7 if trend else 0) + (8 if sector_ok else 0),                   # /15
+                 "oi": 0.0}                                                                # /15
+        base = sum(parts.values())
         out.append({"symbol": sym, "side": side, "price": price, "pct": pct, "rvol": rvol,
-                    "vwap": round(vwap, 2), "base": round(base, 1), "why": why,
+                    "vwap": round(vwap, 2), "base": round(base, 1), "why": why, "parts": parts,
+                    "at20": bool(at20), "sector": sector_of(sym),
                     "plan": {"entry": price, "sl": round(sl, 2), "t1": round(t1, 2), "t2": round(t2, 2),
                              "zone": (price, price),
                              "basis": "BTST · buy near close" if bull else "STBT · sell near close",
@@ -106,7 +111,9 @@ def finish(cands, oi_by_symbol, n=5):
         if oi and oi["kind"] == bad:
             continue                                   # money leaving the trade overnight
         c["oi"] = oi
-        c["score"] = round(c["base"] + (15 if oi and oi["kind"] == want else 0), 1)
+        c["parts"] = dict(c["parts"], oi=15 if oi and oi["kind"] == want else 5 if oi is None else 0)
+        c["parts"] = {k: round(v, 1) for k, v in c["parts"].items()}
+        c["score"] = round(sum(c["parts"].values()), 1)
         if oi and oi["kind"] == want:
             c["why"].append(f'{oi["kind"].lower()} (OI {oi["oi_pct"]:+.1f}%)')
         keep.append(c)
