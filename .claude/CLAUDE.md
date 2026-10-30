@@ -18,3 +18,4 @@ The Clinic Photos app (`photos/`) keeps photos only on the phone.
 - `photos/` — Clinic Photos, the iPhone photo organiser (single HTML file, no build step)
 - `_books/` — bookkeeping app that runs on the droplet (not published; see README)
 - `_scanner/` — OrderBlock Scanner, F&O scanner on Dhan data that runs on the droplet (not published; see README)
+- `_goldbot/` — GoldBot, XAUUSD Expert Advisor for MetaTrader 5 on Exness (not published; see its README)
