@@ -119,15 +119,24 @@ class TradeBook:
                 if _hm(c["t"]) >= NO_NEW_ENTRY:
                     state.update(status="Not triggered", exit_at=c["t"])
                     break
-                if (lo <= sl0) if bull else (hi >= sl0):        # broke the level before entry
+                # A breakout whose level breaks before the entry is cancelled. An opening range breakout is a
+                # standing stop order: its stop only counts once it is in the trade.
+                if not eod and ((lo <= sl0) if bull else (hi >= sl0)):
                     state.update(status="Cancelled: stop hit before entry", exit_at=c["t"])
                     break
                 if (hi >= entry) if bull else (lo <= entry):
                     state.update(status="Triggered", triggered_at=c["t"])
                     # Already past the entry when the candle opened: filled at the open, not at the entry.
                     slip = max(0.0, ((c["o"] - entry) if bull else (entry - c["o"])) / risk)
-                    hit_stop = lo <= stop if bull else hi >= stop
-                    if hit_stop:                                 # same candle went both ways: assume the stop
+                    # Stopped in the same candle? A green candle goes open-low-high-close, a red one
+                    # open-high-low-close: after a buy entry near the high, a green candle only stops it if it
+                    # closes at the stop; a red one does if its low reaches it (mirror for a sell).
+                    green = c["c"] >= c["o"]
+                    if bull:
+                        hit_stop = (c["c"] <= stop) if green else (lo <= stop)
+                    else:
+                        hit_stop = (hi >= stop) if green else (c["c"] >= stop)
+                    if hit_stop:                                 # same candle went both ways
                         state.update(status="SL hit", exit_at=c["t"], exit=stop, result_r=r_of(stop))
                         break
                 continue
