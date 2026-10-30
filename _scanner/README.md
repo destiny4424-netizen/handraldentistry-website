@@ -118,6 +118,21 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Support and resistance are the nearest swing points.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
+## Intraday setup 2: Opening Range Breakout on stocks in play
+This follows Zarattini, Barbon & Aziz, "A Profitable Day Trading Strategy For The U.S. Equity Market"
+(2023–24), the best-documented published intraday setup, adapted to NSE (`orb.py`). The paper reports a
+Sharpe ratio of 2.81 on US stocks, 2016–2023.
+- **Opening range:** the first 5 minutes (9:15–9:20) or the first 15 minutes (9:15–9:30).
+- **In play:** the opening range traded at least as much as usual. "Usual" is the average of the same
+  minutes over the last 14 sessions. The most in play come first, up to the risk engine's open-trade limit.
+- **Direction:** the colour of the opening range. Green → buy above its high; red → sell below its low;
+  a doji → no trade.
+- **Stop:** 10% of the 14-day daily ATR (the paper's rule), or the other side of the range.
+- **Exit:** the stop or 3:15 PM. There is no target, so winners run all day (`exit_rule: "eod"` in Today's trades).
+- **Live:** chosen on the 9:20 scan (5-min) or the 9:30 scan (15-min), and not after 10:00.
+
+The four ORB variants sit in Compare rules next to the breakout variants.
+
 ## Compare rules
 **Performance → Compare rule variants** runs about 10 small rule changes on the same ~3 months of history and
 shows each one's trades, win rate, average R, profit factor and worst drawdown. Examples:
@@ -133,6 +148,14 @@ download again.
 **Earlier / Later:** the last third of the days is kept aside. A variant earns the ⭐ only if it is best on
 the earlier days, still positive on the later days, and has enough trades. That guards against rules that
 just happen to fit the past.
+
+**₹ after costs:** every variant is also judged in ₹. Each trade is sized for your capital and risk
+(risk engine), then costs are taken off: intraday 0.06% and BTST delivery 0.25% of the position (brokerage,
+STT, exchange fees, GST, stamp duty, slippage). The ⭐ is judged in ₹ a day, because R alone flatters tight stops.
+
+**Auto-pick:** you asked Claude to decide, so after each comparison the ⭐ variants are switched on
+automatically, for intraday and BTST separately. A variant you pick with **Use** stays until you tap
+**Let Claude pick**. If no BTST variant makes money after costs, BTST is marked paper only.
 
 **Use** switches the live scanner (and later backtests) to that variant from the next scan. It is stored in
 settings.json as `rules` / `rules_names`. "Current rules" goes back to the defaults.

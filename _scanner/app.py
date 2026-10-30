@@ -40,6 +40,7 @@ import intraday
 import journal
 import market
 import options
+import orb
 import picks
 import risk
 import trades
@@ -48,7 +49,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "30 Oct · compare rules · auto-reload"
+VERSION = "31 Oct · ORB stocks-in-play, ₹ after costs, auto-pick"
 
 
 def load_env():
@@ -810,6 +811,84 @@ def load_history(demo):
     return data, nifty
 
 
+OPEN_VOL = {}                                          # security id -> (day, {setup: {IST day: opening volume}})
+
+
+def opening_volumes(sym, sid, setup, demo):
+    """Opening-range volume of the last sessions (for "in play"), downloaded once a day per stock."""
+    today = datetime.now(IST).strftime("%Y-%m-%d")
+    hit = OPEN_VOL.get(sid)
+    if not hit or hit[0] != today:
+        if demo:
+            c5 = demo_candles(sym)
+        else:
+            c5 = dhan_range(sid, datetime.now(IST).date() - timedelta(days=30), datetime.now(IST).date() - timedelta(days=1))
+            time.sleep(0.25)
+        hit = (today, {s: orb.opening_volumes(c5, kk) for s, kk in orb.ORB_MINUTES.items()})
+        OPEN_VOL[sid] = hit
+    return hit[1][setup]
+
+
+def orb_picks(setup, results, candles_by, daily_by, demo):
+    """Opening range breakout on stocks in play: picked once, right after the opening range closes."""
+    k = orb.ORB_MINUTES[setup]
+    rl = live_rules().get("intraday") or {}
+    rcfg = risk.config(SETTINGS)
+    now_hm = datetime.now(IST).strftime("%H:%M")
+    cands = []
+    in_window = demo or (f"09:{15 + 5 * k:02d}" <= now_hm <= "10:00")   # decided only on the first scans
+    if in_window:
+        for sym, r in results.items():
+            today5, _ = market.session(candles_by[sym])
+            if len(today5) < k:
+                continue
+            try:
+                vols = opening_volumes(sym, STOCK_IDS.get(sym, sym), setup, demo)
+            except DhanError as e:
+                if e.fatal:
+                    raise
+                continue
+            day = analysis._day(today5[0]["t"])
+            if demo:                                   # demo history is short: average what there is
+                prev = [v for d, v in vols.items() if d < day]
+                usual = sum(prev) / len(prev) if prev else None
+            else:
+                usual = orb.usual_opening(vols, day)
+            daily = [d for d in daily_by.get(sym, []) if analysis._day(d["t"]) < day]
+            c = orb.candidate(sym, today5[:k], usual, orb.daily_atr(daily), setup, rl.get("orb_stop", "atr10"),
+                              picks.sector_of(sym))
+            if c:
+                c.update(price=r["price"], pct=r["pct"], sector_pct=0, sector_rank=0, sources=[c["plan"]["basis"]])
+                cands.append(c)
+    chosen = orb.rank(cands, min(N_PICKS, rcfg["max_open"]))
+    names, picked = {c["symbol"] for c in cands}, {c["symbol"] for c in chosen}
+
+    def finish(oi):
+        flow = [{"symbol": s, "pct": r["pct"], "side": "bull" if r["pct"] >= 0 else "bear",
+                 "stage": 2 if s in picked else 1 if s in names else 0} for s, r in results.items()]
+        return {"funnel": [{"name": "Scanned", "count": len(results)}, {"name": "In play (RVOL ≥ 1)", "count": len(cands)},
+                           {"name": "Intraday picks", "count": len(chosen)}],
+                "flow": sorted(flow, key=lambda f: -f["pct"]),
+                "sectors": picks.sector_table({s: r["pct"] for s, r in results.items()}),
+                "picks": chosen, "watch": [], "picks_open": True, "kind": setup}
+    return [], finish
+
+
+def apply_best(cmp):
+    """You asked Claude to decide: switch to the ⭐ variants from a comparison, unless you picked one yourself.
+    No BTST variant with a tested edge -> BTST is marked paper only."""
+    rules, names = dict(SETTINGS.get("rules") or {}), dict(SETTINGS.get("rules_names") or {})
+    manual = SETTINGS.get("rules_manual") or {}
+    btst_edge = True
+    for kind in ("intraday", "btst"):
+        star = next((r for r in cmp.get(kind) or [] if r.get("pick")), None)
+        if kind == "btst" and not star:
+            btst_edge = False
+        if star and not manual.get(kind):
+            rules[kind], names[kind] = star["rules"], star["name"]
+    save_settings(rules=rules, rules_names=names, btst_edge=btst_edge, auto_applied=cmp.get("ran_at") or "yes")
+
+
 def live_rules():
     """The rule variants chosen in Performance → Compare rules (empty = the default rules)."""
     return SETTINGS.get("rules") or {}
@@ -825,6 +904,7 @@ def backtest_job(compare=False):
                                    rcfg=risk.config(SETTINGS))
             cmp.update(ran_at=datetime.now(IST).strftime("%d %b %Y %H:%M"), demo=demo)
             (SETTINGS_DIR / "compare.json").write_text(json.dumps(cmp), encoding="utf-8")
+            apply_best(cmp)
             BACKTEST.update(status="done", message="")
             return
         rep = backtest.run(data, nifty, N_PICKS, BACKTEST_SESSIONS, progress=lambda m: BACKTEST.update(message=m),
@@ -916,8 +996,12 @@ def scan_once():
     nifty = market.index_view("NIFTY 50", idx["NIFTY"][0]) if "NIFTY" in idx else None
     # Intraday = 15-minute PDH/PDL breakouts on volume only (order blocks have their own tab).
     window_closed = session_time > INTRADAY_UNTIL and (not demo or os.environ.get("OBS_DEMO_CLOCK"))
-    cands, finish = intraday.build(funnel_in, N_PICKS, picks_open=picks_from <= session_time and not window_closed,
-                                   nifty_trend=nifty["trend"] if nifty else None, rules=live_rules().get("intraday"))
+    setup = (live_rules().get("intraday") or {}).get("setup", "breakout")
+    if setup in orb.ORB_MINUTES:
+        cands, finish = orb_picks(setup, results, candles_by, daily_by, demo)
+    else:
+        cands, finish = intraday.build(funnel_in, N_PICKS, picks_open=picks_from <= session_time and not window_closed,
+                                       nifty_trend=nifty["trend"] if nifty else None, rules=live_rules().get("intraday"))
     oi = {}
     checks = cands[:OI_CHECKS]
     for n, c in enumerate(checks, 1):
@@ -1017,6 +1101,9 @@ def scan_once():
                        ("Risk is high today. " if ev["risk"]["level"] == "High" else "")
         if btst_caution:
             btst_caution += f"Showing only the strongest {keep_n}; use smaller size."
+        if SETTINGS.get("btst_edge") is False:
+            btst_caution = ("Paper only: no BTST rule has made money after costs in the backtest yet. "
+                            "Follow these on paper; don't trade them with real money. ") + btst_caution
         btst_picks = btst_picks[:keep_n]
         rcfg = risk.config(SETTINGS)
         for i, c in enumerate(btst_picks):
@@ -1110,7 +1197,7 @@ def scan_once():
 INTRADAY_FROM, INTRADAY_UNTIL = "09:30", intraday.LAST_ENTRY
 # Every 15 minutes from 9:30 to 14:00 (right after each 15-min candle closes) for breakouts;
 # then 14:30 and 15:00 for BTST. BTST is also worked out in every scan from 11:00.
-INTRADAY_SCANS = [(9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60) for i in range(19)]   # 9:30 ... 14:00
+INTRADAY_SCANS = [(9, 20)] + [(9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60) for i in range(19)]   # 9:20 (ORB), 9:30 ... 14:00
 BTST_SCANS = [(14, 30), (15, 0)]
 SCHEDULE = INTRADAY_SCANS + BTST_SCANS
 TRACK_EVERY = 5                                        # minutes: follow the day's trades between scans
@@ -1586,7 +1673,8 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 cmp = None
             self.send(200, {"job": dict(BACKTEST), "report": rep, "compare": cmp,
-                            "rules": SETTINGS.get("rules_names") or {}})
+                            "rules": SETTINGS.get("rules_names") or {}, "manual": SETTINGS.get("rules_manual") or {},
+                            "btst_edge": SETTINGS.get("btst_edge", True)})
         elif url.path == "/api/performance":
             month = (q.get("month", [""])[0] or datetime.now(IST).strftime("%Y-%m"))[:7]
             if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
@@ -1638,12 +1726,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"ok": True})
         if path == "/api/rules":
             kind, name = body.get("kind"), body.get("name")
+            if name == "auto" and kind in ("intraday", "btst"):
+                save_settings(rules_manual=dict(SETTINGS.get("rules_manual") or {}, **{kind: False}))
+                try:
+                    apply_best(json.loads((SETTINGS_DIR / "compare.json").read_text(encoding="utf-8")))
+                except (OSError, ValueError):
+                    pass
+                WAKE.set()
+                return self.send(200, {"ok": True})
             variants = dict(backtest.INTRADAY_VARIANTS if kind == "intraday" else backtest.BTST_VARIANTS if kind == "btst" else [])
             if name not in variants:
                 return self.send(400, {"error": "Unknown rule variant."})
             rules, names = dict(SETTINGS.get("rules") or {}), dict(SETTINGS.get("rules_names") or {})
             rules[kind], names[kind] = variants[name], name
-            save_settings(rules=rules, rules_names=names)
+            save_settings(rules=rules, rules_names=names,
+                          rules_manual=dict(SETTINGS.get("rules_manual") or {}, **{kind: True}))
             WAKE.set()
             return self.send(200, {"ok": True})
         if path == "/api/prefs":
@@ -1739,6 +1836,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    try:                                               # a comparison made before auto-pick existed: use it once
+        if not SETTINGS.get("auto_applied") and (SETTINGS_DIR / "compare.json").exists():
+            apply_best(json.loads((SETTINGS_DIR / "compare.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"Couldn't apply the saved comparison: {e}", file=sys.stderr)
     threading.Thread(target=scanner, daemon=True).start()
     threading.Thread(target=token_keeper, daemon=True).start()
     threading.Thread(target=bullion_loop, daemon=True).start()

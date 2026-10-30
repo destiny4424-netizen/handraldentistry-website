@@ -25,7 +25,8 @@ VOL_X = 1.5                                            # breakout candle volume 
 LAST_ENTRY = "14:00"                                   # no fresh intraday breakouts after this (IST)
 # Rule switches. The backtest compares variants of these; the live scanner uses the ones you choose.
 RULES = {"vol_x": VOL_X, "first_candle": True, "retest_only": False, "nifty": "any", "sides": "both",
-         "skip_sectors": [], "t1_r": 0, "last_entry": LAST_ENTRY}
+         "skip_sectors": [], "t1_r": 0, "last_entry": LAST_ENTRY,
+         "setup": "breakout", "orb_stop": "atr10"}            # setup: breakout | orb5 | orb15 (see orb.py)
 
 
 def rules_of(r):

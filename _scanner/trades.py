@@ -65,7 +65,8 @@ class TradeBook:
             "basis": p["basis"], "score": pick.get("score"), "sector": pick.get("sector"),
             "entry": round(p["entry"], 2), "sl": round(p["sl"], 2),
             "t1": round(p["t1"], 2), "t2": round(p["t2"], 2),
-            "held_at": p.get("held_at"), "status": "Waiting for trigger",
+            "held_at": p.get("held_at"), "start_at": p.get("start_at"), "exit_rule": p.get("exit_rule"),
+            "status": "Waiting for trigger",
             "triggered_at": None, "t1_at": None, "exit_at": None, "exit": None,
             "result_r": None, "last": pick.get("price"),
             "option": pick.get("option"),
@@ -90,7 +91,10 @@ class TradeBook:
         r_of = lambda price: round(((price - entry) if bull else (entry - price)) / risk, 2)
         # From the close of the 15-minute candle that held the level (the entry is its break).
         start = r["held_at"] + 900 if r.get("held_at") else r["picked_at"] - 300
+        if r.get("start_at"):
+            start = r["start_at"]                                # e.g. the end of the opening range
         start = max(start, r["picked_at"] - 60)                  # nothing before the pick was given counts
+        eod = r.get("exit_rule") == "eod"                        # stop or 3:15 only: no targets, no momentum exits
         slip = 0.0
         state = {"status": "Waiting for trigger", "triggered_at": None, "t1_at": None,
                  "exit_at": None, "exit": None, "result_r": None, "revised": None, "t2_now": t2}
@@ -134,6 +138,11 @@ class TradeBook:
                 else:
                     state.update(status="SL hit", exit_at=c["t"], exit=stop, result_r=r_of(stop))
                 break
+            if eod:
+                if _hm(c["t"]) >= SQUARE_OFF:
+                    state.update(status="Closed at 3:15", exit_at=c["t"], exit=c["c"], result_r=r_of(c["c"]))
+                    break
+                continue
             if state["t1_at"] is None and ((hi >= t1) if bull else (lo <= t1)):
                 state.update(status="T1 hit · stop moved to cost", t1_at=c["t"])
                 stop = entry
