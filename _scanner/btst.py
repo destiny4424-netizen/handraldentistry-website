@@ -19,8 +19,16 @@ MAX_RISK = 2.5                                         # % of price; wider stops
 MIN_RISK = 0.5
 
 
-def candidates(results, candles_by, daily_by, levels_by, sector_pct, nifty_trend, now_ts):
+RULES = {"sides": "both", "pct_max": 6.0, "score_min": 0, "need_at20": False, "skip_sectors": []}
+
+
+def rules_of(r):
+    return dict(RULES, **(r or {}))
+
+
+def candidates(results, candles_by, daily_by, levels_by, sector_pct, nifty_trend, now_ts, rules=None):
     """Rough BTST/STBT shortlist (before OI), strongest first."""
+    rules = rules_of(rules)
     out = []
     for sym, r in results.items():
         c5 = candles_by.get(sym) or []
@@ -43,11 +51,16 @@ def candidates(results, candles_by, daily_by, levels_by, sector_pct, nifty_trend
         hour = today[-12:]                             # the last hour of 5-minute candles
         h_hi, h_lo = max(c["h"] for c in hour), min(c["l"] for c in hour)
         sec = sector_pct.get(sym, 0)
-        bull = (1.5 <= pct <= 6 and pos >= 0.8 and price > vwap and price > pdh and rvol >= 1.5
+        pmax = rules["pct_max"]
+        bull = (1.5 <= pct <= pmax and pos >= 0.8 and price > vwap and price > pdh and rvol >= 1.5
                 and nifty_trend != "Bearish" and price >= h_hi * 0.995)
-        bear = (-6 <= pct <= -1.5 and pos <= 0.2 and price < vwap and price < pdl and rvol >= 1.5
+        bear = (-pmax <= pct <= -1.5 and pos <= 0.2 and price < vwap and price < pdl and rvol >= 1.5
                 and nifty_trend != "Bullish" and price <= h_lo * 1.005)
-        if not (bull or bear):
+        if rules["sides"] == "bull":
+            bear = False
+        elif rules["sides"] == "bear":
+            bull = False
+        if not (bull or bear) or sector_of(sym) in rules["skip_sectors"]:
             continue
         side = "bull" if bull else "bear"
         sign = 1 if bull else -1
@@ -101,7 +114,7 @@ def candidates(results, candles_by, daily_by, levels_by, sector_pct, nifty_trend
     return out
 
 
-def finish(cands, oi_by_symbol, n=5):
+def finish(cands, oi_by_symbol, n=5, rules=None):
     """Add the OI build-up, drop OI that contradicts, keep the best n."""
     keep = []
     for c in cands:
@@ -117,5 +130,7 @@ def finish(cands, oi_by_symbol, n=5):
         if oi and oi["kind"] == want:
             c["why"].append(f'{oi["kind"].lower()} (OI {oi["oi_pct"]:+.1f}%)')
         keep.append(c)
+    rules = rules_of(rules)
+    keep = [c for c in keep if c["score"] >= rules["score_min"] and (c.get("at20") or not rules["need_at20"])]
     keep.sort(key=lambda c: -c["score"])
     return keep[:n]

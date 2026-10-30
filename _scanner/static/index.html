@@ -546,6 +546,9 @@
     <div class="perfbar" style="margin-top:22px"><h2>Backtest</h2><button id="btRun">Run backtest · last 60 sessions</button>
       <small id="btStatus" style="color:var(--muted)"></small></div>
     <div class="hint" id="btNote" style="margin:4px 0 10px"></div>
+    <div class="perfbar" style="margin-top:8px"><h2>Compare rules</h2><button id="cmpRun">Compare rule variants</button>
+      <small id="cmpStatus" style="color:var(--muted)"></small></div>
+    <div class="perfgrid" style="margin-bottom:14px"><div class="perfsec" id="cmpIntra"></div><div class="perfsec" id="cmpBtst"></div></div>
     <div class="perfgrid"><div class="perfsec" id="btIntra"></div><div class="perfsec" id="btBtst"></div></div>
     <div class="perfbar" style="margin-top:22px"><h2>Learning journal</h2>
       <small style="color:var(--muted)">What worked and what failed, grouped by how each trade looked when it was given. Suggestions are advice: tell Claude which to apply.</small></div>
@@ -1148,7 +1151,8 @@ async function loadBacktest() {
 function renderBacktest() {
   const d = btData; if (!d) return;
   const job = d.job, rep = d.report, running = job.status === "running";
-  $("btRun").disabled = running;
+  $("btRun").disabled = $("cmpRun").disabled = running;
+  renderCompare(d);
   $("btRun").textContent = running ? "Running…" : rep ? "Run again · last 60 sessions" : "Run backtest · last 60 sessions";
   $("btStatus").textContent = running ? job.message : job.status === "error" ? "⚠ " + job.message
     : rep ? `Last run ${rep.ran_at}${rep.demo ? " (demo data)" : ""} · ${rep.sessions} sessions ${rep.from} → ${rep.to} · ${rep.stocks} liquid F&O stocks` : "Not run yet. Takes about 10 minutes (downloads ~3 months of 5-minute candles).";
@@ -1158,6 +1162,33 @@ function renderBacktest() {
   perfSec($("btIntra"), "Backtest · Intraday breakouts", rep.intraday, "intra");
   perfSec($("btBtst"), "Backtest · BTST / STBT", rep.btst, "btst");
 }
+function renderCompare(d) {
+  const c = d.compare, inUse = d.rules || {};
+  $("cmpStatus").textContent = c ? `Last compared ${c.ran_at}${c.demo ? " (demo data)" : ""} · ${c.from} → ${c.to}. "Later" = ${c.split} onwards, kept aside to check each variant on days it wasn't chosen on.`
+    : "Runs about 10 rule changes on the same history (~20 minutes after the first download) and shows which ones help.";
+  const col = v => v == null ? "" : v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
+  const f = v => v == null ? "—" : (v > 0 ? "+" : "") + v;
+  const table = (kind, rows) => !rows ? "" : `<h3>${kind === "intraday" ? "Intraday" : "BTST / STBT"}: rule variants</h3>
+    <div style="overflow-x:auto"><table class="ptable"><tr><th>Variant</th><th>Trades</th><th>Won</th><th>Avg R</th><th>Total R</th><th>PF</th><th>Worst DD</th><th>Earlier</th><th>Later</th><th></th></tr>
+    ${rows.map(r => `<tr><td class="l">${r.pick ? "⭐ " : ""}${esc(r.name)}${(inUse[kind] || "Current rules") === r.name ? ` <small style="color:${css("--bull")}">in use</small>` : ""}</td>
+      <td>${r.closed}</td><td>${r.win_rate ?? "—"}%</td><td style="color:${col(r.avg_r)}">${f(r.avg_r)}</td><td style="color:${col(r.total_r)}">${f(r.total_r)}</td>
+      <td>${r.profit_factor ?? "—"}</td><td>${r.max_drawdown ?? "—"}</td>
+      <td style="color:${col((r.early || {}).avg_r)}">${f((r.early || {}).avg_r)}</td><td style="color:${col((r.late || {}).avg_r)}">${f((r.late || {}).avg_r)}</td>
+      <td>${(inUse[kind] || "Current rules") === r.name ? "" : `<button class="ghost" data-use="${kind}|${esc(r.name)}">Use</button>`}</td></tr>`).join("")}</table></div>
+    <div class="hint">⭐ = best on the earlier days and still positive on the later days. Avg R is per trade; PF = profit factor; DD = drawdown in R.</div>`;
+  $("cmpIntra").innerHTML = c ? table("intraday", c.intraday) : "";
+  $("cmpBtst").innerHTML = c ? table("btst", c.btst) : "";
+  document.querySelectorAll("[data-use]").forEach(b => b.onclick = async () => {
+    const [kind, name] = b.dataset.use.split("|");
+    if (!confirm(`Use "${name}" for ${kind === "intraday" ? "intraday" : "BTST"} from the next scan?`)) return;
+    try { await post("/api/rules", { kind, name }); loadBacktest(); } catch (err) { alert(err.message); }
+  });
+}
+$("cmpRun").onclick = async () => {
+  if (!confirm("Compare about 10 rule variants on the last 60 sessions? It takes around 20 minutes.")) return;
+  try { await post("/api/backtest", { compare: true }); } catch (err) { $("cmpStatus").textContent = "⚠ " + err.message; return; }
+  loadBacktest();
+};
 $("btRun").onclick = async () => {
   if (!confirm("Run the backtest now? It downloads about 3 months of candles for every liquid F&O stock (around 10 minutes).")) return;
   try { await post("/api/backtest", {}); } catch (err) { $("btStatus").textContent = "⚠ " + err.message; return; }

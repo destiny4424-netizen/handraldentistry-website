@@ -17,6 +17,7 @@ import struct
 import zlib
 from http.cookies import SimpleCookie
 import os
+import pickle
 import random
 import sys
 import threading
@@ -47,7 +48,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "29 Oct · risk engine, score breakdown, journal"
+VERSION = "30 Oct · compare rule variants"
 
 
 def load_env():
@@ -771,32 +772,64 @@ def _history(sid, segment="NSE_EQ", instrument="EQUITY", days=90):
     return [out[t] for t in sorted(out)]
 
 
-def backtest_job():
-    """Download ~3 months of 5-minute history and replay the intraday and BTST setups on it."""
+def load_history(demo):
+    """~3 months of 5-minute history for the liquid F&O stocks + NIFTY. Kept on disk for the day,
+    so comparing rule variants or re-running doesn't download it again."""
+    if demo:
+        BACKTEST.update(message="Making demo history…")
+        return backtest.demo_data(DEMO_SYMBOLS[:150], sessions=BACKTEST_SESSIONS + 5)
+    cache = SETTINGS_DIR / "history.pkl"
+    today = datetime.now(IST).strftime("%Y-%m-%d")
+    try:
+        with open(cache, "rb") as f:
+            saved = pickle.load(f)                     # our own file, written below
+        if saved.get("made") == today:
+            return saved["data"], saved["nifty"]
+    except (OSError, ValueError, EOFError, pickle.UnpicklingError, AttributeError, KeyError):
+        pass
+        stocks = fno_stocks()
+        data = {}
+        for n, (sym, sid) in enumerate(stocks.items(), 1):
+            BACKTEST.update(message=f"Downloading history {n}/{len(stocks)}: {sym}…")
+            try:
+                daily = dhan_daily(sid, days=230)
+                time.sleep(0.25)
+                if not liquid_enough(liquidity(daily)):
+                    continue
+                data[sym] = {"c5": backtest.pack(_history(sid)), "daily": daily}   # compact: ~48 B a candle
+            except DhanError as e:
+                if e.fatal:
+                    raise
+        BACKTEST.update(message="Downloading NIFTY history…")
+        nifty = _history(INDEXES["NIFTY"], "IDX_I", "INDEX")
+    try:
+        with open(cache, "wb") as f:
+            pickle.dump({"made": today, "data": data, "nifty": nifty}, f)
+    except OSError:
+        pass
+    return data, nifty
+
+
+def live_rules():
+    """The rule variants chosen in Performance → Compare rules (empty = the default rules)."""
+    return SETTINGS.get("rules") or {}
+
+
+def backtest_job(compare=False):
+    """Replay the intraday and BTST setups on ~3 months of history (or compare rule variants)."""
     try:
         demo = DEMO
-        if demo:
-            BACKTEST.update(message="Making demo history…")
-            data, nifty = backtest.demo_data(DEMO_SYMBOLS[:150], sessions=BACKTEST_SESSIONS + 5)
-        else:
-            stocks = fno_stocks()
-            data = {}
-            for n, (sym, sid) in enumerate(stocks.items(), 1):
-                BACKTEST.update(message=f"Downloading history {n}/{len(stocks)}: {sym}…")
-                try:
-                    daily = dhan_daily(sid, days=230)
-                    time.sleep(0.25)
-                    if not liquid_enough(liquidity(daily)):
-                        continue
-                    data[sym] = {"c5": backtest.pack(_history(sid)), "daily": daily}   # compact: ~48 B a candle
-                except DhanError as e:
-                    if e.fatal:
-                        raise
-            BACKTEST.update(message="Downloading NIFTY history…")
-            nifty = _history(INDEXES["NIFTY"], "IDX_I", "INDEX")
+        data, nifty = load_history(demo)
+        if compare:
+            cmp = backtest.compare(data, nifty, N_PICKS, BACKTEST_SESSIONS, progress=lambda m: BACKTEST.update(message=m),
+                                   rcfg=risk.config(SETTINGS))
+            cmp.update(ran_at=datetime.now(IST).strftime("%d %b %Y %H:%M"), demo=demo)
+            (SETTINGS_DIR / "compare.json").write_text(json.dumps(cmp), encoding="utf-8")
+            BACKTEST.update(status="done", message="")
+            return
         rep = backtest.run(data, nifty, N_PICKS, BACKTEST_SESSIONS, progress=lambda m: BACKTEST.update(message=m),
-                           rcfg=risk.config(SETTINGS))
-        rep.update(ran_at=datetime.now(IST).strftime("%d %b %Y %H:%M"), demo=demo)
+                           rcfg=risk.config(SETTINGS), rules=live_rules())
+        rep.update(rules=SETTINGS.get("rules_names") or {}, ran_at=datetime.now(IST).strftime("%d %b %Y %H:%M"), demo=demo)
         (SETTINGS_DIR / "backtest.json").write_text(json.dumps(rep), encoding="utf-8")
         BACKTEST.update(status="done", message="")
     except DhanError as e:
@@ -884,7 +917,7 @@ def scan_once():
     # Intraday = 15-minute PDH/PDL breakouts on volume only (order blocks have their own tab).
     window_closed = session_time > INTRADAY_UNTIL and (not demo or os.environ.get("OBS_DEMO_CLOCK"))
     cands, finish = intraday.build(funnel_in, N_PICKS, picks_open=picks_from <= session_time and not window_closed,
-                                   nifty_trend=nifty["trend"] if nifty else None)
+                                   nifty_trend=nifty["trend"] if nifty else None, rules=live_rules().get("intraday"))
     oi = {}
     checks = cands[:OI_CHECKS]
     for n, c in enumerate(checks, 1):
@@ -951,7 +984,8 @@ def scan_once():
         sec_pct = {s: next((x["pct"] for x in top["sectors"] if x["name"] == picks.sector_of(s)), 0) for s in results}
         bc = btst.candidates(results, candles_by, daily_by, {s: d["levels"] for s, d in funnel_in.items()},
                              sec_pct, nifty["trend"] if nifty else "Sideways",
-                             time.time() if not demo else max(cs[-1]["t"] + 300 for cs in candles_by.values()))
+                             time.time() if not demo else max(cs[-1]["t"] + 300 for cs in candles_by.values()),
+                             live_rules().get("btst"))
         boi = {}
         for c in bc[:15]:
             sym = c["symbol"]
@@ -966,7 +1000,7 @@ def scan_once():
                 except DhanError as e:
                     if e.fatal:
                         raise
-        btst_picks = btst.finish(bc[:15], boi, 8)
+        btst_picks = btst.finish(bc[:15], boi, 8, live_rules().get("btst"))
         # Events: no BTST into a company's results; fewer, stronger BTSTs before a big overnight event.
         nxt = events._next_session(datetime.now(IST).date()).isoformat()
         skipped = []
@@ -1547,7 +1581,12 @@ class Handler(BaseHTTPRequestHandler):
                 rep = json.loads((SETTINGS_DIR / "backtest.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 rep = None
-            self.send(200, {"job": dict(BACKTEST), "report": rep})
+            try:
+                cmp = json.loads((SETTINGS_DIR / "compare.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                cmp = None
+            self.send(200, {"job": dict(BACKTEST), "report": rep, "compare": cmp,
+                            "rules": SETTINGS.get("rules_names") or {}})
         elif url.path == "/api/performance":
             month = (q.get("month", [""])[0] or datetime.now(IST).strftime("%Y-%m"))[:7]
             if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
@@ -1595,7 +1634,17 @@ class Handler(BaseHTTPRequestHandler):
             if BACKTEST["status"] == "running":
                 return self.send(200, {"ok": True, "running": True})
             BACKTEST.update(status="running", message="Starting…")
-            threading.Thread(target=backtest_job, daemon=True).start()
+            threading.Thread(target=backtest_job, args=(bool(body.get("compare")),), daemon=True).start()
+            return self.send(200, {"ok": True})
+        if path == "/api/rules":
+            kind, name = body.get("kind"), body.get("name")
+            variants = dict(backtest.INTRADAY_VARIANTS if kind == "intraday" else backtest.BTST_VARIANTS if kind == "btst" else [])
+            if name not in variants:
+                return self.send(400, {"error": "Unknown rule variant."})
+            rules, names = dict(SETTINGS.get("rules") or {}), dict(SETTINGS.get("rules_names") or {})
+            rules[kind], names[kind] = variants[name], name
+            save_settings(rules=rules, rules_names=names)
+            WAKE.set()
             return self.send(200, {"ok": True})
         if path == "/api/prefs":
             t = str(body.get("picks_from") or "").strip()

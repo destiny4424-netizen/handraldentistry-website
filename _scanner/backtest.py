@@ -59,7 +59,7 @@ def _max_drawdown(results):
     return round(dd, 2)
 
 
-def _report(rows):
+def _report(rows, split=None):
     rows = sorted(rows, key=lambda r: r["picked_at"])
     by_day = {}
     for r in rows:
@@ -69,6 +69,9 @@ def _report(rows):
     sm = trades._stats(rows)
     sm["max_drawdown"] = _max_drawdown([r["result_r"] for r in rows if r.get("result_r") is not None])
     sm["days"] = len(by_day)
+    if split:                                          # first two thirds vs the last third (unseen when choosing)
+        sm["early"] = trades._stats([r for r in rows if r["day"] < split])
+        sm["late"] = trades._stats([r for r in rows if r["day"] >= split])
     return {"summary": sm, "days": [dict(trades._stats(v), day=d) for d, v in sorted(by_day.items())],
             "trades": [{k: r.get(k) for k in keep} for r in reversed(rows)]}
 
@@ -86,7 +89,7 @@ def _unpack(a, i, j):
             for k in range(i * 6, j * 6, 6)]
 
 
-def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
+def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None, rules=None):
     """data: {symbol: {"c5": 5-minute candles (list or pack()ed), "daily": daily candles}},
     nifty5: NIFTY 5-minute candles."""
     say = progress or (lambda msg: None)
@@ -164,7 +167,7 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
                       for sym, v in snap.items()}
             if not funnel:
                 continue
-            _, finish = intraday.build(funnel, n_picks, True, nifty_trend(now))
+            _, finish = intraday.build(funnel, n_picks, True, nifty_trend(now), (rules or {}).get("intraday"))
             picks_now = finish({})["picks"]
             if picks_now:
                 book.update({sym: x["c5w"] for sym, x in ctx.items()}, now)   # results so far, for the risk check
@@ -191,8 +194,9 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
             sectors = {r["name"]: r["pct"] for r in sector_table({s: v["pct"] for s, v in results.items()})}
             cands = btst.candidates(results, {s: v["upto"] for s, v in snap.items()},
                                     {s: ctx[s]["daily"] for s in snap}, {s: ctx[s]["levels"] for s in snap},
-                                    {s: sectors.get(sector_of(s), 0) for s in snap}, nifty_trend(now) or "Sideways", now)
-            for c in btst.finish(cands[:15], {}, 5)[:rcfg["btst_max"]]:
+                                    {s: sectors.get(sector_of(s), 0) for s in snap}, nifty_trend(now) or "Sideways", now,
+                                    (rules or {}).get("btst"))
+            for c in btst.finish(cands[:15], {}, 5, (rules or {}).get("btst"))[:rcfg["btst_max"]]:
                 if bbook.record(c, now):
                     # Bought near the close (3:15-3:25), not at 3:00: use the 3:20 candle's close.
                     late = [x for x in ctx[c["symbol"]]["today5"] if x["t"] <= _ts(day, 15 * 60 + 20)]
@@ -203,11 +207,70 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
     btst_rows = [dict(r, kind="btst") for r in bbook.rows if r.get("result_r") is not None]
     first = datetime.fromtimestamp(_ts(test_days[0], 600), IST).strftime("%Y-%m-%d") if test_days else None
     last = datetime.fromtimestamp(_ts(test_days[-1], 600), IST).strftime("%Y-%m-%d") if test_days else None
-    return {"from": first, "to": last, "sessions": len(test_days), "stocks": len(by_sym),
-            "intraday": _report(intra_rows), "btst": _report(btst_rows), "blocked": blocked_n,
+    split = datetime.fromtimestamp(_ts(test_days[len(test_days) * 2 // 3], 600), IST).strftime("%Y-%m-%d") if test_days else None
+    return {"from": first, "to": last, "sessions": len(test_days), "stocks": len(by_sym), "split": split,
+            "intraday": _report(intra_rows, split), "btst": _report(btst_rows, split), "blocked": blocked_n,
             "risk": {k: rcfg[k] for k in risk.DEFAULTS},
             "notes": "Same rules as the live scanner, replayed scan by scan on past candles. Not replayed: futures OI, "
                      "news/events and option prices. Results in R, before brokerage and slippage."}
+
+
+# Rule variants compared side by side on the same history. Each is a change from the current rules.
+INTRADAY_VARIANTS = [
+    ("Current rules", {}),
+    ("Only in NIFTY's direction", {"nifty": "with"}),
+    ("Skip days NIFTY is sideways", {"nifty": "trending"}),
+    ("Breakout volume 2×+", {"vol_x": 2.0}),
+    ("Skip 9:15-candle breakouts", {"first_candle": False}),
+    ("Only after a retest", {"retest_only": True}),
+    ("Targets 1R / 2R", {"t1_r": 1.0}),
+    ("Targets 2R / 4R", {"t1_r": 2.0}),
+    ("No new entries after 12:00", {"last_entry": "12:00"}),
+    ("NIFTY trending + volume 2×", {"nifty": "trending", "vol_x": 2.0}),
+]
+BTST_VARIANTS = [
+    ("Current rules", {}),
+    ("BTST buys only (no STBT)", {"sides": "bull"}),
+    ("Day's move 1.5–3% only", {"pct_max": 3.0}),
+    ("Only at a 20-day high/low", {"need_at20": True}),
+    ("Score 70+", {"score_min": 70}),
+    ("Buys only, move 1.5–3%", {"sides": "bull", "pct_max": 3.0}),
+]
+
+
+def _brief(rep):
+    out = {}
+    for k in ("intraday", "btst"):
+        sm = rep[k]["summary"]
+        out[k] = {x: sm.get(x) for x in ("closed", "win_rate", "avg_r", "total_r", "profit_factor", "max_drawdown",
+                                         "losing_streak", "early", "late")}
+    return out
+
+
+def compare(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
+    """Run every rule variant on the same history. Intraday and BTST variants are paired up run by run."""
+    say = progress or (lambda m: None)
+    n = max(len(INTRADAY_VARIANTS), len(BTST_VARIANTS))
+    rows = {"intraday": [], "btst": []}
+    for i in range(n):
+        iv = INTRADAY_VARIANTS[i] if i < len(INTRADAY_VARIANTS) else None
+        bv = BTST_VARIANTS[i] if i < len(BTST_VARIANTS) else None
+        rules = {"intraday": iv[1] if iv else {}, "btst": bv[1] if bv else {}}
+        rep = run(data, nifty5, n_picks, sessions, lambda m, i=i: say(f"Variant {i + 1}/{n}: {m}"), rcfg, rules)
+        b = _brief(rep)
+        if iv:
+            rows["intraday"].append(dict(b["intraday"], name=iv[0], rules=iv[1]))
+        if bv:
+            rows["btst"].append(dict(b["btst"], name=bv[0], rules=bv[1]))
+        split, span = rep.get("split"), (rep.get("from"), rep.get("to"))
+    for k in rows:                                     # suggest: best on the early part AND still positive later
+        base_n = rows[k][0]["closed"] if rows[k] else 0     # enough trades to mean something
+        ok = [r for r in rows[k] if (r["early"] or {}).get("avg_r") is not None and (r["late"] or {}).get("closed", 0) >= 10
+              and r["closed"] >= max(15, 0.3 * base_n)]
+        best = max(ok, key=lambda r: r["early"]["avg_r"], default=None)
+        for r in rows[k]:
+            r["pick"] = bool(best and r is best and best["early"]["avg_r"] > 0 and (best["late"]["avg_r"] or 0) > 0)
+    return {"intraday": rows["intraday"], "btst": rows["btst"], "split": split, "from": span[0], "to": span[1]}
 
 
 def demo_data(symbols, sessions=45, seed=7):
