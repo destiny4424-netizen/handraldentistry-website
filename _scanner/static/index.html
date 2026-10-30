@@ -663,6 +663,11 @@ function render() {
   renderMarket(s.market);
   renderTrades(s.trades);
   $("ver").textContent = s.version ? ` · Version ${s.version}` : "";
+  // A new version was installed on the server: reload so this open page shows it (not while a dialog is open).
+  if (s.version) {
+    if (!window.__ver) window.__ver = s.version;
+    else if (s.version !== window.__ver && !document.querySelector("dialog[open]")) location.reload();
+  }
   $("auto").textContent = s.next_scan ? `Next scan ${s.next_scan}` : "Auto-scan";
   $("auto").title = s.schedule || "";
   const bo = s.breakouts || { bullish: [], bearish: [] };

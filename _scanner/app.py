@@ -48,7 +48,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "30 Oct · compare rule variants"
+VERSION = "30 Oct · compare rules · auto-reload"
 
 
 def load_env():
