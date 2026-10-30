@@ -118,6 +118,25 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Support and resistance are the nearest swing points.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
+## Compare rules
+**Performance → Compare rule variants** runs about 10 small rule changes on the same ~3 months of history and
+shows each one's trades, win rate, average R, profit factor and worst drawdown. Examples:
+- only in NIFTY's direction
+- breakout volume 2× or more
+- skip 9:15-candle breakouts
+- targets 2R/4R
+- BTST buys only
+
+The history is downloaded once a day and kept (`history.pkl` in the settings folder), so re-runs don't
+download again.
+
+**Earlier / Later:** the last third of the days is kept aside. A variant earns the ⭐ only if it is best on
+the earlier days, still positive on the later days, and has enough trades. That guards against rules that
+just happen to fit the past.
+
+**Use** switches the live scanner (and later backtests) to that variant from the next scan. It is stored in
+settings.json as `rules` / `rules_names`. "Current rules" goes back to the defaults.
+
 ## Risk engine
 Set in Settings → Risk engine. The defaults are for a ₹1,50,000 account:
 - **Risk a trade:** 1% of capital (₹1,500). Each pick shows its size: shares = risk ÷ distance to the stop.

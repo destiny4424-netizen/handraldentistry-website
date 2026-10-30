@@ -23,6 +23,13 @@ IST = timezone(timedelta(hours=5, minutes=30))
 STAGES = ["Scanned", "Broke PDH/PDL", "Volume 1.5×+", "Strong candle", "Holding", "Trend agrees", "Intraday picks"]
 VOL_X = 1.5                                            # breakout candle volume vs usual for that time
 LAST_ENTRY = "14:00"                                   # no fresh intraday breakouts after this (IST)
+# Rule switches. The backtest compares variants of these; the live scanner uses the ones you choose.
+RULES = {"vol_x": VOL_X, "first_candle": True, "retest_only": False, "nifty": "any", "sides": "both",
+         "skip_sectors": [], "t1_r": 0, "last_entry": LAST_ENTRY}
+
+
+def rules_of(r):
+    return dict(RULES, **(r or {}))
 
 
 def _hm(ts):
@@ -44,8 +51,9 @@ def usual_volume(c15, day):
     return {k: sum(v) / len(v) for k, v in by.items()}, overall
 
 
-def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
+def analyse(c15, pdh, pdl, price, vwap, now_ts, levels, rules=None):
     """Best PDH/PDL breakout today for one stock, or (None, stage reached, side)."""
+    rules = rules_of(rules)
     closed = [c for c in c15 if c["end"] <= now_ts]
     if len(closed) < 2 or not pdh or not pdl:
         return None, 0, None
@@ -59,6 +67,8 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
     a15 = atr(closed)[-1] or price * 0.004
     best, best_stage, best_side = None, 0, None
     for side, L in (("bull", pdh), ("bear", pdl)):
+        if rules["sides"] not in ("both", side):
+            continue
         sign = 1 if side == "bull" else -1
         brk_i = next((i for i, c in enumerate(today) if (c["c"] - L) * sign > 0), None)
         if brk_i is None:
@@ -76,7 +86,7 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
                 continue
             brk_i, brk = nxt, today[nxt]
             after = today[nxt + 1:]
-        if _hm(brk["end"]) > LAST_ENTRY:
+        if _hm(brk["end"]) > rules["last_entry"]:
             continue
         base = usual.get(_slot(brk)) or overall or brk["v"]
         vol_x = brk["v"] / base if base else 1
@@ -84,7 +94,7 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
         close_pos = (brk["c"] - brk["l"]) / rng if side == "bull" else (brk["h"] - brk["c"]) / rng
         body = abs(brk["c"] - brk["o"]) / rng
         gap = (brk_i == 0 and (brk["o"] - L) * sign > 0)
-        if vol_x >= VOL_X:
+        if vol_x >= rules["vol_x"]:
             stage = 2
             if close_pos >= 0.6 and (body >= 0.4 or gap):
                 stage = 3
@@ -100,6 +110,10 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
         hit = next((c for c in today if c["t"] > signal["t"] and (c["h"] >= entry if side == "bull" else c["l"] <= entry)), None)
         extended = (price - entry) * sign > risk
         holding = (price - L) * sign > 0 and not extended
+        if rules["retest_only"] and not retest:
+            holding = False                            # wait for price to come back to the level
+        if not rules["first_candle"] and brk_i == 0 and not retest:
+            holding = False                            # the 9:15 candle is too noisy on its own
         if stage >= 3 and holding:
             stage = 4
         st = supertrend(closed) if len(closed) > 12 else []
@@ -111,6 +125,8 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
                        key=lambda v: (v - entry) * sign)
         t1 = ahead[0] if ahead and (ahead[0] - entry) * sign <= 3 * risk else entry + sign * 1.5 * risk
         t2 = next((v for v in ahead if (v - t1) * sign > 0.5 * risk), entry + sign * 3 * risk)
+        if rules["t1_r"]:                              # fixed targets in R instead of the next levels
+            t1, t2 = entry + sign * rules["t1_r"] * risk, entry + sign * 2 * rules["t1_r"] * risk
         if (t2 - t1) * sign <= 0:
             t2 = t1 + sign * 1.5 * risk
         also = [l["name"] for l in levels if l["name"] in (("PWH",) if side == "bull" else ("PWL",))
@@ -143,7 +159,7 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels):
     return best, best_stage, best_side
 
 
-def build(stocks, n_picks=6, picks_open=True, nifty_trend=None):
+def build(stocks, n_picks=6, picks_open=True, nifty_trend=None, rules=None):
     """stocks: {symbol: {"res", "levels", "pdh", "pdl", "c15", "vwap", "now"}} -> (candidates, finish)."""
     pcts = {s: d["res"]["pct"] for s, d in stocks.items()}
     sectors = sector_table(pcts)
@@ -152,8 +168,14 @@ def build(stocks, n_picks=6, picks_open=True, nifty_trend=None):
     for sym, d in stocks.items():
         res = d["res"]
         price = res["price"]
-        b, stage, side = analyse(d["c15"], d.get("pdh"), d.get("pdl"), price, res.get("vwap"), d["now"], d["levels"])
+        b, stage, side = analyse(d["c15"], d.get("pdh"), d.get("pdl"), price, res.get("vwap"), d["now"], d["levels"], rules)
         flow[sym] = {"symbol": sym, "pct": res["pct"], "side": side or ("bull" if res["pct"] >= 0 else "bear"), "stage": stage}
+        rl = rules_of(rules)
+        if b and stage >= 5 and (sector_of(sym) in rl["skip_sectors"] or (
+                rl["nifty"] == "with" and nifty_trend != ("Bullish" if side == "bull" else "Bearish")) or (
+                rl["nifty"] == "trending" and nifty_trend in (None, "Sideways"))):
+            stage = 4                                  # left out by the chosen rules
+            flow[sym]["stage"] = 4
         if b and stage >= 5:
             s = sec[sector_of(sym)]
             sector_ok = (s["pct"] > 0) if side == "bull" else (s["pct"] < 0)
