@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 import btst
 import intraday
 import market
+import orb
 import risk
 import trades
 from analysis import _day
@@ -59,19 +60,44 @@ def _max_drawdown(results):
     return round(dd, 2)
 
 
+# Round-trip costs as a share of the position value: brokerage, STT, exchange fees, GST, stamp duty and
+# slippage. Intraday (MIS) is cheap; BTST in cash is delivery: STT 0.1% on both the buy and the sell.
+COST = {"intraday": 0.0006, "btst": 0.0025}
+
+
+def _add_pnl(rows, rcfg, kind):
+    """₹ result of each trade, sized by the risk engine, after costs."""
+    for r in rows:
+        if r.get("result_r") is None:
+            continue
+        z = risk.size_stock({"entry": r["entry"], "sl": r["sl"], "t1": r["t1"]}, rcfg, btst=kind == "btst")
+        if not z:
+            r["pnl"] = 0
+            continue
+        r["pnl"] = round(r["result_r"] * abs(r["entry"] - r["sl"]) * z["qty"] - COST[kind] * z["value"])
+
+
+def _money(rows, days):
+    pnl = sum(r.get("pnl") or 0 for r in rows)
+    return {"pnl": round(pnl), "pnl_day": round(pnl / days) if days else 0}
+
+
 def _report(rows, split=None):
     rows = sorted(rows, key=lambda r: r["picked_at"])
     by_day = {}
     for r in rows:
         by_day.setdefault(r["day"], []).append(r)
     keep = ("day", "symbol", "side", "status", "entry", "sl", "t1", "t2", "result_r", "revised", "picked_at",
-            "triggered_at", "exit", "gap_pct", "basis", "f")
+            "triggered_at", "exit", "gap_pct", "basis", "f", "pnl")
     sm = trades._stats(rows)
     sm["max_drawdown"] = _max_drawdown([r["result_r"] for r in rows if r.get("result_r") is not None])
     sm["days"] = len(by_day)
+    days_all = sorted(_report.days or by_day)
+    sm.update(_money(rows, len(days_all)))
     if split:                                          # first two thirds vs the last third (unseen when choosing)
-        sm["early"] = trades._stats([r for r in rows if r["day"] < split])
-        sm["late"] = trades._stats([r for r in rows if r["day"] >= split])
+        early, late = [r for r in rows if r["day"] < split], [r for r in rows if r["day"] >= split]
+        sm["early"] = dict(trades._stats(early), **_money(early, sum(1 for d in days_all if d < split)))
+        sm["late"] = dict(trades._stats(late), **_money(late, sum(1 for d in days_all if d >= split)))
     return {"summary": sm, "days": [dict(trades._stats(v), day=d) for d, v in sorted(by_day.items())],
             "trades": [{k: r.get(k) for k in keep} for r in reversed(rows)]}
 
@@ -108,7 +134,9 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None, rules=No
                 cur, start = dn, n
         if cur is not None:
             idx[cur] = (start, len(a) // 6)
-        by_sym[sym] = {"a": a, "idx": idx, "daily": d["daily"]}
+        ov1 = {dn: a[i * 6 + 5] for dn, (i, j) in idx.items()}
+        ov3 = {dn: sum(a[(i + q) * 6 + 5] for q in range(3)) for dn, (i, j) in idx.items() if j - i >= 3}
+        by_sym[sym] = {"a": a, "idx": idx, "daily": d["daily"], "ov": {"orb5": ov1, "orb15": ov3}}
     days = sorted({_day(c["t"]) for c in nifty5}) or sorted({dn for s in by_sym.values() for dn in s["idx"]})
     test_days = days[4:][-sessions:]                   # the first sessions only warm up volume averages
     day5 = lambda s, dn: _unpack(s["a"], *s["idx"][dn]) if dn in s["idx"] else []
@@ -158,7 +186,25 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None, rules=No
             v = market.index_view("NIFTY 50", [c for c in nwin if c["t"] + 300 <= now]) if nday else None
             return v["trend"] if v else None
 
-        for m in SCANS:
+        setup = ((rules or {}).get("intraday") or {}).get("setup", "breakout")
+        if setup in orb.ORB_MINUTES:
+            # Opening range breakout: one decision right after the opening range closes.
+            k = orb.ORB_MINUTES[setup]
+            now = _ts(day, 9 * 60 + 15 + 5 * k)
+            stop_rule = ((rules or {}).get("intraday") or {}).get("orb_stop", "atr10")
+            cands = []
+            for sym, x in ctx.items():
+                c = orb.candidate(sym, x["today5"][:k], orb.usual_opening(by_sym[sym]["ov"][setup], day),
+                                  orb.daily_atr(x["daily"]), setup, stop_rule, sector_of(sym))
+                if c:
+                    c["price"] = x["today5"][k - 1]["c"]
+                    cands.append(c)
+            for c in orb.rank(cands, min(n_picks, rcfg["max_open"])):
+                if risk.day_status(book.rows, rcfg)["blocked"]:
+                    blocked_n += 1
+                    continue
+                book.record(c, now)
+        for m in ([] if setup in orb.ORB_MINUTES else SCANS):
             now = _ts(day, m)
             snap = snapshot(now)
             funnel = {sym: {"res": v["res"], "levels": ctx[sym]["levels"], "pdh": ctx[sym]["pdh"],
@@ -207,6 +253,9 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None, rules=No
     btst_rows = [dict(r, kind="btst") for r in bbook.rows if r.get("result_r") is not None]
     first = datetime.fromtimestamp(_ts(test_days[0], 600), IST).strftime("%Y-%m-%d") if test_days else None
     last = datetime.fromtimestamp(_ts(test_days[-1], 600), IST).strftime("%Y-%m-%d") if test_days else None
+    _add_pnl(intra_rows, rcfg, "intraday")
+    _add_pnl(btst_rows, rcfg, "btst")
+    _report.days = [datetime.fromtimestamp(_ts(d, 600), IST).strftime("%Y-%m-%d") for d in test_days]
     split = datetime.fromtimestamp(_ts(test_days[len(test_days) * 2 // 3], 600), IST).strftime("%Y-%m-%d") if test_days else None
     return {"from": first, "to": last, "sessions": len(test_days), "stocks": len(by_sym), "split": split,
             "intraday": _report(intra_rows, split), "btst": _report(btst_rows, split), "blocked": blocked_n,
@@ -227,6 +276,11 @@ INTRADAY_VARIANTS = [
     ("Targets 2R / 4R", {"t1_r": 2.0}),
     ("No new entries after 12:00", {"last_entry": "12:00"}),
     ("NIFTY trending + volume 2×", {"nifty": "trending", "vol_x": 2.0}),
+    # Opening Range Breakout on stocks in play (Zarattini, Barbon & Aziz): hold to the close, no target.
+    ("ORB 5-min · stop 10% ATR (study rules)", {"setup": "orb5", "orb_stop": "atr10"}),
+    ("ORB 5-min · stop at the range", {"setup": "orb5", "orb_stop": "range"}),
+    ("ORB 15-min · stop 10% ATR", {"setup": "orb15", "orb_stop": "atr10"}),
+    ("ORB 15-min · stop at the range", {"setup": "orb15", "orb_stop": "range"}),
 ]
 BTST_VARIANTS = [
     ("Current rules", {}),
@@ -243,7 +297,7 @@ def _brief(rep):
     for k in ("intraday", "btst"):
         sm = rep[k]["summary"]
         out[k] = {x: sm.get(x) for x in ("closed", "win_rate", "avg_r", "total_r", "profit_factor", "max_drawdown",
-                                         "losing_streak", "early", "late")}
+                                         "losing_streak", "early", "late", "pnl", "pnl_day")}
     return out
 
 
@@ -265,11 +319,12 @@ def compare(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
         split, span = rep.get("split"), (rep.get("from"), rep.get("to"))
     for k in rows:                                     # suggest: best on the early part AND still positive later
         base_n = rows[k][0]["closed"] if rows[k] else 0     # enough trades to mean something
-        ok = [r for r in rows[k] if (r["early"] or {}).get("avg_r") is not None and (r["late"] or {}).get("closed", 0) >= 10
+        # Judged in ₹ after costs (R alone flatters tight stops), per trading day.
+        ok = [r for r in rows[k] if (r["early"] or {}).get("closed") and (r["late"] or {}).get("closed", 0) >= 8
               and r["closed"] >= max(15, 0.3 * base_n)]
-        best = max(ok, key=lambda r: r["early"]["avg_r"], default=None)
+        best = max(ok, key=lambda r: r["early"]["pnl_day"], default=None)
         for r in rows[k]:
-            r["pick"] = bool(best and r is best and best["early"]["avg_r"] > 0 and (best["late"]["avg_r"] or 0) > 0)
+            r["pick"] = bool(best and r is best and best["early"]["pnl_day"] > 0 and best["late"]["pnl_day"] > 0)
     return {"intraday": rows["intraday"], "btst": rows["btst"], "split": split, "from": span[0], "to": span[1]}
 
 
@@ -313,3 +368,6 @@ def demo_data(symbols, sessions=45, seed=7):
         out[sym] = {"c5": c5, "daily": early + daily}
     nifty = out.pop("NIFTY")["c5"]
     return out, nifty
+
+
+_report.days = None
