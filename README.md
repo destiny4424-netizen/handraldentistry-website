@@ -150,6 +150,13 @@ add `BOOKS_NEW_PASSWORD=1` after `sudo` for a new one.
 If something ever looks wrong: `systemctl status handral-books` or
 `journalctl -u handral-books -u handral-books-update -n 50`.
 
+## GoldBot (XAUUSD bot for MetaTrader 5)
+
+`_goldbot/GoldBot.mq5` is a MetaTrader 5 Expert Advisor that trades gold (XAUUSD) by itself on an Exness MT5
+account, with a stop-loss on every trade, a daily loss limit and a stop button. It runs in MT5 on the Windows
+laptop or a VPS (not on the droplet), and refuses real accounts until you allow them. Setup, backtest and
+demo test: `_goldbot/README.md`.
+
 ## OrderBlock Scanner (F&O scanner on the droplet)
 
 `_scanner/` is a scanner for NSE F&O stocks using Dhan market data (it never places orders):
