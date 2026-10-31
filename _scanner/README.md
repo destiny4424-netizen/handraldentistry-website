@@ -160,6 +160,25 @@ automatically, for intraday and BTST separately. A variant you pick with **Use**
 **Use** switches the live scanner (and later backtests) to that variant from the next scan. It is stored in
 settings.json as `rules` / `rules_names`. "Current rules" goes back to the defaults.
 
+## NIFTY gamma (GEX)
+The Market panel shows NIFTY's dealer gamma exposure, read from the nearest-expiry option chain
+(`gex.py`, refreshed every 5 minutes).
+
+**Assumption:** dealers are long calls and short puts, so call gamma counts + and put gamma counts −.
+
+**What it shows:**
+- **Regime:**
+  - Positive gamma: dealers dampen moves. Expect a range day, so be choosy and book profits sooner.
+  - Negative gamma: dealers add to moves. Expect a trend day, where breakouts work better.
+- **Gamma flip:** the NIFTY level where total dealer gamma changes sign. It is found by recomputing
+  total gamma at NIFTY levels ±5% away, using each option's implied volatility.
+- **Call wall / put wall:** the strikes above / below NIFTY with the most call / put gamma.
+- **Chart:** a bar chart of net GEX by strike.
+
+The regime is information only, not a filter yet. Past option chains aren't available, so it can't be
+backtested. Instead, every intraday and BTST trade records the day's regime, and the Learning journal
+groups trades by it. After a few weeks it shows whether "trend day" readings really do better.
+
 ## Risk engine
 Set in Settings → Risk engine. The defaults are for a ₹1,50,000 account:
 - **Risk a trade:** 1% of capital (₹1,500). Each pick shows its size: shares = risk ÷ distance to the stop.

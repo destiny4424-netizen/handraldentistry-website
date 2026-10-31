@@ -34,6 +34,7 @@ INTRADAY_GROUPS = [
     ("Gap open", lambda f: "Gap beyond the level" if f.get("gap") else "No gap"),
     ("Score", _bucket_score),
     ("Sector", lambda f: f.get("sector")),
+    ("NIFTY gamma (GEX)", lambda f: {"pos": "Positive gamma (range day)", "neg": "Negative gamma (trend day)"}.get(f.get("gex"))),
 ]
 BTST_GROUPS = [
     ("Side", lambda f: {"bull": "BTST (buy)", "bear": "STBT (sell)"}.get(f.get("side"))),
@@ -42,6 +43,7 @@ BTST_GROUPS = [
     ("Volume", lambda f: None if f.get("rvol") is None else "1.5–2.5×" if f["rvol"] < 2.5 else "2.5× and more"),
     ("Score", _bucket_score),
     ("Sector", lambda f: f.get("sector")),
+    ("NIFTY gamma (GEX)", lambda f: {"pos": "Positive gamma (range day)", "neg": "Negative gamma (trend day)"}.get(f.get("gex"))),
 ]
 
 
