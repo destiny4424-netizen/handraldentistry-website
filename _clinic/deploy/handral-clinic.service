@@ -1,0 +1,28 @@
+[Unit]
+Description=Handral Clinic cloud server (clinic app data)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=clinic
+Group=clinic
+Environment=PYTHONUNBUFFERED=1
+Environment=CLINIC_DB=/var/lib/handral-clinic/clinic.db
+Environment=CLINIC_HOST=127.0.0.1
+Environment=CLINIC_PORT=3030
+# Local overrides (e.g. CLINIC_PORT, CLINIC_ORIGINS) go in this file; it survives updates.
+EnvironmentFile=-/etc/default/handral-clinic
+ExecStart=/usr/bin/python3 /opt/handral-clinic/repo/_clinic/server.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/handral-clinic
+
+[Install]
+WantedBy=multi-user.target

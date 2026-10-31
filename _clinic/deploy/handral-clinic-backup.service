@@ -1,0 +1,6 @@
+[Unit]
+Description=Back up the Handral Clinic database
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/handral-clinic-backup
