@@ -208,7 +208,12 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
 - An intraday trade is listed when a 15-minute candle closes beyond yesterday's high/low on volume.
   It then says "Buy above …" (the breakout candle's high) with the stop just beyond the broken level.
   Stocks close to the level go on the Watchlist.
-- **Phone layout:** every tab opens on its stock list. Tap a stock to scroll down to its chart.
+- **Phone layout:**
+  - every tab opens on its stock list; tap a stock to scroll down to its chart
+  - a market strip stays at the top: NIFTY, GEX regime, VIX, breadth, risk status and event risk; tap it for the full Market panel, which opens with the verdict and GEX first
+  - pick cards are short: entry, stop, targets and size, with checks, score, option and news under a tap ("Checks, score, option & news")
+  - the bottom bar has a **More** button for Order Blocks, Breakouts, Gold & Silver, GEX, the scan funnel and Settings
+  - Compare rules shows each variant as a card instead of a wide table
 - **Liquid stocks only:** F&O stocks are scanned only if, over the last 20 sessions, they traded at least
   ₹200 crore and 5 lakh shares a day on average. Thin stocks are skipped before any intraday data is fetched.
   Change both under Settings → Intraday; 0 switches a check off. Settings also lists the stocks left out today. Each pick shows its ₹ cr/day.

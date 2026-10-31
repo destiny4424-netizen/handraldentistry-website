@@ -228,6 +228,11 @@
   .gexbox .gh b { font-family: var(--mono); } .gexbox canvas { width: 100%; height: 150px; margin-top: 8px; display: block; }
   .gexbox .rg { font: 700 11px var(--mono); padding: 2px 8px; border-radius: 6px; }
   .gexbox .rg.pos { background: rgba(41,98,255,.18); color: #8fb0ff; } .gexbox .rg.neg { background: rgba(255,170,0,.15); color: #ffcf70; }
+  .mstrip, .moresheet { display: none; }
+  details.more > summary { cursor: pointer; color: var(--accent); font-size: 12px; margin-top: 8px; list-style: none; }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary::before { content: "▸ "; } details.more[open] > summary::before { content: "▾ "; }
+  .vcards { display: none; }
   .optbox { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px dashed rgba(139,124,246,.55); background: rgba(139,124,246,.08); font-size: 12px; }
   .optbox .oh { font: 700 12px var(--mono); color: #b9adff; margin-bottom: 6px; }
   .optbox .on { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; font: 600 12px var(--mono); }
@@ -384,6 +389,38 @@
   .bsize input { width: 120px; padding: 6px 8px; border-radius: 6px; border: 1px solid #343c49; background: var(--card); color: var(--text); font: 13px var(--mono); }
   @media (max-width: 1000px) { .bgrid { grid-template-columns: 1fr; } .bstats { grid-template-columns: repeat(2, 1fr); } }
   .revised { display: block; font-size: 11px; color: var(--liq); margin-top: 3px; }
+  @media (max-width: 1000px) {
+    /* Market at a glance, always visible at the top on phones; tap it for the full Market panel. */
+    .mstrip { display: flex; order: -1; position: sticky; top: 48px; z-index: 3; gap: 6px; overflow-x: auto;
+              padding: 6px 8px; margin: 0 0 6px; background: var(--bg); border-bottom: 1px solid #2a2e39; scrollbar-width: none; }
+    .mstrip::-webkit-scrollbar { display: none; }
+    .mstrip span { flex: none; font: 700 12px var(--mono); padding: 5px 9px; border-radius: 14px; background: #1e222d; color: var(--text); white-space: nowrap; }
+    .mstrip .up { color: var(--bull); } .mstrip .dn { color: var(--bear); } .mstrip .wa { color: #ffcf70; } .mstrip .bl { color: #8fb0ff; }
+    .moresheet:not([hidden]) { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; position: fixed; left: 8px; right: 8px;
+              bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 6; background: var(--panel); border: 1px solid #363a45;
+              border-radius: 12px; padding: 10px; box-shadow: 0 -6px 24px rgba(0,0,0,.5); }
+    .moresheet button { padding: 12px 8px; font-size: 14px; border-radius: 8px; background: #1e222d; color: var(--text); border: 1px solid #2a2e39; }
+    /* Market panel: the verdict and GEX first; shorter cards. */
+    #marketPanel:not([hidden]) { display: flex; flex-direction: column; }
+    #mVerdict { order: 0; } #mGex { order: 1; margin-top: 10px; } #marketPanel .mkt { order: 2; } #marketPanel .movers { order: 3; }
+    #mTips { order: 4; } #mEvents { order: 5; }
+    .idx .why { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .idx { padding: 10px; } .verdict { font-size: 14px; }
+    .gexbox canvas { height: 120px; }
+    /* Compare rules as cards instead of a wide table. */
+    .vtable { display: none; } .vcards { display: block; }
+    .vcard { border: 1px solid #2a2e39; border-radius: 10px; padding: 10px; margin: 8px 0; background: rgba(0,0,0,.15); }
+    .vcard .vh { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+    .vcard .vg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; font: 600 12px var(--mono); }
+    .vcard .vg small { display: block; color: var(--muted); font: 400 10px var(--sans, inherit); }
+    .ptable { font-size: 12px; } .ptable td, .ptable th { padding: 6px 4px; }
+    /* Jumps land below the header + market strip; shorter pick cards. */
+    .panel, #mGex, .panel.detail { scroll-margin-top: 104px; }
+    #pickNote, #btstNote { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 11px; }
+    .pick canvas[data-spark] { display: none; } .pick .mid { grid-template-columns: 1fr !important; }
+    .pick .meta2 { font-size: 12px; }
+    .gexbox .why { font-size: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -493,6 +530,7 @@
 <div class="progress"><b id="prog"></b></div>
 <main>
 <div class="ws-main">
+  <div class="mstrip" id="mstrip"></div>
   <div class="msg" id="msg"></div>
   <section class="panel detail" id="detailPanel">
     <div class="dhead">
@@ -618,9 +656,17 @@
   <button data-go="btst:btstPanel"><span>☾</span>BTST</button>
   <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
   <button data-go="pk:marketPanel"><span>▲</span>Market</button>
-  <button data-go="mcx:bullionPanel"><span>◆</span>Gold</button>
   <button data-go="perf:perfPanel"><span>%</span>Stats</button>
+  <button id="moreBtn" type="button"><span>⋯</span>More</button>
 </nav>
+<div class="moresheet" id="moreSheet" hidden>
+  <button data-go="ob:listsPanel">Order Blocks</button>
+  <button data-go="bo:listsPanel">Breakouts 15m</button>
+  <button data-go="mcx:bullionPanel">Gold &amp; Silver</button>
+  <button data-go="pk:mGex">NIFTY gamma (GEX)</button>
+  <button data-go="pk:flowPanel">Scan funnel</button>
+  <button id="moreSettings" type="button">Settings</button>
+</div>
 
 <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
 <script>
@@ -665,8 +711,10 @@ function render() {
   document.body.classList.toggle("noside", mode === "perf");
   ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel", "perfPanel", "bullInfoPanel", "bullionPanel"]
     .forEach(id => $(id).hidden = !show[mode].includes(id));
-  document.querySelectorAll(".bnav button").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode && b.dataset.go !== "pk:tradesPanel" && b.dataset.go !== "pk:marketPanel"));
+  document.querySelectorAll(".bnav button[data-go]").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode && b.dataset.go !== "pk:tradesPanel" && b.dataset.go !== "pk:marketPanel"));
+  $("moreBtn").classList.toggle("on", ["ob", "bo", "mcx"].includes(mode));
   renderMarket(s.market);
+  renderStrip(s);
   renderTrades(s.trades);
   $("ver").textContent = s.version ? ` · Version ${s.version}` : "";
   // A new version was installed on the server: reload so this open page shows it (not while a dialog is open).
@@ -1191,8 +1239,18 @@ function renderCompare(d) {
     <div class="hint">⭐ = most ₹ a day on the earlier days, still making money on the later (unseen) days, with enough trades. It is switched on automatically.
     ₹ = sized for your capital and risk, after brokerage, STT and slippage (intraday 0.06%, BTST delivery 0.25% of the position). PF = profit factor; DD = worst drawdown in R.
     ${kind === "btst" && d.btst_edge === false ? `<br><b style="color:#ffcf70">No BTST variant made money after costs: BTST stays paper only.</b>` : ""}</div>`;
-  $("cmpIntra").innerHTML = c ? table("intraday", c.intraday) : "";
-  $("cmpBtst").innerHTML = c ? table("btst", c.btst) : "";
+  const cards = (kind, rows) => !rows ? "" : `<div class="vcards">${rows.map(r => {
+    const used = (inUse[kind] || "Current rules") === r.name;
+    return `<div class="vcard"><div class="vh"><span>${r.pick ? "⭐ " : ""}${esc(r.name)}${used ? ` <small style="color:${css("--bull")}">in use</small>` : ""}</span>
+      ${used ? "" : `<button class="ghost" data-use="${kind}|${esc(r.name)}">Use</button>`}</div>
+      <div class="vg"><div><small>₹ total</small><span style="color:${col(r.pnl)}">${inr(r.pnl)}</span></div>
+        <div><small>₹/day earlier</small><span style="color:${col((r.early || {}).pnl_day)}">${inr((r.early || {}).pnl_day)}</span></div>
+        <div><small>₹/day later</small><span style="color:${col((r.late || {}).pnl_day)}">${inr((r.late || {}).pnl_day)}</span></div>
+        <div><small>Trades · won</small>${r.closed} · ${r.win_rate ?? "—"}%</div>
+        <div><small>Avg R · PF</small>${f(r.avg_r)} · ${r.profit_factor ?? "—"}</div>
+        <div><small>Worst DD</small>${r.max_drawdown ?? "—"}R</div></div></div>`; }).join("")}</div>`;
+  $("cmpIntra").innerHTML = c ? table("intraday", c.intraday).replace('<div style="overflow-x:auto">', '<div class="vtable" style="overflow-x:auto">') + cards("intraday", c.intraday) : "";
+  $("cmpBtst").innerHTML = c ? table("btst", c.btst).replace('<div style="overflow-x:auto">', '<div class="vtable" style="overflow-x:auto">') + cards("btst", c.btst) : "";
   document.querySelectorAll("[data-use]").forEach(b => b.onclick = async () => {
     const [kind, name] = b.dataset.use.split("|");
     if (!confirm(name === "auto" ? "Let Claude pick the best-tested rules automatically again?"
@@ -1229,17 +1287,19 @@ function renderBtst() {
         ${c.oi ? `<span class="oi">${c.oi.kind} · OI ${pct(c.oi.oi_pct)}</span>` : ""}</div>
       <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)}</div><canvas data-spark="${i}"></canvas></div>
       <div class="why2">${c.why.map(w => `<span>${w}</span>`).join("")}</div>
-      ${(c.flags || []).length ? `<div class="chips">${flagChips(c)}</div>` : ""}
+
       <div class="nums" style="margin-top:8px">
         <div>${bull ? "BUY ~" : "SELL ~"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
         <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
         <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
       <div class="action">${bull ? "Buy" : "Sell (futures)"} between 3:15 and 3:25 PM near ${fmt(p.entry)} · stop ${fmt(p.sl)} · exit tomorrow at T1/T2, the stop, or by 11:00</div>
-      ${partsBars(c)}${c.take === false ? `<div class="caution">Backup only: the risk engine takes the best ${(state.risk || {}).btst_max || 2} BTST trades a night.</div>` : sizeBox(c, true)}
-      ${optBox(c.option, bull, true)}${newsList(c)}
+      ${c.take === false ? `<div class="caution">Backup only: the risk engine takes the best ${(state.risk || {}).btst_max || 2} BTST trades a night.</div>` : sizeBox(c, true)}
+      <details class="more"${wide() ? " open" : ""}><summary>Score, checks, option &amp; news</summary>
+        ${(c.flags || []).length ? `<div class="chips">${flagChips(c)}</div>` : ""}${partsBars(c)}${optBox(c.option, bull, true)}${newsList(c)}</details>
     </div>`;
   }).join("") : `<div class="empty">${b.open ? "No stock closes strong enough right now. The next hourly scan may find some." : `BTST picks appear from ${b.from}, after the first hourly scan.`}</div>`;
   list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, b.picks[+cv.dataset.spark]));
+  keepOpen(list);
   list.querySelectorAll(".pick").forEach(el => el.onclick = ev => { if (ev.target.closest("a")) return; selected = [el.dataset.sym, el.dataset.side]; hl(); loadChart(); });
   const hl = () => list.querySelectorAll(".pick").forEach(el => el.classList.toggle("sel", !!selected && el.dataset.sym === selected[0]));
   if (!selected || !b.picks.some(c => c.symbol === selected[0])) selected = b.picks[0] ? [b.picks[0].symbol, b.picks[0].side] : null;
@@ -1263,12 +1323,28 @@ function renderBtst() {
 
 // Phone: the stock list comes first; tapping a stock scrolls down to its chart.
 document.addEventListener("click", ev => {
-  if (innerWidth > 1000 || ev.target.closest("a")) return;
+  if (innerWidth > 1000 || ev.target.closest("a, details, button")) return;   // opening details or a button: stay put
   if (ev.target.closest(".pick, #listsPanel .row, .trow[data-sym]"))
     setTimeout(() => $("detailPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 60);
 });
 // iPhone bottom bar: jump to a section (switching tab if needed)
-document.querySelectorAll(".bnav button").forEach(b => b.onclick = () => {
+$("moreBtn").onclick = ev => { ev.stopPropagation(); $("moreSheet").hidden = !$("moreSheet").hidden; };
+document.addEventListener("click", ev => { if (!ev.target.closest("#moreSheet, #moreBtn")) $("moreSheet").hidden = true; });
+$("moreSettings").onclick = () => { $("moreSheet").hidden = true; $("keysBtn").click(); };
+$("mstrip").onclick = () => { if (mode !== "pk") { mode = "pk"; selected = null; render(); } setTimeout(() => $("marketPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
+function renderStrip(s) {
+  const m = s.market || {}, n = m.nifty, g = m.gex, v = m.vix, r = s.risk;
+  const out = [];
+  if (n) out.push(`<span class="${n.pct >= 0 ? "up" : "dn"}">NIFTY ${n.trend === "Bullish" ? "▲" : n.trend === "Bearish" ? "▼" : "◆"} ${pct(n.pct)}</span>`);
+  if (g) out.push(`<span class="${g.regime === "pos" ? "bl" : "wa"}">GEX ${g.regime === "pos" ? "+ RANGE" : "− TREND"}${g.flip ? ` · flip ${Math.round(g.flip)}` : ""}</span>`);
+  if (v) out.push(`<span class="${v.level === "High" ? "wa" : ""}">VIX ${fmt(v.price)}</span>`);
+  if (m.breadth) out.push(`<span>${m.breadth.advances}↑ ${m.breadth.declines}↓</span>`);
+  if (r && r.capital) out.push(`<span class="${r.status === "OK" ? "up" : "wa"}">RISK ${r.status} · ${r.day_r >= 0 ? "+" : ""}${r.day_r}R</span>`);
+  if (state.events && state.events.risk && state.events.risk.level !== "Low") out.push(`<span class="wa">EVENTS ${state.events.risk.level.toUpperCase()}</span>`);
+  $("mstrip").innerHTML = out.join("");
+}
+document.querySelectorAll(".bnav button[data-go], .moresheet button[data-go]").forEach(b => b.onclick = () => {
+  $("moreSheet").hidden = true;
   const [m, target] = b.dataset.go.split(":");
   if (m === "chart") { document.querySelector(".panel.detail").scrollIntoView({ behavior: "smooth" }); return; }
   if (mode !== m) { mode = m; selected = null; try { localStorage.setItem("mode", mode); } catch {} render(); }
@@ -1357,6 +1433,16 @@ function drawBullion(d, ctx, w, h) {
 const PART_MAX = { volume: 25, candle: 20, structure: 15, trend: 25, participation: 15, close: 25, breakout: 20, oi: 15 };
 const PART_NAME = { volume: "Volume", candle: "Candle", structure: "Structure", trend: "Trend", participation: "RVOL+OI",
                     close: "Close", breakout: "Breakout", oi: "OI" };
+const wide = () => innerWidth > 1000;                  // phones get the short cards (details folded)
+const OPEN_DETAILS = new Set();                        // cards whose details the user opened: kept open across refreshes
+function keepOpen(list) {
+  list.querySelectorAll(".pick").forEach(el => {
+    const d = el.querySelector("details.more"), key = el.dataset.sym + el.dataset.side;
+    if (!d) return;
+    if (OPEN_DETAILS.has(key)) d.open = true;
+    d.ontoggle = () => { if (wide()) return; d.open ? OPEN_DETAILS.add(key) : OPEN_DETAILS.delete(key); };
+  });
+}
 function partsBars(c) {
   if (!c.parts) return "";
   return `<div class="parts">${Object.entries(c.parts).map(([k, v]) => `<div>${PART_NAME[k] || k} ${Math.round(v)}/${PART_MAX[k] || 20}
@@ -1606,17 +1692,19 @@ function renderPicks() {
           ${c.trade ? `<span class="tstat">${esc(c.trade.status)}${c.trade.result_r != null ? ` · ${c.trade.result_r >= 0 ? "+" : ""}${c.trade.result_r}R` : ""}</span> · given at the ${c.since} scan`
                     : `<span class="stx ${p.status.split(" ")[0]}">${p.status}${p.triggered_at ? " " + hm(p.triggered_at) : ""}</span> · picked ${c.since} · in Today's trades`}</div>
           ${c.spark ? `<canvas data-spark="${i}"></canvas>` : ""}</div>
-        <div class="chips">${pickChips(c)}${flagChips(c)}</div>
         <div class="nums">
           <div>${bull ? "BUY ABOVE" : "SELL BELOW"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
           <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
           <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
         <div class="action">${c.trade ? (c.trade.revised ? `↻ ${esc(c.trade.revised)}` : c.trade.triggered_at ? `Triggered ${hm(c.trade.triggered_at)} · stop ${fmt(p.sl)}` : `${esc(p.action || "")} · stop ${fmt(p.sl)} · still valid until 3:00 PM`)
           : p.triggered_at ? `In trade since ${hm(p.triggered_at)} · stop ${fmt(p.sl)}` : `${p.action} (break of the 15m candle that held the level) · stop ${fmt(p.sl)}`}</div>
-        ${partsBars(c)}${sizeBox(c)}${optBox(c.option, bull)}${newsList(c)}
+        ${sizeBox(c)}
+        <details class="more"${wide() ? " open" : ""}><summary>Checks, score, option &amp; news</summary>
+          <div class="chips">${pickChips(c)}${flagChips(c)}</div>${partsBars(c)}${optBox(c.option, bull)}${newsList(c)}</details>
       </div>`;
     }).join("");
     list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, pk.picks[+cv.dataset.spark]));
+    keepOpen(list);
     list.querySelectorAll(".pick").forEach(el => el.onclick = ev => { if (ev.target.closest("a")) return; selected = [el.dataset.sym, el.dataset.side]; highlightPicks(); loadChart(); });
   }
   const ok = selected && pk.picks.some(c => c.symbol === selected[0] && c.side === selected[1]);
