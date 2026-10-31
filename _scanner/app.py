@@ -36,6 +36,7 @@ import breakout
 import bullion
 import btst
 import events
+import gex
 import intraday
 import journal
 import market
@@ -49,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "31 Oct · ORB fix (stop only after entry)"
+VERSION = "31 Oct · NIFTY GEX panel"
 
 
 def load_env():
@@ -555,9 +556,9 @@ def fetch_events(demo, vix):
 _last_chain = [0.0]
 
 
-def option_chain(sid, expiry):
-    """Dhan option chain for one stock and expiry (1 request every 3 seconds)."""
-    for seg in ("NSE_EQ", "NSE_FNO"):
+def option_chain(sid, expiry, segs=("NSE_EQ", "NSE_FNO")):
+    """Dhan option chain for one stock (or index) and expiry (1 request every 3 seconds)."""
+    for seg in segs:
         wait = 3.1 - (time.time() - _last_chain[0])
         if wait > 0:
             time.sleep(wait)
@@ -570,6 +571,34 @@ def option_chain(sid, expiry):
         if isinstance(data, dict) and data.get("oc"):
             return data
     return None
+
+
+GEX_CACHE = {}
+
+
+def nifty_gex(demo, spot):
+    """NIFTY dealer gamma exposure from the nearest-expiry option chain (refreshed every 5 minutes)."""
+    if not spot:
+        return None
+    hit = GEX_CACHE.get("nifty")
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    try:
+        if demo:
+            chain = gex.demo_chain(spot)
+        else:
+            expiry = EXPIRY.get("nifty")
+            chain = option_chain(INDEXES["NIFTY"], expiry, ("IDX_I",)) if expiry else None
+        days = (datetime.strptime(EXPIRY["nifty"], "%Y-%m-%d").date() - datetime.now(IST).date()).days \
+            if EXPIRY.get("nifty") else 5
+        g = gex.analyse(chain, float((chain or {}).get("last_price") or spot), days=max(days, 0) + 0.5) if chain else None
+        if g:
+            g["expiry"] = EXPIRY.get("nifty")
+    except Exception as e:                             # extra information: never stop the scan
+        print(f"  NIFTY GEX: {e}", file=sys.stderr)
+        g = hit[1] if hit else None
+    GEX_CACHE["nifty"] = (time.time(), g)
+    return g
 
 
 def option_plan(sym, sid, side, plan, spot, demo):
@@ -1045,7 +1074,8 @@ def scan_once():
     mv = market.movers([{"symbol": s, "price": r["price"], "pct": r["pct"], "rvol": r.get("rvol"),
                          "sector": picks.sector_of(s)} for s, r in results.items()])
     today_s = datetime.now(IST).strftime("%Y-%m-%d")
-    mkt = {"nifty": nifty, "bank": bank, "vix": vix, "breadth": br, "movers": mv,
+    gx = nifty_gex(demo, nifty["price"] if nifty else None)
+    mkt = {"nifty": nifty, "bank": bank, "vix": vix, "breadth": br, "movers": mv, "gex": gx,
            "verdict": market.verdict(nifty, bank, vix, br),
            "expiry": EXPIRY.get("nifty"), "expiry_today": EXPIRY.get("nifty") == today_s}
     for c in top["picks"] + [f for f in top["flow"] if f.get("stage")]:
@@ -1056,6 +1086,8 @@ def scan_once():
             c["vwap_ok"] = (r["price"] >= r["vwap"]) if is_bull else (r["price"] <= r["vwap"])
         c["rvol"] = r.get("rvol")
         c["liq"] = r.get("liq")
+        if gx:
+            c["gex"] = gx["regime"]                    # recorded with the trade, for the Learning journal
         if nifty:
             c["market"] = ("with" if nifty["trend"] == ("Bullish" if is_bull else "Bearish")
                            else "neutral" if nifty["trend"] == "Sideways" else "against")
@@ -1107,6 +1139,8 @@ def scan_once():
         btst_picks = btst_picks[:keep_n]
         rcfg = risk.config(SETTINGS)
         for i, c in enumerate(btst_picks):
+            if gx:
+                c["gex"] = gx["regime"]
             if not demo:
                 c["news"] = events.stock_news(NAMES.get(c["symbol"], c["symbol"]), c["symbol"])
             c["option"] = option_plan(c["symbol"], STOCK_IDS.get(c["symbol"]), c["side"], c["plan"], c["price"], demo)

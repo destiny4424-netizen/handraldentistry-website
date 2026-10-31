@@ -223,6 +223,11 @@
   .sizebox small { color: var(--muted); font-weight: 400; }
   .jr { margin-top: 10px; } .jr .ins { padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.2); margin: 6px 0; font-size: 13px; }
   .jr .ins b { color: #ffcf70; }
+  .gexbox { margin-top: 12px; background: rgba(0,0,0,.2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .gexbox .gh { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 13px; }
+  .gexbox .gh b { font-family: var(--mono); } .gexbox canvas { width: 100%; height: 150px; margin-top: 8px; display: block; }
+  .gexbox .rg { font: 700 11px var(--mono); padding: 2px 8px; border-radius: 6px; }
+  .gexbox .rg.pos { background: rgba(41,98,255,.18); color: #8fb0ff; } .gexbox .rg.neg { background: rgba(255,170,0,.15); color: #ffcf70; }
   .optbox { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px dashed rgba(139,124,246,.55); background: rgba(139,124,246,.08); font-size: 12px; }
   .optbox .oh { font: 700 12px var(--mono); color: #b9adff; margin-bottom: 6px; }
   .optbox .on { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; font: 600 12px var(--mono); }
@@ -508,6 +513,7 @@
     <div class="verdict" id="mVerdict"></div>
     <div class="mkt"><div class="idx" id="mNifty"></div><div class="idx" id="mBank"></div>
       <div class="idx" id="mVix"></div><div class="idx" id="mBreadth"></div></div>
+    <div class="gexbox" id="mGex" hidden></div>
     <div class="cols movers">
       <div><h2 class="bull-t">▲ Top gainers · F&amp;O</h2><div id="mGain"></div></div>
       <div><h2 class="bear-t">▼ Top losers · F&amp;O</h2><div id="mLose"></div></div>
@@ -1460,6 +1466,34 @@ function renderEvents(e) {
       <h3 style="margin-top:12px">Coming up</h3>${cal}</div>
     <div class="ebox"><h3>Headlines</h3>${news}</div>`;
 }
+function renderGex(g) {
+  const el = $("mGex");
+  if (!g) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<div class="gh"><span style="font-weight:700">NIFTY gamma (GEX)</span>
+      <span class="rg ${g.regime}">${g.regime === "pos" ? "POSITIVE · RANGE DAY" : "NEGATIVE · TREND DAY"}</span>
+      <span>NIFTY <b>${fmt(g.spot)}</b></span><span>Gamma flip <b>${g.flip ? fmt(g.flip) : "—"}</b></span>
+      <span style="color:${css("--bear")}">Call wall <b>${fmt(g.call_wall)}</b></span>
+      <span style="color:${css("--bull")}">Put wall <b>${fmt(g.put_wall)}</b></span>
+      <small style="color:var(--muted)">expiry ${esc(g.expiry || "")}</small></div>
+    <div class="why" style="margin-top:6px">${esc(g.note)} Walls are strikes where moves often stall.</div><canvas></canvas>`;
+  const [ctx, w, h] = setupCanvas(el.querySelector("canvas")), st = g.strikes || [];
+  if (!st.length) return;
+  const mx = Math.max(...st.map(r => Math.abs(r.net))) || 1, bw = w / st.length, mid = h / 2;
+  const lo = st[0].strike, hi = st[st.length - 1].strike, x = k => (k - lo) / ((hi - lo) || 1) * (w - bw) + bw / 2;
+  st.forEach(r => {
+    const bh = Math.abs(r.net) / mx * (mid - 12);
+    ctx.fillStyle = r.net >= 0 ? "rgba(41,98,255,.75)" : "rgba(255,152,0,.75)";
+    ctx.fillRect(x(r.strike) - bw * 0.4, r.net >= 0 ? mid - bh : mid, bw * 0.8, bh);
+  });
+  ctx.strokeStyle = "rgba(255,255,255,.2)"; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
+  const vline = (k, col, label) => { if (k == null || k < lo || k > hi) return; ctx.strokeStyle = col; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(x(k), 0); ctx.lineTo(x(k), h); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = col; ctx.font = `10px ${css("--mono")}`; ctx.fillText(label, Math.min(w - 60, x(k) + 3), 11); };
+  vline(g.spot, "#ffffff", "NIFTY"); vline(g.flip, "#ffcf70", "flip");
+  ctx.fillStyle = css("--muted"); ctx.font = `10px ${css("--mono")}`;
+  ctx.fillText(String(lo), 2, h - 2); ctx.fillText(String(hi), w - 40, h - 2);
+}
 function renderMarket(m) {
   const chip = $("niftyChip");
   if (m && m.nifty) {
@@ -1496,6 +1530,7 @@ function renderMarket(m) {
   tips.push(`<span>Risk 1–2% of capital per trade at most, always with the stop-loss</span>`);
   $("mTips").innerHTML = tips.join("");
   renderEvents(state.events);
+  renderGex(m && m.gex);
 }
 
 // ---------- Today's trades ----------

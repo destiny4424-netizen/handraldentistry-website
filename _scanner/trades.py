@@ -18,7 +18,8 @@ def _hm(t):
 
 def features(pick):
     """What the pick looked like when it was given (for the learning journal)."""
-    keys = ("side", "sector", "score", "parts", "vol_x", "broke_at", "retest", "gap", "nifty", "rvol", "pct", "at20")
+    keys = ("side", "sector", "score", "parts", "vol_x", "broke_at", "retest", "gap", "nifty", "rvol", "pct", "at20",
+            "gex", "setup")
     f = {k: pick.get(k) for k in keys if pick.get(k) is not None}
     if pick.get("also"):
         f["also"] = True
