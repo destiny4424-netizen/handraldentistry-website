@@ -1,0 +1,4 @@
+clinic.db
+clinic.db-wal
+clinic.db-shm
+__pycache__/

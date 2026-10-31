@@ -2,562 +2,230 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Handral Dentistry — Bagalkot's Premier Dental Care</title>
-<meta name="description" content="Advanced orthodontics, Invisalign, implants and complete dental care across 3 clinics in Bagalkot, Karnataka. Book online today."/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Handral Dentistry — Orthodontist & Dental Clinics in Bagalkot</title>
+<meta name="description" content="Braces, Invisalign, implants, root canal and family dental care by Dr. R.K. Handral (MDS Orthodontics) at 3 clinics in Bagalkot: Bagalkot Main, Vidyagiri and Navanagar. Book online or on WhatsApp."/>
+<meta name="theme-color" content="#0f3d2a"/>
+<link rel="canonical" href="https://handraldentistry.com/"/>
+<meta property="og:title" content="Handral Dentistry — Bagalkot"/>
+<meta property="og:description" content="Specialist orthodontics and complete dental care at 3 clinics in Bagalkot. Book online in a minute."/>
+<meta property="og:url" content="https://handraldentistry.com/"/>
+<meta property="og:type" content="website"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f3d2a'/%3E%3Cpath d='M20 18c-6 0-9 5-8 11 1 5 3 8 4 14 1 4 2 7 4 7s3-4 4-9c1-3 2-5 4-5s3 2 4 5c1 5 2 9 4 9s3-3 4-7c1-6 3-9 4-14 1-6-2-11-8-11-4 0-6 2-8 2s-4-2-8-2z' fill='%23fff'/%3E%3C/svg%3E"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 :root{
-  --g:#0a3d25;--g2:#1a6b4a;--g3:#2d9c6e;--ga:#e8f5ee;
-  --gold:#c8973a;--gold2:#f0c060;
-  --ink:#0d1f16;--muted:#4a6358;--light:#f8fbf9;
-  --white:#ffffff;--border:#d0e4d8;
-  --r:20px;
+  --green:#0f3d2a;--green2:#1c6b48;--mint:#e5f3ea;--mint2:#cfe9d9;
+  --cream:#faf7f1;--sand:#f1ebe0;--gold:#b8862f;--ink:#14231b;--muted:#55665d;--line:#e4e0d7;--white:#fff;
+  --wa:#1fa855;--r:18px;--shadow:0 2px 6px rgba(20,35,27,.05),0 12px 32px rgba(20,35,27,.07);
 }
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html{scroll-behavior:smooth;font-size:16px;}
-body{font-family:'DM Sans',sans-serif;background:var(--white);color:var(--ink);overflow-x:hidden;}
-h1,h2,h3,h4{font-family:'Cormorant Garamond',serif;}
-img{display:block;max-width:100%;}
-a{text-decoration:none;color:inherit;}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{font-family:"DM Sans",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--cream);font-size:17px;line-height:1.6}
+img,svg{display:block;max-width:100%}
+a{color:inherit;text-decoration:none}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3{font-family:Fraunces,Georgia,serif;font-weight:600;line-height:1.15;letter-spacing:-.01em}
+.wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--green2)}
+.eyebrow::before{content:"";width:22px;height:2px;background:var(--gold)}
+section{padding:84px 0}
+.sec-h{max-width:640px;margin-bottom:40px}
+.sec-h h2{font-size:clamp(30px,4.5vw,44px);margin:10px 0 12px}
+.sec-h p{color:var(--muted);font-size:18px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:14px 24px;border-radius:999px;font-weight:700;font-size:16px;border:0;cursor:pointer;min-height:52px;transition:transform .15s,background .15s,box-shadow .15s;white-space:nowrap}
+.btn:hover{transform:translateY(-1px)}
+.btn-primary{background:var(--green);color:#fff;box-shadow:0 8px 20px rgba(15,61,42,.22)}
+.btn-primary:hover{background:#0a2c1e}
+.btn-wa{background:var(--wa);color:#fff}
+.btn-ghost{background:#fff;color:var(--ink);border:1.5px solid var(--line)}
+.btn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.skip{position:absolute;left:-999px;top:8px;background:#fff;padding:8px 12px;z-index:100;border-radius:8px}
+.skip:focus{left:8px}
+:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
 
-/* ── CUSTOM CURSOR ─────────────────────────────────────────── */
-.cursor{width:10px;height:10px;background:var(--g2);border-radius:50%;position:fixed;pointer-events:none;z-index:9999;transition:transform .15s ease;mix-blend-mode:multiply;}
-.cursor-ring{width:36px;height:36px;border:1.5px solid var(--g2);border-radius:50%;position:fixed;pointer-events:none;z-index:9998;transition:all .25s ease;opacity:.6;}
+/* Header */
+header{position:sticky;top:0;z-index:40;background:rgba(250,247,241,.92);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid transparent;transition:border-color .2s}
+header.scrolled{border-color:var(--line)}
+.nav{display:flex;align-items:center;gap:20px;height:72px}
+.logo{display:flex;align-items:center;gap:11px;font-family:Fraunces,serif;font-size:21px;font-weight:600}
+.logo .mark{width:40px;height:40px;border-radius:12px;background:var(--green);display:grid;place-items:center}
+.logo .mark svg{width:24px;height:24px;fill:#fff}
+.logo small{display:block;font-family:"DM Sans",sans-serif;font-size:11.5px;font-weight:600;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+.links{display:flex;gap:26px;margin-left:auto;font-weight:600;font-size:15.5px;color:var(--muted)}
+.links a:hover{color:var(--green)}
+.nav .call{font-weight:700;display:flex;align-items:center;gap:8px}
+.nav .call svg{width:18px;height:18px;stroke:var(--green2);fill:none;stroke-width:2}
+.nav .btn{min-height:46px;padding:10px 20px;font-size:15px}
+.menu-btn{display:none;margin-left:auto;width:46px;height:46px;border-radius:12px;border:1.5px solid var(--line);background:#fff;cursor:pointer;place-items:center}
+.menu-btn svg{width:22px;height:22px;stroke:var(--ink);stroke-width:2;fill:none;stroke-linecap:round}
+.mobile-menu{display:none}
+@media(max-width:960px){
+  .links,.nav .call,.nav .btn{display:none}
+  .menu-btn{display:grid}
+  .mobile-menu.open{display:block;position:fixed;inset:72px 0 0;background:var(--cream);z-index:39;padding:12px 20px 120px;overflow:auto}
+  .mobile-menu a{display:block;padding:16px 4px;font-size:20px;font-weight:600;border-bottom:1px solid var(--line)}
+}
 
-/* ── NAV ───────────────────────────────────────────────────── */
-nav{
-  position:fixed;top:0;left:0;right:0;z-index:100;
-  padding:0 5vw;height:72px;
-  display:flex;align-items:center;justify-content:space-between;
-  transition:all .4s ease;
-}
-nav.scrolled{
-  background:rgba(255,255,255,.92);
-  backdrop-filter:blur(20px);
-  border-bottom:1px solid var(--border);
-  box-shadow:0 4px 24px rgba(10,61,37,.06);
-}
-.logo{display:flex;align-items:center;gap:12px;}
-.logo-mark{
-  width:42px;height:42px;
-  background:linear-gradient(135deg,var(--g),var(--g2));
-  border-radius:14px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:22px;
-  box-shadow:0 4px 16px rgba(10,61,37,.3);
-}
-.logo-text{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--g);}
-.logo-text span{color:var(--g2);}
-.nav-links{display:flex;align-items:center;gap:36px;list-style:none;}
-.nav-links a{font-size:14px;font-weight:500;color:var(--muted);transition:color .2s;position:relative;}
-.nav-links a::after{content:'';position:absolute;bottom:-4px;left:0;right:0;height:1.5px;background:var(--g2);transform:scaleX(0);transition:transform .3s;}
-.nav-links a:hover{color:var(--g);}
-.nav-links a:hover::after{transform:scaleX(1);}
-.nav-book{
-  background:var(--g);color:#fff;
-  border:none;border-radius:99px;
-  padding:11px 24px;font-size:14px;font-weight:600;
-  cursor:pointer;letter-spacing:.01em;
-  transition:all .3s;
-  display:flex;align-items:center;gap:8px;
-}
-.nav-book:hover{background:var(--g2);transform:translateY(-1px);box-shadow:0 8px 24px rgba(10,61,37,.25);}
-.menu-btn{display:none;background:none;border:none;cursor:pointer;padding:4px;}
+/* Hero */
+.hero{padding:56px 0 72px;position:relative;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:56px;align-items:center}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+.badge{display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:14px;font-weight:600}
+.badge i{width:8px;height:8px;border-radius:50%;background:var(--green2)}
+.hero h1{font-size:clamp(38px,6vw,64px);margin-bottom:20px}
+.hero h1 em{font-style:italic;color:var(--green2)}
+.hero p.lede{font-size:19px;color:var(--muted);max-width:540px;margin-bottom:30px}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:34px}
+.facts{display:flex;gap:34px;flex-wrap:wrap}
+.facts b{display:block;font-family:Fraunces,serif;font-size:32px;color:var(--green)}
+.facts span{font-size:14.5px;color:var(--muted)}
+.hero-card{background:var(--green);border-radius:28px;padding:30px;color:#fff;position:relative;box-shadow:var(--shadow)}
+.hero-card .smile{position:absolute;right:-60px;top:-60px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.14),transparent 60%)}
+.hero-card h3{font-size:24px;margin-bottom:6px;position:relative}
+.hero-card p{opacity:.85;font-size:15.5px;margin-bottom:20px;position:relative}
+.hc-list{display:grid;gap:10px;position:relative}
+.hc-item{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px 16px}
+.hc-item .dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.hc-item b{display:block;font-size:16px}
+.hc-item small{opacity:.78;font-size:13.5px}
+.hc-item a{margin-left:auto;font-size:14px;font-weight:700;background:#fff;color:var(--green);padding:8px 14px;border-radius:999px;white-space:nowrap}
+.hc-hours{margin-top:16px;display:flex;align-items:center;gap:10px;font-size:14.5px;opacity:.9;position:relative}
+.hc-hours svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2}
+@media(max-width:960px){.hero-grid{grid-template-columns:1fr;gap:36px}.hero{padding-top:32px}}
 
-/* ── HERO ──────────────────────────────────────────────────── */
-.hero{
-  min-height:100vh;
-  background:linear-gradient(160deg,#040f08 0%,#0a3d25 45%,#0f5a35 100%);
-  display:flex;flex-direction:column;justify-content:center;
-  padding:0 8vw;position:relative;overflow:hidden;
-}
-.hero-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;padding-top:72px;}
-.hero-orb{
-  position:absolute;width:700px;height:700px;
-  border-radius:50%;
-  background:radial-gradient(circle,rgba(45,156,110,.25) 0%,transparent 70%);
-  right:-100px;top:50%;transform:translateY(-50%);
-  animation:orbPulse 6s ease-in-out infinite;
-}
-.hero-orb2{
-  position:absolute;width:400px;height:400px;border-radius:50%;
-  background:radial-gradient(circle,rgba(200,151,58,.1) 0%,transparent 70%);
-  left:-80px;bottom:-100px;
-  animation:orbPulse 8s ease-in-out infinite reverse;
-}
-@keyframes orbPulse{0%,100%{transform:translateY(-50%) scale(1);}50%{transform:translateY(-50%) scale(1.08);}}
-.hero-eyebrow{
-  display:inline-flex;align-items:center;gap:8px;
-  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
-  border-radius:99px;padding:6px 14px;
-  font-size:12px;font-weight:500;color:rgba(255,255,255,.75);
-  letter-spacing:.08em;text-transform:uppercase;margin-bottom:28px;
-}
-.hero-eyebrow::before{content:'';width:6px;height:6px;border-radius:50%;background:#4ade80;box-shadow:0 0 8px #4ade80;animation:blink 2s infinite;}
-@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
-.hero h1{
-  font-size:clamp(44px,5.5vw,78px);
-  color:#fff;line-height:1.05;
-  margin-bottom:24px;
-  font-weight:600;
-}
-.hero h1 em{
-  font-style:italic;
-  background:linear-gradient(135deg,#7eedb8,#4ade80);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-}
-.hero-sub{
-  color:rgba(255,255,255,.65);font-size:17px;
-  line-height:1.7;margin-bottom:44px;max-width:480px;
-  font-weight:300;
-}
-.hero-actions{display:flex;gap:14px;flex-wrap:wrap;}
-.btn-hero-primary{
-  background:linear-gradient(135deg,#7eedb8,#2d9c6e);
-  color:var(--g);border:none;border-radius:99px;
-  padding:16px 32px;font-size:15px;font-weight:700;
-  cursor:pointer;transition:all .3s;
-  display:flex;align-items:center;gap:10px;
-  box-shadow:0 8px 32px rgba(45,156,110,.4);
-}
-.btn-hero-primary:hover{transform:translateY(-3px);box-shadow:0 16px 40px rgba(45,156,110,.5);}
-.btn-hero-ghost{
-  background:transparent;color:rgba(255,255,255,.85);
-  border:1.5px solid rgba(255,255,255,.25);border-radius:99px;
-  padding:15px 28px;font-size:15px;font-weight:500;cursor:pointer;
-  transition:all .3s;display:flex;align-items:center;gap:10px;
-}
-.btn-hero-ghost:hover{border-color:rgba(255,255,255,.6);background:rgba(255,255,255,.06);}
-.hero-stats{
-  display:flex;gap:0;margin-top:60px;padding-top:40px;
-  border-top:1px solid rgba(255,255,255,.1);
-}
-.hero-stat{flex:1;padding-right:32px;border-right:1px solid rgba(255,255,255,.1);}
-.hero-stat:last-child{border-right:none;padding-left:32px;padding-right:0;}
-.hero-stat:first-child{padding-left:0;}
-.hero-stat-n{
-  font-family:'Cormorant Garamond',serif;
-  font-size:44px;font-weight:700;color:#fff;line-height:1;
-  margin-bottom:4px;
-}
-.hero-stat-n span{color:#7eedb8;}
-.hero-stat-l{font-size:12px;color:rgba(255,255,255,.5);font-weight:400;letter-spacing:.02em;}
+/* Trust strip */
+.trust{background:#fff;border-block:1px solid var(--line);padding:22px 0}
+.trust .wrap{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.trust div{display:flex;align-items:center;gap:12px;font-weight:600;font-size:15.5px}
+.trust svg{width:34px;height:34px;flex-shrink:0;stroke:var(--green2);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;background:var(--mint);border-radius:10px;padding:6px}
+@media(max-width:860px){.trust .wrap{grid-template-columns:1fr 1fr}}
 
-/* Hero right panel */
-.hero-panel{position:relative;z-index:1;}
-.hero-card-main{
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:24px;padding:32px;
-  backdrop-filter:blur(12px);
-  margin-bottom:16px;
-}
-.hero-card-main h3{
-  font-family:'Cormorant Garamond',serif;
-  font-size:22px;color:#fff;margin-bottom:6px;font-weight:600;
-}
-.hero-card-main p{font-size:13px;color:rgba(255,255,255,.55);margin-bottom:24px;}
-.quick-form{display:flex;flex-direction:column;gap:10px;}
-.quick-input{
-  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);
-  border-radius:12px;padding:12px 16px;font-size:14px;
-  color:#fff;font-family:inherit;outline:none;
-  transition:border-color .2s;
-}
-.quick-input::placeholder{color:rgba(255,255,255,.4);}
-.quick-input:focus{border-color:rgba(126,237,184,.5);}
-.quick-input option{color:var(--ink);background:#fff;}
-.btn-quick{
-  background:linear-gradient(135deg,#7eedb8,#2d9c6e);
-  color:var(--g);border:none;border-radius:12px;
-  padding:13px;font-size:14px;font-weight:700;
-  cursor:pointer;transition:all .3s;font-family:inherit;
-}
-.btn-quick:hover{opacity:.9;transform:translateY(-1px);}
-.hero-badges{display:flex;gap:12px;}
-.hero-badge{
-  flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
-  border-radius:16px;padding:16px;backdrop-filter:blur(8px);
-  display:flex;align-items:center;gap:12px;
-}
-.badge-icon{font-size:24px;}
-.badge-text{font-size:12px;color:rgba(255,255,255,.75);font-weight:500;line-height:1.4;}
+/* Services */
+.svc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.svc{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:26px;transition:border-color .2s,box-shadow .2s,transform .2s;display:flex;flex-direction:column}
+.svc:hover{border-color:var(--mint2);box-shadow:var(--shadow);transform:translateY(-2px)}
+.svc .ic{width:50px;height:50px;border-radius:14px;background:var(--mint);display:grid;place-items:center;margin-bottom:16px}
+.svc .ic svg{width:26px;height:26px;stroke:var(--green2);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.svc h3{font-size:21px;margin-bottom:8px}
+.svc p{color:var(--muted);font-size:15.5px;flex:1}
+.svc a{margin-top:16px;font-weight:700;color:var(--green2);font-size:15px}
+.svc.feature{background:var(--green);color:#fff;border-color:var(--green)}
+.svc.feature p{color:rgba(255,255,255,.82)}
+.svc.feature .ic{background:rgba(255,255,255,.12)}
+.svc.feature .ic svg{stroke:#fff}
+.svc.feature a{color:#f3d58f}
+@media(max-width:960px){.svc-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.svc-grid{grid-template-columns:1fr}}
 
-/* ── MARQUEE ───────────────────────────────────────────────── */
-.marquee-wrap{background:var(--g);padding:16px 0;overflow:hidden;}
-.marquee{display:flex;gap:0;animation:marquee 20s linear infinite;white-space:nowrap;}
-@keyframes marquee{from{transform:translateX(0);}to{transform:translateX(-50%);}}
-.marquee-item{
-  display:inline-flex;align-items:center;gap:12px;
-  padding:0 32px;font-size:13px;font-weight:500;
-  color:rgba(255,255,255,.75);letter-spacing:.04em;text-transform:uppercase;
-}
-.marquee-sep{color:#7eedb8;font-size:8px;}
+/* Calm */
+.calm{background:var(--sand)}
+.calm-grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center}
+.calm-list{display:grid;gap:14px}
+.calm-item{display:flex;gap:16px;background:#fff;border-radius:16px;padding:18px 20px;border:1px solid var(--line)}
+.calm-item b{display:block;font-size:17px}
+.calm-item p{color:var(--muted);font-size:15.5px}
+.calm-item .n{width:34px;height:34px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-weight:700;flex-shrink:0}
+@media(max-width:900px){.calm-grid{grid-template-columns:1fr;gap:32px}}
 
-/* ── SECTIONS ──────────────────────────────────────────────── */
-section{padding:100px 8vw;}
-.tag{
-  display:inline-flex;align-items:center;gap:6px;
-  font-size:11px;font-weight:600;letter-spacing:.12em;
-  text-transform:uppercase;color:var(--g2);margin-bottom:14px;
-}
-.tag::before{content:'';width:20px;height:1.5px;background:var(--g2);}
-.section-h{font-size:clamp(32px,4vw,54px);color:var(--g);line-height:1.15;margin-bottom:16px;}
-.section-sub{font-size:17px;color:var(--muted);line-height:1.7;max-width:560px;font-weight:300;}
-.sh-center{text-align:center;}
-.sh-center .section-sub{margin:0 auto;}
+/* Doctor */
+.doc-grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:56px;align-items:center}
+.doc-card{background:linear-gradient(160deg,var(--green),#174f37);border-radius:28px;aspect-ratio:4/5;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:30px;color:#fff}
+.doc-card .big{position:absolute;inset:0;display:grid;place-items:center;opacity:.13}
+.doc-card .big svg{width:62%;fill:#fff}
+.doc-card h3{font-size:28px;position:relative}
+.doc-card p{opacity:.85;position:relative}
+.doc-card .pill{position:absolute;top:24px;left:24px;background:#fff;color:var(--green);font-weight:700;font-size:14px;padding:8px 14px;border-radius:999px}
+.creds{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:26px}
+.cred{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px}
+.cred b{display:block;margin-bottom:4px}
+.cred p{color:var(--muted);font-size:15px}
+@media(max-width:900px){.doc-grid{grid-template-columns:1fr;gap:32px}.doc-card{aspect-ratio:auto;min-height:300px}}
+@media(max-width:560px){.creds{grid-template-columns:1fr}}
 
-/* ── SERVICES ──────────────────────────────────────────────── */
-.services-bg{background:var(--light);}
-.services-grid{
-  display:grid;grid-template-columns:repeat(3,1fr);gap:2px;
-  background:var(--border);border-radius:28px;overflow:hidden;
-  margin-top:60px;
-}
-.svc{
-  background:var(--white);padding:40px 32px;
-  transition:all .4s ease;cursor:pointer;position:relative;overflow:hidden;
-}
-.svc::before{
-  content:'';position:absolute;inset:0;
-  background:linear-gradient(135deg,var(--ga),rgba(45,156,110,.05));
-  opacity:0;transition:opacity .4s;
-}
-.svc:hover{background:#fff;transform:scale(1.01);}
-.svc:hover::before{opacity:1;}
-.svc-num{
-  font-family:'Cormorant Garamond',serif;
-  font-size:13px;color:var(--g2);font-weight:600;
-  letter-spacing:.08em;margin-bottom:20px;opacity:.6;
-}
-.svc-icon{font-size:40px;margin-bottom:20px;display:block;}
-.svc-name{
-  font-family:'Cormorant Garamond',serif;
-  font-size:22px;font-weight:700;color:var(--g);
-  margin-bottom:10px;
-}
-.svc-desc{font-size:14px;color:var(--muted);line-height:1.7;}
-.svc-arrow{
-  position:absolute;bottom:32px;right:32px;
-  width:36px;height:36px;border-radius:99px;
-  background:var(--ga);display:flex;align-items:center;justify-content:center;
-  font-size:16px;transition:all .3s;
-}
-.svc:hover .svc-arrow{background:var(--g2);color:#fff;transform:rotate(45deg);}
+/* Clinics */
+.clinics{background:#fff}
+.cl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.cl{border:1px solid var(--line);border-radius:var(--r);padding:26px;background:var(--cream);display:flex;flex-direction:column}
+.cl .tag{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.cl .tag i{width:10px;height:10px;border-radius:50%}
+.cl h3{font-size:24px;margin:8px 0 14px}
+.cl ul{list-style:none;display:grid;gap:10px;margin-bottom:20px;flex:1}
+.cl li{display:flex;gap:10px;font-size:15.5px;color:var(--muted)}
+.cl li svg{width:19px;height:19px;flex-shrink:0;margin-top:3px;stroke:var(--green2);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cl .acts{display:flex;gap:8px;flex-wrap:wrap}
+.cl .acts .btn{flex:1;min-height:46px;padding:10px 14px;font-size:15px}
+@media(max-width:960px){.cl-grid{grid-template-columns:1fr}}
 
-/* ── ABOUT / DR ────────────────────────────────────────────── */
-.dr-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;}
-.dr-left{position:relative;}
-.dr-photo{
-  width:100%;aspect-ratio:3/4;
-  background:linear-gradient(160deg,var(--g) 0%,var(--g3) 100%);
-  border-radius:32px;overflow:hidden;
-  display:flex;align-items:flex-end;justify-content:center;
-  position:relative;
-}
-.dr-photo-placeholder{
-  font-size:120px;opacity:.15;
-  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-}
-.dr-photo-overlay{
-  position:absolute;bottom:0;left:0;right:0;
-  padding:32px;
-  background:linear-gradient(0deg,rgba(10,61,37,.95) 0%,transparent 100%);
-}
-.dr-photo-name{
-  font-family:'Cormorant Garamond',serif;
-  font-size:26px;font-weight:700;color:#fff;margin-bottom:4px;
-}
-.dr-photo-title{font-size:13px;color:rgba(255,255,255,.65);}
-.dr-badge-float{
-  position:absolute;top:28px;right:-20px;
-  background:#fff;border-radius:16px;padding:14px 18px;
-  box-shadow:0 12px 40px rgba(10,61,37,.15);
-  display:flex;align-items:center;gap:10px;
-}
-.dr-badge-float .icon{font-size:24px;}
-.dr-badge-float .label{font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.06em;}
-.dr-badge-float .value{font-size:13px;color:var(--muted);}
-.dr-right{padding-left:20px;}
-.dr-points{margin-top:36px;display:flex;flex-direction:column;gap:20px;}
-.dr-point{display:flex;gap:16px;padding:20px;border-radius:16px;border:1px solid transparent;transition:all .3s;}
-.dr-point:hover{background:var(--light);border-color:var(--border);}
-.dr-point-icon{
-  width:44px;height:44px;border-radius:12px;
-  background:var(--ga);display:flex;align-items:center;
-  justify-content:center;font-size:20px;flex-shrink:0;
-}
-.dr-point-title{font-size:15px;font-weight:600;color:var(--g);margin-bottom:4px;}
-.dr-point-desc{font-size:13px;color:var(--muted);line-height:1.6;}
+/* FAQ */
+.faq-grid{display:grid;grid-template-columns:.8fr 1.2fr;gap:56px}
+details{background:#fff;border:1px solid var(--line);border-radius:16px;margin-bottom:10px}
+summary{cursor:pointer;list-style:none;padding:18px 22px;font-weight:700;font-size:17px;display:flex;justify-content:space-between;gap:16px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";font-size:24px;line-height:1;color:var(--green2);transition:transform .2s}
+details[open] summary::after{transform:rotate(45deg)}
+details p{padding:0 22px 20px;color:var(--muted)}
+@media(max-width:900px){.faq-grid{grid-template-columns:1fr;gap:20px}}
 
-/* ── CLINICS ───────────────────────────────────────────────── */
-.clinics-bg{background:var(--g);padding:100px 8vw;}
-.clinics-bg .tag{color:#7eedb8;}
-.clinics-bg .tag::before{background:#7eedb8;}
-.clinics-bg .section-h{color:#fff;}
-.clinics-bg .section-sub{color:rgba(255,255,255,.6);}
-.clinics-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:60px;}
-.clinic-card{
-  border-radius:24px;overflow:hidden;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.1);
-  transition:all .4s;
-}
-.clinic-card:hover{
-  background:rgba(255,255,255,.1);
-  transform:translateY(-6px);
-  box-shadow:0 24px 60px rgba(0,0,0,.3);
-}
-.clinic-top{padding:32px 28px 24px;}
-.clinic-num{font-size:11px;color:rgba(255,255,255,.35);letter-spacing:.1em;text-transform:uppercase;margin-bottom:20px;}
-.clinic-name{
-  font-family:'Cormorant Garamond',serif;
-  font-size:28px;font-weight:700;color:#fff;margin-bottom:6px;
-}
-.clinic-area{font-size:13px;color:rgba(255,255,255,.5);}
-.clinic-divider{height:1px;background:rgba(255,255,255,.1);margin:0 28px;}
-.clinic-body{padding:24px 28px;}
-.clinic-info{display:flex;flex-direction:column;gap:12px;margin-bottom:24px;}
-.clinic-info-row{display:flex;gap:12px;align-items:flex-start;}
-.ci-icon{font-size:15px;opacity:.6;flex-shrink:0;margin-top:1px;}
-.ci-text{font-size:13px;color:rgba(255,255,255,.6);line-height:1.5;}
-.clinic-cta{
-  display:flex;align-items:center;justify-content:space-between;
-  background:rgba(255,255,255,.08);border-radius:12px;
-  padding:14px 18px;cursor:pointer;transition:all .3s;
-  border:1px solid rgba(255,255,255,.1);
-}
-.clinic-cta:hover{background:rgba(126,237,184,.15);border-color:rgba(126,237,184,.3);}
-.clinic-cta span{font-size:14px;font-weight:600;color:#fff;}
-.clinic-cta .arrow{font-size:18px;transition:transform .3s;}
-.clinic-cta:hover .arrow{transform:translateX(4px);}
+/* Booking */
+.book{background:var(--green);color:#fff}
+.book-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:56px;align-items:start}
+.book .eyebrow{color:#a7dcbf}
+.book h2{font-size:clamp(32px,4.5vw,46px);margin:10px 0 14px}
+.book .sub{opacity:.85;font-size:18px;margin-bottom:26px}
+.contact-list{display:grid;gap:12px}
+.contact-list a,.contact-list div{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:16px 18px}
+.contact-list svg{width:24px;height:24px;stroke:#fff;fill:none;stroke-width:1.8;flex-shrink:0}
+.contact-list b{display:block}
+.contact-list small{opacity:.75;font-size:14px}
+.form{background:#fff;color:var(--ink);border-radius:24px;padding:30px;box-shadow:0 30px 60px rgba(0,0,0,.2)}
+.form h3{font-size:24px;margin-bottom:4px}
+.form .hint{color:var(--muted);font-size:15px;margin-bottom:20px}
+.field{display:block;margin-bottom:14px}
+.field span{display:block;font-size:14px;font-weight:700;margin-bottom:6px}
+.field input,.field select,.field textarea{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;font-size:16px;background:#fff;min-height:50px;outline:none}
+.field textarea{min-height:84px;resize:vertical}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--green2);box-shadow:0 0 0 3px rgba(28,107,72,.14)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{position:relative}
+.chip input{position:absolute;opacity:0;pointer-events:none}
+.chip label{display:inline-block;padding:10px 16px;border:1.5px solid var(--line);border-radius:999px;font-weight:600;font-size:15px;cursor:pointer;background:#fff}
+.chip input:checked+label{background:var(--green);border-color:var(--green);color:#fff}
+.chip input:focus-visible+label{outline:3px solid var(--gold);outline-offset:2px}
+.consent{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--muted);margin:6px 0 18px}
+.consent input{width:20px;height:20px;margin-top:2px;flex-shrink:0;accent-color:var(--green)}
+.hp{position:absolute;left:-5000px;width:1px;height:1px;overflow:hidden}
+.err{background:#fdecea;color:#9b1c13;padding:10px 14px;border-radius:12px;margin-bottom:14px;font-size:15px}
+.done{text-align:center;padding:20px 6px}
+.done .tick{width:64px;height:64px;border-radius:50%;background:var(--mint);display:grid;place-items:center;margin:0 auto 16px}
+.done .tick svg{width:32px;height:32px;stroke:var(--green2);fill:none;stroke-width:2.5}
+.done h3{margin-bottom:8px}
+.done p{color:var(--muted);margin-bottom:18px}
+@media(max-width:960px){.book-grid{grid-template-columns:1fr;gap:32px}}
+@media(max-width:480px){.two{grid-template-columns:1fr}.form{padding:22px}}
 
-/* ── PROCESS ───────────────────────────────────────────────── */
-.process-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:64px;position:relative;}
-.process-grid::before{
-  content:'';position:absolute;top:40px;left:10%;right:10%;
-  height:1px;background:linear-gradient(90deg,transparent,var(--border) 20%,var(--border) 80%,transparent);
-}
-.process-step{text-align:center;padding:0 20px;position:relative;}
-.process-num{
-  width:80px;height:80px;border-radius:50%;
-  background:linear-gradient(135deg,var(--g),var(--g2));
-  display:flex;align-items:center;justify-content:center;
-  font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:700;color:#fff;
-  margin:0 auto 24px;
-  box-shadow:0 8px 24px rgba(10,61,37,.2);
-  position:relative;z-index:1;
-}
-.process-title{font-size:17px;font-weight:600;color:var(--g);margin-bottom:8px;}
-.process-desc{font-size:13px;color:var(--muted);line-height:1.6;}
+/* Footer */
+footer{background:#0a2a1d;color:rgba(255,255,255,.75);padding:56px 0 110px;font-size:15px}
+.f-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:32px;margin-bottom:36px}
+footer h4{color:#fff;font-size:15px;margin-bottom:12px}
+footer ul{list-style:none;display:grid;gap:8px}
+footer a:hover{color:#fff}
+footer .logo{color:#fff;margin-bottom:12px}
+.f-bottom{border-top:1px solid rgba(255,255,255,.12);padding-top:20px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:14px}
+@media(max-width:860px){.f-grid{grid-template-columns:1fr 1fr}}
+@media(min-width:961px){footer{padding-bottom:40px}}
 
-/* ── TESTIMONIALS ──────────────────────────────────────────── */
-.testi-bg{background:var(--light);}
-.testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:60px;}
-.testi-card{
-  background:var(--white);border-radius:24px;
-  padding:36px;border:1px solid var(--border);
-  transition:all .4s;position:relative;overflow:hidden;
-}
-.testi-card::before{
-  content:'"';
-  position:absolute;top:-10px;right:24px;
-  font-family:'Cormorant Garamond',serif;
-  font-size:120px;color:var(--ga);line-height:1;
-  pointer-events:none;
-}
-.testi-card:hover{transform:translateY(-4px);box-shadow:0 16px 48px rgba(10,61,37,.08);}
-.testi-stars{display:flex;gap:3px;margin-bottom:20px;}
-.star{width:16px;height:16px;background:var(--gold);clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);}
-.testi-text{
-  font-family:'Cormorant Garamond',serif;
-  font-size:19px;color:var(--ink);line-height:1.6;
-  margin-bottom:28px;font-style:italic;font-weight:500;
-}
-.testi-author{display:flex;align-items:center;gap:12px;}
-.testi-avatar{
-  width:44px;height:44px;border-radius:50%;
-  background:linear-gradient(135deg,var(--g),var(--g2));
-  display:flex;align-items:center;justify-content:center;
-  font-size:18px;color:#fff;font-weight:700;
-  font-family:'Cormorant Garamond',serif;
-  flex-shrink:0;
-}
-.testi-name{font-size:14px;font-weight:600;color:var(--g);}
-.testi-treatment{font-size:12px;color:var(--muted);margin-top:2px;}
+/* Mobile action bar */
+.actionbar{position:fixed;left:0;right:0;bottom:0;z-index:45;display:none;gap:8px;padding:10px 12px;padding-bottom:max(10px,env(safe-area-inset-bottom));background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
+.actionbar .btn{flex:1;min-height:50px;padding:10px 8px;font-size:15px;gap:7px}
+@media(max-width:960px){.actionbar{display:flex}}
 
-/* ── BOOKING SECTION ───────────────────────────────────────── */
-.book-section{background:var(--g);padding:100px 8vw;}
-.book-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:start;}
-.book-left .tag{color:#7eedb8;}
-.book-left .tag::before{background:#7eedb8;}
-.book-left .section-h{color:#fff;}
-.book-left .section-sub{color:rgba(255,255,255,.6);}
-.book-contact-items{margin-top:40px;display:flex;flex-direction:column;gap:16px;}
-.bci{
-  display:flex;align-items:center;gap:16px;
-  padding:18px 20px;border-radius:16px;
-  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
-  transition:all .3s;
-}
-.bci:hover{background:rgba(255,255,255,.09);}
-.bci-icon{
-  width:44px;height:44px;border-radius:12px;
-  background:rgba(126,237,184,.15);
-  display:flex;align-items:center;justify-content:center;font-size:20px;
-  flex-shrink:0;
-}
-.bci-label{font-size:11px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;}
-.bci-value{font-size:14px;font-weight:600;color:#fff;}
-
-.book-form{
-  background:var(--white);border-radius:28px;padding:44px;
-  box-shadow:0 24px 80px rgba(0,0,0,.25);
-}
-.book-form-title{
-  font-family:'Cormorant Garamond',serif;
-  font-size:28px;font-weight:700;color:var(--g);margin-bottom:6px;
-}
-.book-form-sub{font-size:14px;color:var(--muted);margin-bottom:32px;}
-.field{margin-bottom:18px;}
-.field label{
-  display:block;font-size:11px;font-weight:600;
-  color:var(--g);margin-bottom:7px;
-  text-transform:uppercase;letter-spacing:.07em;
-}
-.field input,.field select,.field textarea{
-  width:100%;border:1.5px solid var(--border);
-  border-radius:14px;padding:13px 16px;
-  font-size:14px;font-family:inherit;color:var(--ink);
-  outline:none;transition:all .2s;background:#fff;
-  -webkit-appearance:none;
-}
-.field input:focus,.field select:focus,.field textarea:focus{
-  border-color:var(--g2);
-  box-shadow:0 0 0 3px rgba(45,156,110,.1);
-}
-.field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.btn-book{
-  width:100%;background:linear-gradient(135deg,var(--g),var(--g2));
-  color:#fff;border:none;border-radius:99px;
-  padding:16px;font-size:15px;font-weight:700;
-  cursor:pointer;font-family:inherit;
-  transition:all .3s;margin-top:6px;
-  display:flex;align-items:center;justify-content:center;gap:10px;
-  letter-spacing:.01em;
-}
-.btn-book:hover{transform:translateY(-2px);box-shadow:0 12px 32px rgba(10,61,37,.3);}
-.book-note{text-align:center;margin-top:16px;font-size:12px;color:var(--muted);}
-
-/* ── FEATURES GRID ─────────────────────────────────────────── */
-.feat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin-top:60px;}
-.feat{
-  background:var(--light);border-radius:20px;padding:28px;
-  border:1px solid transparent;transition:all .3s;
-}
-.feat:hover{background:#fff;border-color:var(--border);transform:translateY(-3px);box-shadow:0 12px 32px rgba(10,61,37,.07);}
-.feat-icon{font-size:32px;margin-bottom:16px;}
-.feat-title{font-size:16px;font-weight:600;color:var(--g);margin-bottom:8px;}
-.feat-desc{font-size:13px;color:var(--muted);line-height:1.6;}
-
-/* ── FOOTER ────────────────────────────────────────────────── */
-footer{background:#040f08;padding:64px 8vw 32px;}
-.footer-top{display:grid;grid-template-columns:2.5fr 1fr 1fr 1fr;gap:48px;padding-bottom:48px;border-bottom:1px solid rgba(255,255,255,.08);}
-.footer-brand p{color:rgba(255,255,255,.45);font-size:14px;line-height:1.8;margin-top:16px;max-width:280px;}
-.footer-col h4{
-  font-size:11px;font-weight:600;letter-spacing:.1em;
-  text-transform:uppercase;color:rgba(255,255,255,.35);
-  margin-bottom:20px;
-}
-.footer-col ul{list-style:none;display:flex;flex-direction:column;gap:12px;}
-.footer-col li a{font-size:14px;color:rgba(255,255,255,.55);transition:color .2s;}
-.footer-col li a:hover{color:#fff;}
-.footer-bottom{display:flex;justify-content:space-between;align-items:center;padding-top:32px;}
-.footer-bottom p{font-size:12px;color:rgba(255,255,255,.25);}
-.footer-socials{display:flex;gap:12px;}
-.social-btn{
-  width:36px;height:36px;border-radius:99px;
-  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
-  display:flex;align-items:center;justify-content:center;
-  font-size:14px;color:rgba(255,255,255,.5);
-  transition:all .3s;cursor:pointer;
-}
-.social-btn:hover{background:var(--g2);color:#fff;border-color:var(--g2);}
-
-/* ── FLOATING ELEMENTS ─────────────────────────────────────── */
-.wa-btn{
-  position:fixed;bottom:28px;right:28px;z-index:90;
-  background:linear-gradient(135deg,#25d366,#128c7e);
-  color:#fff;border-radius:99px;
-  padding:14px 22px;font-size:14px;font-weight:700;
-  display:flex;align-items:center;gap:10px;
-  box-shadow:0 8px 32px rgba(37,211,102,.4);
-  transition:all .3s;text-decoration:none;
-  animation:float 3s ease-in-out infinite;
-}
-.wa-btn:hover{transform:translateY(-3px) scale(1.03);box-shadow:0 16px 48px rgba(37,211,102,.5);}
-@keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-5px);}}
-.scroll-top{
-  position:fixed;bottom:28px;left:28px;z-index:90;
-  width:46px;height:46px;background:var(--g);
-  color:#fff;border:none;border-radius:99px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:18px;cursor:pointer;opacity:0;
-  transition:all .3s;box-shadow:0 4px 16px rgba(10,61,37,.3);
-}
-.scroll-top.show{opacity:1;}
-.scroll-top:hover{background:var(--g2);transform:translateY(-2px);}
-
-/* ── SUCCESS STATE ─────────────────────────────────────────── */
-#bookingSuccess{display:none;text-align:center;padding:60px 40px;}
-#bookingSuccess .check-circle{
-  width:80px;height:80px;background:var(--ga);border-radius:50%;
-  display:flex;align-items:center;justify-content:center;
-  font-size:36px;margin:0 auto 24px;
-}
-#bookingSuccess h3{font-family:'Cormorant Garamond',serif;font-size:28px;color:var(--g);margin-bottom:8px;}
-#bookingSuccess p{color:var(--muted);font-size:15px;}
-
-/* ── ANIMATIONS ────────────────────────────────────────────── */
-.reveal{opacity:0;transform:translateY(32px);transition:all .8s cubic-bezier(.16,1,.3,1);}
-.reveal.visible{opacity:1;transform:translateY(0);}
-.reveal-left{opacity:0;transform:translateX(-40px);transition:all .8s cubic-bezier(.16,1,.3,1);}
-.reveal-left.visible{opacity:1;transform:translateX(0);}
-.reveal-right{opacity:0;transform:translateX(40px);transition:all .8s cubic-bezier(.16,1,.3,1);}
-.reveal-right.visible{opacity:1;transform:translateX(0);}
-.stagger-1{transition-delay:.1s !important;}
-.stagger-2{transition-delay:.2s !important;}
-.stagger-3{transition-delay:.3s !important;}
-.stagger-4{transition-delay:.4s !important;}
-
-/* ── RESPONSIVE ────────────────────────────────────────────── */
-@media(max-width:1024px){
-  .hero-grid,.dr-grid,.book-grid{grid-template-columns:1fr;gap:48px;}
-  .hero-panel{display:none;}
-  .dr-right{padding-left:0;}
-  .services-grid,.clinics-grid,.testi-grid{grid-template-columns:1fr 1fr;}
-  .feat-grid{grid-template-columns:1fr 1fr;}
-  .process-grid{grid-template-columns:1fr 1fr;gap:40px;}
-  .process-grid::before{display:none;}
-  .footer-top{grid-template-columns:1fr 1fr;}
-}
-@media(max-width:640px){
-  section{padding:72px 5vw;}
-  .services-grid,.testi-grid,.clinics-grid,.feat-grid{grid-template-columns:1fr;}
-  .process-grid{grid-template-columns:1fr;}
-  .hero{padding:0 5vw;}
-  .hero-stats{flex-direction:column;gap:24px;}
-  .hero-stat{border-right:none!important;border-bottom:1px solid rgba(255,255,255,.1);padding:0 0 20px!important;}
-  .hero-stat:last-child{border-bottom:none;}
-  .nav-links,.nav-book{display:none;}
-  .menu-btn{display:block;}
-  .field-row{grid-template-columns:1fr;}
-  .footer-top{grid-template-columns:1fr;}
-  .book-form{padding:28px;}
-  .footer-bottom{flex-direction:column;gap:16px;text-align:center;}
-}
+.reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}html{scroll-behavior:auto}.btn,.svc{transition:none}}
 </style>
 <script type="application/ld+json">
 {
@@ -792,615 +460,315 @@ footer{background:#040f08;padding:64px 8vw 32px;}
 </script>
 </head>
 <body>
+<a class="skip" href="#book">Skip to booking</a>
 
-<!-- Cursor -->
-<div class="cursor" id="cursor"></div>
-<div class="cursor-ring" id="cursorRing"></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="tooth" viewBox="0 0 24 24"><path d="M7 3c-3 0-4.5 2.5-4 5.5.5 2.5 1.5 4 2 7 .5 2 1 3.5 2 3.5s1.5-2 2-4.5C9.5 13 10.5 12 12 12s2.5 1 3 2.5c.5 2.5 1 4.5 2 4.5s1.5-1.5 2-3.5c.5-3 1.5-4.5 2-7 .5-3-1-5.5-4-5.5-2 0-3 1-5 1S9 3 7 3z"/></symbol>
+  <symbol id="phone" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2"/></symbol>
+  <symbol id="wa" viewBox="0 0 24 24"><path d="M4 20l1.3-4A8 8 0 1112 20a8 8 0 01-4-1z"/><path d="M9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 .8a4 4 0 01-1.8-1.8l.8-1-1-2z"/></symbol>
+  <symbol id="cal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0119 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+  <symbol id="cap" viewBox="0 0 24 24"><path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2.5 9 2.5 12 0v-5M22 9v6"/></symbol>
+  <symbol id="star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.2 9.4l6.1-.8z"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></symbol>
+  <symbol id="map" viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></symbol>
+  <symbol id="align" viewBox="0 0 24 24"><path d="M4 9c2-3 14-3 16 0M4 9v3c2 3 14 3 16 0V9"/><path d="M8 10.5v2M12 10.8v2.4M16 10.5v2"/></symbol>
+  <symbol id="spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/></symbol>
+  <symbol id="screw" viewBox="0 0 24 24"><path d="M8 3h8l-1 4H9z"/><path d="M10 7v12l2 2 2-2V7M10 10h4M10 13h4M10 16h4"/></symbol>
+  <symbol id="crown" viewBox="0 0 24 24"><path d="M4 8l4 4 4-6 4 6 4-4-2 10H6z"/><path d="M6 21h12"/></symbol>
+  <symbol id="drop" viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 11a6 6 0 01-12 0c0-4.5 6-11 6-11z"/></symbol>
+  <symbol id="child" viewBox="0 0 24 24"><circle cx="12" cy="6" r="3"/><path d="M7 21v-6l-2-3 4-2h6l4 2-2 3v6"/></symbol>
+  <symbol id="root" viewBox="0 0 24 24"><path d="M7 3c-3 0-4.5 2.5-4 5.5.5 2.5 1.5 4 2 7 .5 2 1 3.5 2 3.5s1.5-2 2-4.5C9.5 13 10.5 12 12 12s2.5 1 3 2.5c.5 2.5 1 4.5 2 4.5s1.5-1.5 2-3.5c.5-3 1.5-4.5 2-7 .5-3-1-5.5-4-5.5-2 0-3 1-5 1S9 3 7 3z"/><path d="M12 6v6"/></symbol>
+  <symbol id="pliers" viewBox="0 0 24 24"><path d="M14 4l6 6M10 8l6 6M4 20l7-7M14 4l-4 4M20 10l-4 4"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+</svg>
 
-<!-- NAV -->
-<nav id="nav">
-  <a href="#" class="logo">
-    <div class="logo-mark">🦷</div>
-    <span class="logo-text">Handral<span>Dentistry</span></span>
-  </a>
-  <ul class="nav-links">
-    <li><a href="#services">Services</a></li>
-    <li><a href="#about">About</a></li>
-    <li><a href="#clinics">Clinics</a></li>
-    <li><a href="#process">Process</a></li>
-    <li><a href="#booking">Book</a></li>
-  </ul>
-  <a href="#booking" class="nav-book">Book Appointment →</a>
-  <button class="menu-btn" onclick="toggleMobile()">☰</button>
-</nav>
+<header id="top">
+  <div class="wrap nav">
+    <a class="logo" href="#" aria-label="Handral Dentistry home"><span class="mark"><svg><use href="#tooth"/></svg></span><span>Handral Dentistry<small>Bagalkot · since 2012</small></span></a>
+    <nav class="links" aria-label="Main"><a href="#services">Treatments</a><a href="#doctor">Doctor</a><a href="#clinics">Clinics</a><a href="#faq">Questions</a></nav>
+    <a class="call" href="tel:+919886920792"><svg><use href="#phone"/></svg>98869 20792</a>
+    <a class="btn btn-primary" href="#book">Book appointment</a>
+    <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenu"><svg><use href="#menu"/></svg></button>
+  </div>
+  <nav class="mobile-menu" id="mobileMenu" aria-label="Mobile">
+    <a href="#services">Treatments</a><a href="#doctor">About the doctor</a><a href="#clinics">Our 3 clinics</a><a href="#faq">Common questions</a><a href="#book">Book appointment</a><a href="tel:+919886920792">Call 98869 20792</a>
+  </nav>
+</header>
 
-<!-- HERO -->
-<section class="hero" id="hero">
-  <div class="hero-orb"></div>
-  <div class="hero-orb2"></div>
-  <div class="hero-grid">
+<main>
+<!-- Hero -->
+<section class="hero">
+  <div class="wrap hero-grid">
     <div>
-      <div class="hero-eyebrow">Bagalkot's Premier Dental Specialists</div>
-      <h1>Crafting<br><em>Exceptional</em><br>Smiles Since 2012</h1>
-      <p class="hero-sub">Advanced orthodontics, Invisalign, implants and complete dental care — delivered with precision and warmth across three locations in Bagalkot.</p>
-      <div class="hero-actions">
-        <a href="#booking" class="btn-hero-primary">📅 Book Appointment</a>
-        <a href="https://wa.me/919886920792" class="btn-hero-ghost" target="_blank">💬 WhatsApp Us</a>
+      <div class="badge-row"><span class="badge"><i></i>MDS Orthodontist</span><span class="badge"><i></i>Invisalign certified</span><span class="badge"><i></i>3 clinics in Bagalkot</span></div>
+      <h1>Gentle, expert dental care for your <em>whole family</em>.</h1>
+      <p class="lede">From a first check-up to braces, Invisalign and implants, Dr. R.K. Handral and team explain everything clearly and treat you with care, at a clinic near you.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#book"><svg><use href="#cal"/></svg>Book appointment</a>
+        <a class="btn btn-wa" href="https://wa.me/919886920792?text=Hello%20Handral%20Dentistry%2C%20I%20would%20like%20to%20book%20an%20appointment." target="_blank" rel="noopener"><svg><use href="#wa"/></svg>WhatsApp us</a>
       </div>
-      <div class="hero-stats">
-        <div class="hero-stat">
-          <div class="hero-stat-n">12<span>+</span></div>
-          <div class="hero-stat-l">Years experience</div>
-        </div>
-        <div class="hero-stat">
-          <div class="hero-stat-n">5K<span>+</span></div>
-          <div class="hero-stat-l">Happy patients</div>
-        </div>
-        <div class="hero-stat">
-          <div class="hero-stat-n">3</div>
-          <div class="hero-stat-l">Clinic locations</div>
-        </div>
+      <div class="facts">
+        <div><b>12+</b><span>years of practice</span></div>
+        <div><b>3</b><span>clinics in Bagalkot</span></div>
+        <div><b>6 days</b><span>a week, 9 AM – 7 PM</span></div>
       </div>
     </div>
-    <div class="hero-panel">
-      <div class="hero-card-main">
-        <h3>Quick Appointment Request</h3>
-        <p>We'll call you back within 2 hours</p>
-        <div class="quick-form">
-          <input class="quick-input" placeholder="Your full name" id="hName"/>
-          <input class="quick-input" placeholder="Phone number" type="tel" id="hPhone"/>
-          <select class="quick-input" id="hClinic">
-            <option value="">Preferred clinic</option>
-            <option>Bagalkot Main</option>
-            <option>Vidyagiri</option>
-            <option>Navanagar</option>
-          </select>
-          <button class="btn-quick" onclick="heroBook()">Request Callback →</button>
-        </div>
+    <aside class="hero-card" aria-label="Our clinics">
+      <div class="smile"></div>
+      <h3>Pick the clinic nearest you</h3>
+      <p>Same doctor-led care and standards at every location.</p>
+      <div class="hc-list">
+        <div class="hc-item"><span class="dot" style="background:#4ade80"></span><div><b>Bagalkot Main</b><small>Opp. Dhanush Hospital</small></div><a href="#book" data-clinic="bagalkot">Book</a></div>
+        <div class="hc-item"><span class="dot" style="background:#60a5fa"></span><div><b>Vidyagiri</b><small>BVVS Complex</small></div><a href="#book" data-clinic="vidyagiri">Book</a></div>
+        <div class="hc-item"><span class="dot" style="background:#c4b5fd"></span><div><b>Navanagar</b><small>Opp. Income Tax Office</small></div><a href="#book" data-clinic="navanagar">Book</a></div>
       </div>
-      <div class="hero-badges">
-        <div class="hero-badge">
-          <span class="badge-icon">✦</span>
-          <span class="badge-text">Certified<br>Invisalign Provider</span>
-        </div>
-        <div class="hero-badge">
-          <span class="badge-icon">🎓</span>
-          <span class="badge-text">MDS<br>Orthodontist</span>
-        </div>
-        <div class="hero-badge">
-          <span class="badge-icon">⭐</span>
-          <span class="badge-text">Top Rated<br>in Bagalkot</span>
-        </div>
-      </div>
-    </div>
+      <div class="hc-hours"><svg><use href="#clock"/></svg>Mon–Sat, 9:00 AM – 7:00 PM · same-day slots for pain</div>
+    </aside>
   </div>
 </section>
 
-<!-- MARQUEE -->
-<div class="marquee-wrap">
-  <div class="marquee">
-    <span class="marquee-item">Orthodontics <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Invisalign <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Dental Implants <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Root Canal <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Smile Design <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Crowns & Bridges <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Paediatric Dentistry <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Scaling & Polishing <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Orthodontics <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Invisalign <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Dental Implants <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Root Canal <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Smile Design <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Crowns & Bridges <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Paediatric Dentistry <span class="marquee-sep">◆</span></span>
-    <span class="marquee-item">Scaling & Polishing <span class="marquee-sep">◆</span></span>
+<div class="trust">
+  <div class="wrap">
+    <div><svg><use href="#cap"/></svg>Specialist MDS in Orthodontics</div>
+    <div><svg><use href="#align"/></svg>Certified Invisalign provider</div>
+    <div><svg><use href="#shield"/></svg>Sterilised instruments, every patient</div>
+    <div><svg><use href="#clock"/></svg>Same-day care for dental pain</div>
   </div>
 </div>
 
-<!-- WHY US -->
-<section id="why">
-  <div class="sh-center reveal">
-    <div class="tag">Why Choose Us</div>
-    <h2 class="section-h">Dentistry Redefined</h2>
-    <p class="section-sub">We combine specialist training, modern technology and genuine care to deliver exceptional outcomes for every patient.</p>
-  </div>
-  <div class="feat-grid" style="margin-top:60px">
-    <div class="feat reveal stagger-1">
-      <div class="feat-icon">🎯</div>
-      <div class="feat-title">Specialist-Led Care</div>
-      <div class="feat-desc">Led by Dr. R.K. Handral, MDS Orthodontics — not a general dentist, but a trained specialist.</div>
-    </div>
-    <div class="feat reveal stagger-2">
-      <div class="feat-icon">✦</div>
-      <div class="feat-title">Certified Invisalign</div>
-      <div class="feat-desc">Officially certified to provide Invisalign clear aligner treatment — proven results, no metal braces.</div>
-    </div>
-    <div class="feat reveal stagger-3">
-      <div class="feat-icon">💻</div>
-      <div class="feat-title">Modern Technology</div>
-      <div class="feat-desc">Digital X-rays, AI-assisted analysis and latest orthodontic systems for precise, comfortable treatment.</div>
-    </div>
-    <div class="feat reveal stagger-4">
-      <div class="feat-icon">🏥</div>
-      <div class="feat-title">3 Convenient Clinics</div>
-      <div class="feat-desc">Bagalkot Main, Vidyagiri and Navanagar — always one near you with consistent quality across all locations.</div>
+<!-- Services -->
+<section id="services">
+  <div class="wrap">
+    <div class="sec-h reveal"><span class="eyebrow">Treatments</span><h2>Everything your smile needs, in one place</h2><p>Not sure what you need? Book a check-up and we'll explain your options and costs before any treatment starts.</p></div>
+    <div class="svc-grid">
+      <article class="svc feature reveal"><div class="ic"><svg><use href="#align"/></svg></div><h3>Braces & orthodontics</h3><p>Metal, ceramic and self-ligating braces for children, teens and adults, planned by a specialist orthodontist.</p><a href="#book" data-tx="Orthodontics / Braces">Book a braces consultation →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#spark"/></svg></div><h3>Invisalign clear aligners</h3><p>Nearly invisible, removable aligners. Straighten your teeth without metal, from a certified provider.</p><a href="#book" data-tx="Invisalign">Ask about Invisalign →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#screw"/></svg></div><h3>Dental implants</h3><p>Fixed, natural-looking replacements for missing teeth with titanium implants and zirconia or PFM crowns.</p><a href="#book" data-tx="Dental Implant">Book →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#root"/></svg></div><h3>Root canal treatment</h3><p>Save a painful tooth. Single and multi-sitting RCT with modern techniques and proper numbing.</p><a href="#book" data-tx="Root Canal (RCT)">Book →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#crown"/></svg></div><h3>Crowns & bridges</h3><p>Zirconia, PFM and metal crowns that look and feel like your own teeth.</p><a href="#book" data-tx="Crown / Bridge">Book →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#star"/></svg></div><h3>Smile design & whitening</h3><p>Veneers, whitening and bonding to fix stains, gaps and chipped teeth.</p><a href="#book" data-tx="Smile Design / Whitening">Book →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#drop"/></svg></div><h3>Cleaning & gum care</h3><p>Scaling, polishing, deep cleaning and gum treatment for fresh breath and healthy gums.</p><a href="#book" data-tx="Scaling & Cleaning">Book →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#child"/></svg></div><h3>Children's dentistry</h3><p>Patient, friendly care for kids: fluoride, fillings, pulpectomy, SSC crowns and space maintainers.</p><a href="#book" data-tx="Paediatric Dentistry">Book →</a></article>
+      <article class="svc reveal"><div class="ic"><svg><use href="#pliers"/></svg></div><h3>Extractions & wisdom teeth</h3><p>Simple and surgical extractions, including wisdom teeth, with clear aftercare advice.</p><a href="#book" data-tx="Tooth Extraction">Book →</a></article>
     </div>
   </div>
 </section>
 
-<!-- SERVICES -->
-<section class="services-bg" id="services">
-  <div class="sh-center reveal">
-    <div class="tag">Our Services</div>
-    <h2 class="section-h">Complete Dental Care</h2>
-    <p class="section-sub">From routine cleaning to complex orthodontic treatment — everything your smile needs, under one roof.</p>
-  </div>
-  <div class="services-grid">
-    <div class="svc reveal stagger-1">
-      <div class="svc-num">01</div>
-      <span class="svc-icon">😁</span>
-      <div class="svc-name">Orthodontics & Braces</div>
-      <div class="svc-desc">Metal, ceramic and self-ligating braces. Expert alignment for children, teenagers and adults.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-2">
-      <div class="svc-num">02</div>
-      <span class="svc-icon">✨</span>
-      <div class="svc-name">Invisalign</div>
-      <div class="svc-desc">Clear, removable aligners. Certified provider — straighten your teeth without anyone noticing.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-3">
-      <div class="svc-num">03</div>
-      <span class="svc-icon">🔩</span>
-      <div class="svc-name">Dental Implants</div>
-      <div class="svc-desc">Permanent tooth replacement with titanium implants and aesthetic zirconia or PFM crowns.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-1">
-      <div class="svc-num">04</div>
-      <span class="svc-icon">🦷</span>
-      <div class="svc-name">Root Canal Treatment</div>
-      <div class="svc-desc">Painless single and multi-sitting RCT. Save your natural tooth with modern endodontic techniques.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-2">
-      <div class="svc-num">05</div>
-      <span class="svc-icon">👑</span>
-      <div class="svc-name">Crowns & Bridges</div>
-      <div class="svc-desc">Zirconia, PFM and metal crowns. Durable, aesthetic restorations that look and feel completely natural.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-3">
-      <div class="svc-num">06</div>
-      <span class="svc-icon">💎</span>
-      <div class="svc-name">Smile Design</div>
-      <div class="svc-desc">Veneers, teeth whitening and composite bonding — a bespoke smile makeover designed just for you.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-1">
-      <div class="svc-num">07</div>
-      <span class="svc-icon">🧼</span>
-      <div class="svc-name">Scaling & Periodontics</div>
-      <div class="svc-desc">Professional cleaning, deep scaling, root planing and gum surgery to keep your gums healthy.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-2">
-      <div class="svc-num">08</div>
-      <span class="svc-icon">🧒</span>
-      <div class="svc-name">Paediatric Dentistry</div>
-      <div class="svc-desc">Child-friendly dental care. SSC crowns, pulpectomy, fluoride treatment and space maintainers.</div>
-      <div class="svc-arrow">→</div>
-    </div>
-    <div class="svc reveal stagger-3">
-      <div class="svc-num">09</div>
-      <span class="svc-icon">🪥</span>
-      <div class="svc-name">Extractions & Surgery</div>
-      <div class="svc-desc">Simple and surgical extractions, wisdom tooth removal and minor oral surgeries with minimal discomfort.</div>
-      <div class="svc-arrow">→</div>
+<!-- Nervous patients / first visit -->
+<section class="calm">
+  <div class="wrap calm-grid">
+    <div class="reveal"><span class="eyebrow">Nervous about the dentist?</span><h2 style="font-size:clamp(30px,4.5vw,44px);margin:10px 0 14px">You're in calm, careful hands</h2>
+      <p style="color:var(--muted);font-size:18px;margin-bottom:22px">Many of our patients were scared of dentists before they came to us. We go at your pace, explain each step before we start, and stop whenever you raise your hand.</p>
+      <a class="btn btn-primary" href="#book">Book your first visit</a></div>
+    <div class="calm-list reveal">
+      <div class="calm-item"><span class="n">1</span><div><b>Book in a minute</b><p>Use the form below or WhatsApp us. We call you back to confirm a time that suits you.</p></div></div>
+      <div class="calm-item"><span class="n">2</span><div><b>Check-up and clear advice</b><p>The doctor examines your teeth, takes an X-ray if needed and explains your options in plain words.</p></div></div>
+      <div class="calm-item"><span class="n">3</span><div><b>Know the cost first</b><p>You get the treatment plan and cost before anything begins. No surprises, no pressure.</p></div></div>
+      <div class="calm-item"><span class="n">4</span><div><b>Comfortable treatment and follow-up</b><p>Modern equipment, proper numbing and a reminder for your next visit on WhatsApp.</p></div></div>
     </div>
   </div>
 </section>
 
-<!-- ABOUT -->
-<section id="about">
-  <div class="dr-grid">
-    <div class="dr-left reveal-left">
-      <div class="dr-photo">
-        <div class="dr-photo-placeholder">🦷</div>
-        <div class="dr-photo-overlay">
-          <div class="dr-photo-name">Dr. R.K. Handral</div>
-          <div class="dr-photo-title">MDS Orthodontics · Invisalign Certified</div>
-        </div>
-      </div>
-      <div class="dr-badge-float">
-        <span class="icon">✦</span>
-        <div>
-          <div class="label">Invisalign</div>
-          <div class="value">Certified Provider</div>
-        </div>
-      </div>
-    </div>
-    <div class="dr-right reveal-right">
-      <div class="tag">About the Doctor</div>
-      <h2 class="section-h">Specialist You Can Trust</h2>
-      <p class="section-sub">Dr. Ravichandra K. Handral brings over 12 years of specialist orthodontic expertise to every patient — combining precision, artistry and compassionate care.</p>
-      <div class="dr-points">
-        <div class="dr-point">
-          <div class="dr-point-icon">🎓</div>
-          <div>
-            <div class="dr-point-title">MDS Orthodontics</div>
-            <div class="dr-point-desc">Post-graduate specialist degree — trained specifically in orthodontics, not a general practitioner.</div>
-          </div>
-        </div>
-        <div class="dr-point">
-          <div class="dr-point-icon">✦</div>
-          <div>
-            <div class="dr-point-title">Certified Invisalign Provider</div>
-            <div class="dr-point-desc">Officially trained and certified to provide Invisalign clear aligner treatment with proven results.</div>
-          </div>
-        </div>
-        <div class="dr-point">
-          <div class="dr-point-icon">💻</div>
-          <div>
-            <div class="dr-point-title">AI-Assisted Diagnosis</div>
-            <div class="dr-point-desc">Uses AI-powered X-ray analysis and digital imaging for precise treatment planning.</div>
-          </div>
-        </div>
-        <div class="dr-point">
-          <div class="dr-point-icon">❤️</div>
-          <div>
-            <div class="dr-point-title">Patient-First Philosophy</div>
-            <div class="dr-point-desc">Every treatment plan is personalised — no rush, no pressure, just honest expert advice.</div>
-          </div>
-        </div>
+<!-- Doctor -->
+<section id="doctor">
+  <div class="wrap doc-grid">
+    <div class="doc-card reveal"><span class="pill">MDS · Orthodontics</span><div class="big"><svg viewBox="0 0 24 24"><use href="#tooth"/></svg></div><h3>Dr. R.K. Handral</h3><p>Orthodontist · Certified Invisalign provider</p></div>
+    <div class="reveal">
+      <span class="eyebrow">Your doctor</span>
+      <h2 style="font-size:clamp(30px,4.5vw,44px);margin:10px 0 14px">A specialist who takes time to explain</h2>
+      <p style="color:var(--muted);font-size:18px">Dr. Ravichandra K. Handral has over 12 years of experience as a specialist orthodontist. He leads a team of dentists and visiting specialists across our three Bagalkot clinics, so whether it's braces, a root canal or a child's first check-up, you get careful, honest treatment.</p>
+      <div class="creds">
+        <div class="cred"><b>MDS in Orthodontics</b><p>Post-graduate specialist training in straightening teeth and jaws.</p></div>
+        <div class="cred"><b>Certified Invisalign provider</b><p>Trained and certified for clear aligner treatment.</p></div>
+        <div class="cred"><b>Digital X-rays & planning</b><p>Precise diagnosis and treatment plans you can see.</p></div>
+        <div class="cred"><b>Patient-first approach</b><p>Personal treatment plans, never rushed, never pushed.</p></div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- CLINICS -->
-<section class="clinics-bg" id="clinics">
-  <div class="sh-center reveal">
-    <div class="tag">Our Locations</div>
-    <h2 class="section-h">Three Clinics, One Standard of Excellence</h2>
-    <p class="section-sub" style="color:rgba(255,255,255,.6)">Wherever you are in Bagalkot, there's a Handral Dentistry clinic close by — same quality, same care.</p>
-  </div>
-  <div class="clinics-grid">
-    <div class="clinic-card reveal stagger-1">
-      <div class="clinic-top">
-        <div class="clinic-num">Location 01</div>
-        <div class="clinic-name">Bagalkot Main</div>
-        <div class="clinic-area">Primary Clinic · All Specialties</div>
-      </div>
-      <div class="clinic-divider"></div>
-      <div class="clinic-body">
-        <div class="clinic-info">
-          <div class="clinic-info-row"><span class="ci-icon">📍</span><span class="ci-text">Opp. Dhanush Hospital, Bagalkot — 587101</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">📞</span><span class="ci-text">+91 98869 20792</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">🕐</span><span class="ci-text">Mon–Sat · 9:00 AM – 7:00 PM</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">💺</span><span class="ci-text">4 chairs · Full specialist services</span></div>
-        </div>
-        <a href="#booking" class="clinic-cta"><span>Book at Bagalkot</span><span class="arrow">→</span></a>
-      </div>
-    </div>
-    <div class="clinic-card reveal stagger-2">
-      <div class="clinic-top">
-        <div class="clinic-num">Location 02</div>
-        <div class="clinic-name">Handral Dental Care</div>
-        <div class="clinic-area">Vidyagiri · BVVS Complex</div>
-      </div>
-      <div class="clinic-divider"></div>
-      <div class="clinic-body">
-        <div class="clinic-info">
-          <div class="clinic-info-row"><span class="ci-icon">📍</span><span class="ci-text">Shop No. 31, BVVS Complex, Vidyagiri — 587102</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">📞</span><span class="ci-text">+91 98869 20792</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">🕐</span><span class="ci-text">Mon–Sat · 9:00 AM – 7:00 PM</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">💺</span><span class="ci-text">3 chairs · General & Ortho</span></div>
-        </div>
-        <a href="#booking" class="clinic-cta"><span>Book at Vidyagiri</span><span class="arrow">→</span></a>
-      </div>
-    </div>
-    <div class="clinic-card reveal stagger-3">
-      <div class="clinic-top">
-        <div class="clinic-num">Location 03</div>
-        <div class="clinic-name">Navanagar</div>
-        <div class="clinic-area">Opp. Income Tax Office</div>
-      </div>
-      <div class="clinic-divider"></div>
-      <div class="clinic-body">
-        <div class="clinic-info">
-          <div class="clinic-info-row"><span class="ci-icon">📍</span><span class="ci-text">Sector 33, Opp. Income Tax Office, Navanagar — 587103</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">📞</span><span class="ci-text">+91 98869 20792</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">🕐</span><span class="ci-text">Mon–Sat · 9:00 AM – 7:00 PM</span></div>
-          <div class="clinic-info-row"><span class="ci-icon">💺</span><span class="ci-text">2 chairs · General & Ortho</span></div>
-        </div>
-        <a href="#booking" class="clinic-cta"><span>Book at Navanagar</span><span class="arrow">→</span></a>
-      </div>
+<!-- Clinics -->
+<section id="clinics" class="clinics">
+  <div class="wrap">
+    <div class="sec-h reveal"><span class="eyebrow">Our clinics</span><h2>Three clinics across Bagalkot</h2><p>Open Monday to Saturday, 9:00 AM – 7:00 PM. Call one number for all three.</p></div>
+    <div class="cl-grid">
+      <article class="cl reveal"><span class="tag"><i style="background:#16a34a"></i>Main clinic</span><h3>Bagalkot Main</h3>
+        <ul><li><svg><use href="#pin"/></svg>Opp. Dhanush Hospital, Bagalkot 587101</li><li><svg><use href="#clock"/></svg>Mon–Sat · 9:00 AM – 7:00 PM</li><li><svg><use href="#tooth"/></svg>All treatments, including specialist care</li></ul>
+        <div class="acts"><a class="btn btn-primary" href="#book" data-clinic="bagalkot">Book here</a><a class="btn btn-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=Handral+Dentistry+Opp+Dhanush+Hospital+Bagalkot"><svg><use href="#map"/></svg>Directions</a></div></article>
+      <article class="cl reveal"><span class="tag"><i style="background:#2563eb"></i>Handral Dental Care</span><h3>Vidyagiri</h3>
+        <ul><li><svg><use href="#pin"/></svg>Shop No. 31, BVVS Complex, Vidyagiri 587102</li><li><svg><use href="#clock"/></svg>Mon–Sat · 9:00 AM – 7:00 PM</li><li><svg><use href="#tooth"/></svg>General dentistry & orthodontics</li></ul>
+        <div class="acts"><a class="btn btn-primary" href="#book" data-clinic="vidyagiri">Book here</a><a class="btn btn-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=Handral+Dental+Care+BVVS+Complex+Vidyagiri+Bagalkot"><svg><use href="#map"/></svg>Directions</a></div></article>
+      <article class="cl reveal"><span class="tag"><i style="background:#7c3aed"></i>Navanagar</span><h3>Navanagar</h3>
+        <ul><li><svg><use href="#pin"/></svg>Sector 33, Opp. Income Tax Office, Navanagar 587103</li><li><svg><use href="#clock"/></svg>Mon–Sat · 9:00 AM – 7:00 PM</li><li><svg><use href="#tooth"/></svg>General dentistry & orthodontics</li></ul>
+        <div class="acts"><a class="btn btn-primary" href="#book" data-clinic="navanagar">Book here</a><a class="btn btn-ghost" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=Handral+Dentistry+Sector+33+Navanagar+Bagalkot"><svg><use href="#map"/></svg>Directions</a></div></article>
     </div>
   </div>
 </section>
 
-<!-- PROCESS -->
-<section id="process">
-  <div class="sh-center reveal">
-    <div class="tag">How It Works</div>
-    <h2 class="section-h">Your Journey to a Better Smile</h2>
-    <p class="section-sub">Simple, stress-free and transparent — from your first call to your final result.</p>
-  </div>
-  <div class="process-grid">
-    <div class="process-step reveal stagger-1">
-      <div class="process-num">1</div>
-      <div class="process-title">Book Online</div>
-      <div class="process-desc">Fill our quick form or WhatsApp us. We confirm your appointment within 2 hours.</div>
-    </div>
-    <div class="process-step reveal stagger-2">
-      <div class="process-num">2</div>
-      <div class="process-title">Consultation</div>
-      <div class="process-desc">Dr. Handral examines you thoroughly with digital X-rays and creates a personalised treatment plan.</div>
-    </div>
-    <div class="process-step reveal stagger-3">
-      <div class="process-num">3</div>
-      <div class="process-title">Treatment</div>
-      <div class="process-desc">Comfortable, precise treatment using modern equipment. We explain every step clearly.</div>
-    </div>
-    <div class="process-step reveal stagger-4">
-      <div class="process-num">4</div>
-      <div class="process-title">Smile & Maintain</div>
-      <div class="process-desc">Walk out with a confident smile. We provide aftercare guidance and follow-up support.</div>
+<!-- FAQ -->
+<section id="faq">
+  <div class="wrap faq-grid">
+    <div class="reveal"><span class="eyebrow">Common questions</span><h2 style="font-size:clamp(30px,4.5vw,44px);margin:10px 0 14px">Good to know before you come</h2><p style="color:var(--muted)">Anything else? Call or WhatsApp <a href="tel:+919886920792" style="color:var(--green2);font-weight:700">98869 20792</a>.</p></div>
+    <div class="reveal">
+      <details><summary>Do I need an appointment?</summary><p>Appointments help us keep waiting short, so please book online, by phone or on WhatsApp. If you are in pain, come in. We keep same-day slots for urgent cases.</p></details>
+      <details><summary>Will the treatment hurt?</summary><p>We numb the area properly before any procedure and check you are comfortable throughout. Most patients are surprised how easy a root canal or filling feels today.</p></details>
+      <details><summary>How long do braces or aligners take?</summary><p>It depends on your teeth. Many cases take between one and two years. At your consultation the doctor checks your bite and tells you the expected time and cost for your case.</p></details>
+      <details><summary>Will I know the cost before treatment?</summary><p>Yes. After the check-up you get a treatment plan with the cost of each step before we start anything.</p></details>
+      <details><summary>What age should my child first see a dentist?</summary><p>Around the time the first teeth come in, and at the latest by age 2–3. Early visits catch problems early and help children feel at ease with the dentist.</p></details>
+      <details><summary>Which clinic should I go to?</summary><p>Whichever is closest. All three clinics follow the same standards. Specialist treatments may be planned at the Bagalkot Main clinic; we will tell you when you book.</p></details>
     </div>
   </div>
 </section>
 
-<!-- TESTIMONIALS -->
-<section class="testi-bg" id="testimonials">
-  <div class="sh-center reveal">
-    <div class="tag">Patient Stories</div>
-    <h2 class="section-h">Words from Our Patients</h2>
-    <p class="section-sub">Real experiences from the people who trust us with their smiles.</p>
-  </div>
-  <div class="testi-grid">
-    <div class="testi-card reveal stagger-1">
-      <div class="testi-stars"><span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span></div>
-      <div class="testi-text">"My Invisalign journey with Dr. Handral was absolutely seamless. The result exceeded every expectation. I couldn't be happier with my smile."</div>
-      <div class="testi-author">
-        <div class="testi-avatar">P</div>
-        <div><div class="testi-name">Priya Kulkarni</div><div class="testi-treatment">Invisalign · Navanagar Clinic</div></div>
+<!-- Booking -->
+<section id="book" class="book">
+  <div class="wrap book-grid">
+    <div>
+      <span class="eyebrow">Book an appointment</span>
+      <h2>Book your visit in one minute</h2>
+      <p class="sub">Send your details and our team will call you back during clinic hours to confirm the time.</p>
+      <div class="contact-list">
+        <a href="tel:+919886920792"><svg><use href="#phone"/></svg><span><b>Call 98869 20792</b><small>For all three clinics</small></span></a>
+        <a href="https://wa.me/919886920792?text=Hello%20Handral%20Dentistry%2C%20I%20would%20like%20to%20book%20an%20appointment." target="_blank" rel="noopener"><svg><use href="#wa"/></svg><span><b>WhatsApp us</b><small>Quick reply during clinic hours</small></span></a>
+        <div><svg><use href="#clock"/></svg><span><b>Mon–Sat · 9:00 AM – 7:00 PM</b><small>Same-day slots for dental pain</small></span></div>
       </div>
     </div>
-    <div class="testi-card reveal stagger-2">
-      <div class="testi-stars"><span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span></div>
-      <div class="testi-text">"I was terrified of dentists. Dr. Handral made my root canal completely painless. Couldn't believe how comfortable the entire experience was."</div>
-      <div class="testi-author">
-        <div class="testi-avatar">R</div>
-        <div><div class="testi-name">Ramesh Patil</div><div class="testi-treatment">RCT · Bagalkot Main Clinic</div></div>
-      </div>
-    </div>
-    <div class="testi-card reveal stagger-3">
-      <div class="testi-stars"><span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span></div>
-      <div class="testi-text">"My daughter's braces treatment was handled so patiently and professionally. She genuinely looks forward to her clinic visits. Wonderful team."</div>
-      <div class="testi-author">
-        <div class="testi-avatar">S</div>
-        <div><div class="testi-name">Sunita Hiremath</div><div class="testi-treatment">Braces · Vidyagiri Clinic</div></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- BOOKING -->
-<section class="book-section" id="booking">
-  <div class="book-grid">
-    <div class="book-left">
-      <div class="tag reveal">Book an Appointment</div>
-      <h2 class="section-h reveal">Ready for Your Best Smile?</h2>
-      <p class="section-sub reveal">Fill the form and we'll confirm your appointment within 2 hours. Same-day slots available for urgent cases.</p>
-      <div class="book-contact-items">
-        <a href="tel:+919886920792" class="bci reveal stagger-1">
-          <div class="bci-icon">📞</div>
-          <div><div class="bci-label">Call Directly</div><div class="bci-value">+91 98869 20792</div></div>
-        </a>
-        <a href="https://wa.me/919886920792" class="bci reveal stagger-2" target="_blank">
-          <div class="bci-icon">💬</div>
-          <div><div class="bci-label">WhatsApp</div><div class="bci-value">Message anytime — quick response</div></div>
-        </a>
-        <div class="bci reveal stagger-3">
-          <div class="bci-icon">🕐</div>
-          <div><div class="bci-label">Clinic Hours</div><div class="bci-value">Mon–Sat · 9:00 AM – 7:00 PM</div></div>
+    <div class="form" id="formCard">
+      <form id="bookForm" novalidate>
+        <h3>Request an appointment</h3>
+        <p class="hint">Takes under a minute. Fields marked * are needed.</p>
+        <div class="err" id="formErr" hidden></div>
+        <div class="two">
+          <label class="field"><span>Your name *</span><input id="bName" name="name" autocomplete="name" required/></label>
+          <label class="field"><span>Mobile number *</span><input id="bPhone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="10-digit number" required/></label>
         </div>
-        <div class="bci reveal stagger-4">
-          <div class="bci-icon">⚡</div>
-          <div><div class="bci-label">Emergency</div><div class="bci-value">Same-day appointments for urgent cases</div></div>
+        <div class="field"><span>Clinic *</span>
+          <div class="chips" role="radiogroup" aria-label="Clinic">
+            <div class="chip"><input type="radio" name="clinic" id="c1" value="bagalkot" checked/><label for="c1">Bagalkot Main</label></div>
+            <div class="chip"><input type="radio" name="clinic" id="c2" value="vidyagiri"/><label for="c2">Vidyagiri</label></div>
+            <div class="chip"><input type="radio" name="clinic" id="c3" value="navanagar"/><label for="c3">Navanagar</label></div>
+          </div></div>
+        <div class="two">
+          <label class="field"><span>Preferred day</span><input id="bDate" name="date" type="date"/></label>
+          <label class="field"><span>Preferred time</span><select id="bTime" name="time"><option value="">Any time</option><option>Morning (9–12)</option><option>Afternoon (12–4)</option><option>Evening (4–7)</option></select></label>
         </div>
-      </div>
-    </div>
-    <div class="reveal-right">
-      <div class="book-form" id="bookFormWrap">
-        <div class="book-form-title">Request an Appointment</div>
-        <div class="book-form-sub">We'll call you back to confirm within 2 hours.</div>
-        <form onsubmit="submitBook(event)">
-          <div class="field-row">
-            <div class="field"><label>Full Name *</label><input type="text" id="bName" placeholder="Your name" required/></div>
-            <div class="field"><label>Phone *</label><input type="tel" id="bPhone" placeholder="+91 XXXXX XXXXX" required/></div>
-          </div>
-          <div class="field"><label>Email (optional)</label><input type="email" id="bEmail" placeholder="your@email.com"/></div>
-          <div class="field-row">
-            <div class="field"><label>Preferred Clinic *</label>
-              <select id="bClinic" required>
-                <option value="">Choose clinic</option>
-                <option>Bagalkot Main</option>
-                <option>Vidyagiri</option>
-                <option>Navanagar</option>
-              </select>
-            </div>
-            <div class="field"><label>Preferred Date</label><input type="date" id="bDate"/></div>
-          </div>
-          <div class="field"><label>Treatment Needed</label>
-            <select id="bTx">
-              <option>Consultation / Check-up</option>
-              <option>Orthodontics / Braces</option>
-              <option>Invisalign</option>
-              <option>Root Canal (RCT)</option>
-              <option>Dental Implant</option>
-              <option>Crown / Bridge</option>
-              <option>Scaling & Cleaning</option>
-              <option>Tooth Extraction</option>
-              <option>Smile Design / Whitening</option>
-              <option>Paediatric Dentistry</option>
-              <option>Other / Not Sure</option>
-            </select>
-          </div>
-          <div class="field"><label>Message (optional)</label>
-            <textarea id="bMsg" rows="3" placeholder="Any specific concerns or questions..." style="resize:none;"></textarea>
-          </div>
-          <button type="submit" class="btn-book">📅 Request Appointment →</button>
-        </form>
-        <div class="book-note">🔒 Your information is private and secure</div>
-      </div>
-      <div id="bookingSuccess">
-        <div class="check-circle">✅</div>
-        <h3>Appointment Requested!</h3>
-        <p>Our team will call you within 2 hours to confirm.<br>Thank you for choosing Handral Dentistry.</p>
-        <a href="https://wa.me/919886920792" target="_blank" style="display:inline-flex;align-items:center;gap:8px;margin-top:24px;background:#25d366;color:#fff;padding:13px 24px;border-radius:99px;font-weight:700;font-size:14px;">💬 WhatsApp for faster response</a>
+        <label class="field"><span>What do you need?</span><select id="bTx" name="treatment">
+          <option>Check-up / consultation</option><option>Tooth pain</option><option>Orthodontics / Braces</option><option>Invisalign</option><option>Root Canal (RCT)</option><option>Dental Implant</option><option>Crown / Bridge</option><option>Scaling & Cleaning</option><option>Tooth Extraction</option><option>Smile Design / Whitening</option><option>Paediatric Dentistry</option><option>Other / Not sure</option></select></label>
+        <label class="field"><span>Anything we should know? (optional)</span><textarea id="bMsg" name="message" maxlength="500"></textarea></label>
+        <div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"/></label></div>
+        <label class="consent"><input type="checkbox" id="bConsent" name="consent"/><span>I agree that Handral Dentistry may call me or message me on WhatsApp about this appointment. My details are used only for my dental care (see <a href="#privacy" style="text-decoration:underline">privacy</a>).</span></label>
+        <button class="btn btn-primary" type="submit" id="bSubmit" style="width:100%">Request appointment</button>
+      </form>
+      <div class="done" id="formDone" hidden>
+        <div class="tick"><svg viewBox="0 0 24 24"><use href="#check"/></svg></div>
+        <h3>Request received</h3>
+        <p id="doneText">Thank you! Our team will call you during clinic hours to confirm your appointment.</p>
+        <a class="btn btn-wa" id="doneWa" target="_blank" rel="noopener" href="#"><svg><use href="#wa"/></svg>Also send on WhatsApp</a>
       </div>
     </div>
   </div>
 </section>
+</main>
 
-<!-- FOOTER -->
-<footer id="contact">
-  <div class="footer-top">
-    <div class="footer-brand">
-      <div class="logo">
-        <div class="logo-mark">🦷</div>
-        <span style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:#fff;">Handral<span style="color:#7eedb8;">Dentistry</span></span>
-      </div>
-      <p>Advanced orthodontics and complete dental care across Bagalkot, Vidyagiri and Navanagar. Smile with confidence.</p>
+<footer>
+  <div class="wrap">
+    <div class="f-grid">
+      <div><div class="logo"><span class="mark"><svg><use href="#tooth"/></svg></span>Handral Dentistry</div>
+        <p>Specialist orthodontics and complete dental care at three clinics in Bagalkot, Karnataka.</p></div>
+      <div><h4>Treatments</h4><ul><li><a href="#services">Braces & Invisalign</a></li><li><a href="#services">Implants</a></li><li><a href="#services">Root canal</a></li><li><a href="#services">Children's dentistry</a></li></ul></div>
+      <div><h4>Clinics</h4><ul><li><a href="#clinics">Bagalkot Main</a></li><li><a href="#clinics">Vidyagiri</a></li><li><a href="#clinics">Navanagar</a></li></ul></div>
+      <div><h4>Contact</h4><ul><li><a href="tel:+919886920792">+91 98869 20792</a></li><li><a href="https://wa.me/919886920792" target="_blank" rel="noopener">WhatsApp</a></li><li><a href="#book">Book appointment</a></li><li><a href="clinic/">Staff sign in</a></li></ul></div>
     </div>
-    <div class="footer-col">
-      <h4>Services</h4>
-      <ul>
-        <li><a href="#services">Orthodontics</a></li>
-        <li><a href="#services">Invisalign</a></li>
-        <li><a href="#services">Implants</a></li>
-        <li><a href="#services">Root Canal</a></li>
-        <li><a href="#services">Smile Design</a></li>
-        <li><a href="#services">Paediatric</a></li>
-      </ul>
-    </div>
-    <div class="footer-col">
-      <h4>Clinics</h4>
-      <ul>
-        <li><a href="#clinics">Bagalkot Main</a></li>
-        <li><a href="#clinics">Vidyagiri</a></li>
-        <li><a href="#clinics">Navanagar</a></li>
-      </ul>
-    </div>
-    <div class="footer-col">
-      <h4>Contact</h4>
-      <ul>
-        <li><a href="#booking">Book Appointment</a></li>
-        <li><a href="https://wa.me/919886920792">WhatsApp</a></li>
-        <li><a href="tel:+919886920792">+91 98869 20792</a></li>
-        <li><a href="clinic/index.html">Staff Login →</a></li>
-      </ul>
-    </div>
-  </div>
-  <div class="footer-bottom">
-    <p>© 2026 Handral Dentistry · handraldentistry.com · Bagalkot, Karnataka, India</p>
-    <div class="footer-socials">
-      <a href="https://wa.me/919886920792" class="social-btn" target="_blank">💬</a>
-      <a href="tel:+919886920792" class="social-btn">📞</a>
-      <a href="#" class="social-btn">📸</a>
-    </div>
+    <p id="privacy" style="font-size:14px;margin-bottom:24px;max-width:820px"><b style="color:#fff">Privacy.</b> When you book, we keep your name, phone number and request on our clinic's own secure system only to arrange and provide your dental care. We do not sell or share it. Calls to the clinic may be noted for your appointment. To see, correct or delete your details, call or WhatsApp +91 98869 20792.</p>
+    <div class="f-bottom"><span>© <span id="yr">2026</span> Handral Dentistry · Bagalkot, Karnataka</span><span>handraldentistry.com</span></div>
   </div>
 </footer>
 
-<!-- WhatsApp Float -->
-<a href="https://wa.me/919886920792" class="wa-btn" target="_blank">
-  <span>💬</span> Chat with Us
-</a>
-
-<!-- Scroll to top -->
-<button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+<div class="actionbar" aria-label="Quick actions">
+  <a class="btn btn-ghost" href="tel:+919886920792"><svg><use href="#phone"/></svg>Call</a>
+  <a class="btn btn-wa" href="https://wa.me/919886920792?text=Hello%20Handral%20Dentistry%2C%20I%20would%20like%20to%20book%20an%20appointment." target="_blank" rel="noopener"><svg><use href="#wa"/></svg>WhatsApp</a>
+  <a class="btn btn-primary" href="#book"><svg><use href="#cal"/></svg>Book</a>
+</div>
 
 <script>
-// Custom cursor
-var cursor=document.getElementById('cursor');
-var ring=document.getElementById('cursorRing');
-document.addEventListener('mousemove',function(e){
-  cursor.style.left=e.clientX-5+'px';
-  cursor.style.top=e.clientY-5+'px';
-  ring.style.left=e.clientX-18+'px';
-  ring.style.top=e.clientY-18+'px';
-});
+(function () {
+  var API = 'https://clinicapi.handraldentistry.com';
+  var WA = '919886920792';
+  var CLINIC_NAMES = { bagalkot: 'Bagalkot Main', vidyagiri: 'Vidyagiri', navanagar: 'Navanagar' };
+  var $ = function (s) { return document.querySelector(s); };
 
-// Sticky nav
-window.addEventListener('scroll',function(){
-  document.getElementById('nav').classList.toggle('scrolled',window.scrollY>40);
-  document.getElementById('scrollTop').classList.toggle('show',window.scrollY>400);
-});
+  $('#yr').textContent = new Date().getFullYear();
+  var hdr = $('#top');
+  addEventListener('scroll', function () { hdr.classList.toggle('scrolled', scrollY > 10); }, { passive: true });
 
-// Reveal animations
-var observer=new IntersectionObserver(function(entries){
-  entries.forEach(function(e){
-    if(e.isIntersecting) e.target.classList.add('visible');
+  // Mobile menu
+  var mb = $('#menuBtn'), mm = $('#mobileMenu');
+  function setMenu(open) { mm.classList.toggle('open', open); mb.setAttribute('aria-expanded', open); document.body.style.overflow = open ? 'hidden' : ''; }
+  mb.addEventListener('click', function () { setMenu(!mm.classList.contains('open')); });
+  mm.addEventListener('click', function (e) { if (e.target.tagName === 'A') setMenu(false); });
+
+  // "Book" links pre-select the clinic or treatment
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[data-clinic],a[data-tx]'); if (!a) return;
+    if (a.dataset.clinic) { var r = document.querySelector('input[name=clinic][value=' + a.dataset.clinic + ']'); if (r) r.checked = true; }
+    if (a.dataset.tx) { var s = $('#bTx'); for (var i = 0; i < s.options.length; i++) if (s.options[i].text === a.dataset.tx) s.selectedIndex = i; }
   });
-},{threshold:0.1,rootMargin:'0px 0px -40px 0px'});
-document.querySelectorAll('.reveal,.reveal-left,.reveal-right').forEach(function(el){observer.observe(el);});
 
-// Mobile menu
-function toggleMobile(){alert('Open menu — add your nav links here for mobile');}
+  // Reveal on scroll
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (es) { es.forEach(function (x) { if (x.isIntersecting) { x.target.classList.add('in'); io.unobserve(x.target); } }); }, { rootMargin: '0px 0px -40px 0px' });
+    document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+  } else document.querySelectorAll('.reveal').forEach(function (el) { el.classList.add('in'); });
 
-// Hero booking
-function heroBook(){
-  var n=document.getElementById('hName').value.trim();
-  var p=document.getElementById('hPhone').value.trim();
-  var c=document.getElementById('hClinic').value;
-  if(!n||!p){alert('Please enter your name and phone number.');return;}
-  var msg='Hi! I would like to book an appointment.\nName: '+n+'\nPhone: '+p+(c?'\nClinic: '+c:'');
-  window.open('https://wa.me/919886920792?text='+encodeURIComponent(msg),'_blank');
-}
+  // Booking: sent straight to the clinic app; WhatsApp if that fails
+  var d = new Date(); var pad = function (n) { return String(n).padStart(2, '0'); };
+  var todayStr = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  $('#bDate').min = todayStr;
 
-// Booking form
-function submitBook(e){
-  e.preventDefault();
-  var name=document.getElementById('bName').value.trim();
-  var phone=document.getElementById('bPhone').value.trim();
-  var clinic=document.getElementById('bClinic').value;
-  var date=document.getElementById('bDate').value;
-  var tx=document.getElementById('bTx').value;
-  var msg=document.getElementById('bMsg').value.trim();
-  var waMsg='New Appointment Request\nName: '+name+'\nPhone: '+phone+'\nClinic: '+clinic+(date?'\nDate: '+date:'')+'\nTreatment: '+tx+(msg?'\nNote: '+msg:'');
-  window.open('https://wa.me/919886920792?text='+encodeURIComponent(waMsg),'_blank');
-  document.getElementById('bookFormWrap').style.display='none';
-  document.getElementById('bookingSuccess').style.display='block';
-}
-
-// Set min date
-var d=new Date().toISOString().split('T')[0];
-var di=document.getElementById('bDate');
-if(di) di.min=d;
-
-// Counter animation
-function animateCount(el,target,suffix){
-  var start=0,dur=2000,step=dur/60;
-  var timer=setInterval(function(){
-    start+=target/60;
-    if(start>=target){start=target;clearInterval(timer);}
-    el.innerHTML=Math.floor(start)+(suffix||'');
-  },step);
-}
-var counted=false;
-var heroObserver=new IntersectionObserver(function(entries){
-  if(entries[0].isIntersecting&&!counted){
-    counted=true;
-    animateCount(document.querySelector('.hero-stat:nth-child(1) .hero-stat-n'),12,'<span>+</span>');
-    animateCount(document.querySelector('.hero-stat:nth-child(2) .hero-stat-n'),5,'<span>K+</span>');
+  function waText(v) {
+    return 'Hello Handral Dentistry, I would like an appointment.\nName: ' + v.name + '\nPhone: ' + v.phone + '\nClinic: ' + (CLINIC_NAMES[v.clinic] || '') +
+      (v.date ? '\nDay: ' + v.date : '') + (v.time ? '\nTime: ' + v.time : '') + '\nFor: ' + v.treatment + (v.message ? '\nNote: ' + v.message : '');
   }
-},{threshold:.5});
-var hs=document.querySelector('.hero-stats');
-if(hs) heroObserver.observe(hs);
+  function showErr(msg) { var e = $('#formErr'); e.textContent = msg; e.hidden = !msg; if (msg) e.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+
+  $('#bookForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target.elements;
+    var v = { name: f.name.value.trim(), phone: f.phone.value.trim(), clinic: (ev.target.querySelector('input[name=clinic]:checked') || {}).value || '',
+      date: f.date.value, time: f.time.value, treatment: f.treatment.value, message: f.message.value.trim(), consent: f.consent.checked, website: f.website.value };
+    var digits = v.phone.replace(/\D/g, ''); if (digits.length === 12 && digits.indexOf('91') === 0) digits = digits.slice(2);
+    if (v.name.length < 2) { showErr('Please enter your name.'); f.name.focus(); return; }
+    if (digits.length !== 10) { showErr('Please enter a 10-digit mobile number.'); f.phone.focus(); return; }
+    if (!v.consent) { showErr('Please tick the box so we can call you about the appointment.'); return; }
+    showErr('');
+    var btn = $('#bSubmit'); btn.disabled = true; btn.textContent = 'Sending…';
+    var ctl = 'AbortController' in window ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 10000);
+    fetch(API + '/api/public/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(v), signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { if (!r.ok) { var e = new Error(b.error || 'failed'); e.server = r.status < 500 && r.status !== 429 ? true : false; throw e; } return b; }); })
+      .then(function () { done(v, false); })
+      .catch(function (e) {
+        if (e.server) { showErr(e.message); return; }
+        done(v, true);   // could not reach the clinic system: hand over to WhatsApp instead
+      })
+      .then(function () { clearTimeout(timer); btn.disabled = false; btn.textContent = 'Request appointment'; });
+  });
+
+  function done(v, viaWa) {
+    var link = 'https://wa.me/' + WA + '?text=' + encodeURIComponent(waText(v));
+    $('#doneWa').href = link;
+    if (viaWa) {
+      $('#doneText').textContent = 'One more step: tap below to send your request to us on WhatsApp.';
+      $('#doneWa').innerHTML = '<svg><use href="#wa"/></svg>Send on WhatsApp';
+      window.open(link, '_blank', 'noopener');
+    }
+    $('#bookForm').hidden = true; $('#formDone').hidden = false;
+    $('#formCard').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+})();
 </script>
 </body>
 </html>

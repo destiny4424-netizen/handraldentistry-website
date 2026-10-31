@@ -2,7 +2,10 @@
 
 ## Files
 - `index.html` — Public patient website (handraldentistry.com)
-- `clinic/` — Staff clinic management app (handraldentistry.com/clinic)
+- `clinic/` — Staff clinic management app (handraldentistry.com/clinic). Records are kept in the cloud
+  on the droplet (see "Handral Clinic cloud" below), so every tablet, phone and laptop that signs in
+  sees the same patients, appointments and bills. Booking requests from the website appear on its Today page.
+- `_clinic/` — the cloud server for the clinic app (runs on the droplet; not published)
 - `photos/` — Clinic Photos: organise clinic and patient photos on the iPhone (handraldentistry.com/photos).
   Open it in Safari, Share → Add to Home Screen. Photos are picked from the Photo Library and kept only on
   that phone (nothing is uploaded); use ⋯ → Save backup to keep a copy in Files / iCloud Drive.
@@ -32,6 +35,33 @@ Type: CNAME  Name: www  Value: YOUR-USERNAME.github.io
 2. Replace `https://wa.me/919448000000` with real WhatsApp number
 3. Add real clinic addresses if needed
 4. Add real photos to replace placeholders
+
+## Handral Clinic cloud (clinic app data on the droplet)
+
+`_clinic/server.py` keeps the clinic app's records in one SQLite database on the droplet
+(Python standard library only). It sits next to Handral Books and does not touch it.
+
+### One-time setup
+1. At your domain registrar add a DNS record: type **A**, name **clinicapi**, value = the droplet's IP
+   (the same IP as handraldentistry.com's books address, if you use one).
+2. SSH in to the droplet and run:
+```
+curl -fsSL https://raw.githubusercontent.com/destiny4424-netizen/handraldentistry-website/main/_clinic/deploy/install.sh | sudo bash
+```
+It prints the doctor's username and password at the end (to see them again:
+`sudo cat /etc/handral-clinic/login.txt`). If the DNS record wasn't ready, run `sudo handral-clinic-web`
+once it is.
+3. Open https://handraldentistry.com/clinic/ on the clinic tablet that has the old records and sign in.
+   Tap **Move them to the cloud** on the Today page. Do this on each device that was used before.
+4. In the app, Settings → **Who can sign in**: add a login for each staff member, and paste the Claude AI key
+   if you use "Read register".
+
+### After that
+- Starts on boot, restarts itself, installs new versions of `_clinic/` from GitHub within 5 minutes
+  (rolls back if one fails) and backs up the database 4 times a day to `/var/lib/handral-clinic/backups`.
+- Served at https://clinicapi.handraldentistry.com via Caddy (automatic certificate).
+- Every change is also kept in a history table, with who made it and when.
+- Website booking requests are sent to the same server; if it can't be reached the visitor is sent to WhatsApp.
 
 ## Handral Books (bookkeeping app on the droplet)
 
