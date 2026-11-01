@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "31 Oct · easier on the phone"
+VERSION = "1 Nov · scanner health"
 
 
 def load_env():
@@ -519,8 +519,18 @@ def fetch_market(demo):
         except DhanError as e:
             if e.fatal:
                 raise
-            print(f"  {key}: {e}", file=sys.stderr)
+            warn(key, e)
     return out
+
+
+HEALTH = {"started": time.time(), "errors": [], "scan": None, "sources": {}, "scans_today": 0, "scan_day": None}
+
+
+def warn(where, e):
+    """Log a problem and keep the last 30 for Scanner health."""
+    print(f"  {where}: {e}", file=sys.stderr)
+    HEALTH["errors"] = (HEALTH["errors"] + [{"at": datetime.now(IST).strftime("%d %b %H:%M"), "where": where,
+                                             "msg": str(e)[:200]}])[-30:]
 
 
 def fetch_events(demo, vix):
@@ -543,9 +553,10 @@ def fetch_events(demo, vix):
             today_c, before = market.session(c)
             comm[key] = events.commodity_view(name, today_c or c, before[-1]["c"] if before else None)
         except Exception as e:                         # optional: never stop the scan for it
-            print(f"  {key}: {e}", file=sys.stderr)
+            warn(key, e)
     news = events.headlines()
     results = events.results_calendar()
+    HEALTH["sources"].update(news=len(news), results=len(results), crude="CRUDE" in comm, usdinr="USDINR" in comm)
     if demo and not results:                           # show what a results warning looks like
         results = {s: (today + timedelta(days=1 + i % 3)).isoformat() for i, s in enumerate(DEMO_SYMBOLS[::25])}
     risk = events.risk_level(news, cal, vix, comm.get("CRUDE"))
@@ -595,9 +606,10 @@ def nifty_gex(demo, spot):
         if g:
             g["expiry"] = EXPIRY.get("nifty")
     except Exception as e:                             # extra information: never stop the scan
-        print(f"  NIFTY GEX: {e}", file=sys.stderr)
+        warn("NIFTY GEX", e)
         g = hit[1] if hit else None
     GEX_CACHE["nifty"] = (time.time(), g)
+    HEALTH["sources"]["gex"] = bool(g)
     return g
 
 
@@ -641,7 +653,7 @@ def option_plan(sym, sid, side, plan, spot, demo):
             return None
         return options.plan(kind, best[1], spot, plan, LOTS.get(sym), expiry, rolled, best[0])
     except Exception as e:                             # options are extra: never stop the scan
-        print(f"  {sym} option: {e}", file=sys.stderr)
+        warn(f"{sym} option", e)
         return None
 
 
@@ -918,6 +930,68 @@ def apply_best(cmp):
     save_settings(rules=rules, rules_names=names, btst_edge=btst_edge, auto_applied=cmp.get("ran_at") or "yes")
 
 
+def health_report():
+    """Plain checks for Scanner health: ok / warn / bad, each with what it means."""
+    now = time.time()
+    checks = []
+    add = lambda name, level, text: checks.append({"name": name, "level": level, "text": text})
+    up = int(now - HEALTH["started"])
+    add("Server", "ok", f"Running for {up // 3600}h {up % 3600 // 60}m · version {VERSION}")
+    if DEMO:
+        add("Dhan connection", "bad", "No Dhan keys: showing DEMO data. Open Settings → Connect Dhan.")
+    else:
+        tk = token_info()
+        if tk["expired"]:
+            add("Dhan connection", "bad", f"Token expired {tk['expires']}. Paste a new one in Settings.")
+        else:
+            add("Dhan connection", "ok", f"Token valid until {tk['expires'] or '—'}" +
+                (f" · renewed {tk['last_renewed']}" if tk.get("last_renewed") else "") + " · renews by itself")
+    sc, st = HEALTH["scan"], STATE.get("status")
+    open_now = market_open()
+    if st == "error":
+        add("Last scan", "bad", f"The last scan failed: {STATE.get('message')}")
+    elif not sc:
+        add("Last scan", "warn", "No scan finished yet since the server started (one starts straight away).")
+    else:
+        age = int((now - sc["ts"]) / 60)
+        late = open_now and age > 20
+        add("Last scan", "warn" if late else "ok",
+            f"{sc['at']} ({age} min ago), took {sc['secs']}s · {HEALTH['scans_today']} scans today" +
+            (" · should have scanned again by now" if late else "" if open_now else " · market closed: next scan " + str(STATE.get("next_scan"))))
+        bad_share = sc["failed"] / max(1, sc["liquid"])
+        add("Stocks scanned", "warn" if bad_share > 0.1 else "ok",
+            f"{sc['analysed']} of {sc['liquid']} liquid F&O stocks analysed ({sc['stocks']} F&O in all)" +
+            (f" · {sc['failed']} could not be fetched: {', '.join(sc['failed_list'])}" if sc["failed"] else " · none failed"))
+        add("Picks", "ok", f"Setup in use: {(SETTINGS.get('rules_names') or {}).get('intraday') or 'Current rules'} · "
+            f"{sc['picks']} intraday picks today, {sc['btst']} BTST on the last scan · option plans for {sc['options']}")
+    lt = STATE.get("last_track")
+    if lt:
+        add("Trade tracking", "ok", f"Today's trades last updated {lt}")
+    src = HEALTH["sources"]
+    if src:
+        add("NIFTY GEX", "ok" if src.get("gex") else "warn",
+            "Read from the NIFTY option chain" if src.get("gex") else "Not available yet (option chain didn't answer)")
+        add("Crude & USD/INR", "ok" if src.get("crude") and src.get("usdinr") else "warn",
+            "Both read from Dhan" if src.get("crude") and src.get("usdinr") else
+            "Not read (MCX / currency data may not be in your Dhan plan) — only the event tags use them")
+        add("News & results dates", "ok" if src.get("news") else "warn",
+            f"{src.get('news', 0)} headlines, {src.get('results', 0)} results dates" +
+            ("" if src.get("results") else " · NSE refused the results calendar (optional)"))
+    rk = STATE.get("risk") or {}
+    if rk.get("capital"):
+        add("Risk engine", "ok" if rk.get("status") == "OK" else "warn",
+            f"₹{int(rk['capital']):,} capital, {rk['risk_pct']}% a trade · today {rk.get('day_r', 0):+}R · "
+            f"open {rk.get('open', 0)}/{rk['max_open']} · trades {rk.get('taken', 0)}/{rk['max_trades']} · {rk.get('status')}")
+    try:
+        cmp = json.loads((SETTINGS_DIR / "compare.json").read_text(encoding="utf-8"))
+        add("Rule comparison", "ok", f"Last compared {cmp.get('ran_at')}; the ⭐ rules are in use automatically")
+    except (OSError, ValueError):
+        add("Rule comparison", "warn", "Not run yet: Performance → Compare rule variants (after 3:30 PM)")
+    errs = HEALTH["errors"][-8:]
+    level = "bad" if any(c["level"] == "bad" for c in checks) else "warn" if any(c["level"] == "warn" for c in checks) else "ok"
+    return {"level": level, "checks": checks, "errors": list(reversed(errs)), "market_open": open_now}
+
+
 def live_rules():
     """The rule variants chosen in Performance → Compare rules (empty = the default rules)."""
     return SETTINGS.get("rules") or {}
@@ -955,7 +1029,8 @@ def scan_once():
     set_state(status="scanning", total=len(stocks), scanned=0,
               message=f"Scanning {len(stocks)} F&O stocks (liquid ones only)…")
     results, candles_by, bo, funnel_in, daily_by = {}, {}, {}, {}, {}
-    thin, liq_of = [], {}
+    thin, liq_of, failed = [], {}, []
+    t_start = time.time()
     # Stocks with a trade still being followed are always fetched, liquid or not.
     keep = {r["symbol"] for r in TRADES.rows} | {r["symbol"] for r in BTSTS.rows if r.get("result_r") is None}
     idx = fetch_market(demo)
@@ -967,10 +1042,12 @@ def scan_once():
         except DhanError as e:
             if e.fatal:
                 raise
-            print(f"  {sym}: {e}", file=sys.stderr)
+            warn(sym, e)
+            failed.append(sym)
             continue
         except Exception as e:                       # one bad stock shouldn't stop the scan
-            print(f"  {sym}: {e}", file=sys.stderr)
+            warn(sym, e)
+            failed.append(sym)
             continue
         liq_of[sym] = liquidity(daily)
         if candles is None:
@@ -1224,8 +1301,18 @@ def scan_once():
                                "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1]}, breakouts=breakouts, picks=top, market=mkt,
                      trades=TRADES.view(), btst=btst_state,
                      last_scan=datetime.now(IST).strftime("%H:%M"),
+                     last_scan_ts=time.time(),
                      bullish=[row(s, "bull") for s in bull[:TOP_N]],
                      bearish=[row(s, "bear") for s in bear[:TOP_N]])
+    day_s2 = datetime.now(IST).strftime("%Y-%m-%d")
+    if HEALTH["scan_day"] != day_s2:
+        HEALTH.update(scan_day=day_s2, scans_today=0)
+    HEALTH["scans_today"] += 1
+    HEALTH["scan"] = {"at": datetime.now(IST).strftime("%a %d %b %H:%M"), "ts": time.time(), "secs": round(time.time() - t_start),
+                      "stocks": len(stocks), "liquid": len(stocks) - len(thin), "analysed": len(results),
+                      "failed": len(failed), "failed_list": failed[:10], "picks": len(top.get("picks") or []),
+                      "btst": len(btst_picks), "setup": (live_rules().get("intraday") or {}).get("setup", "breakout"),
+                      "options": sum(1 for c in top.get("picks") or [] if c.get("option")), "demo": demo}
 
 
 INTRADAY_FROM, INTRADAY_UNTIL = "09:30", intraday.LAST_ENTRY
@@ -1297,12 +1384,14 @@ def scanner():
             try:
                 scan_once()
             except DhanError as e:
+                warn("scan", e)
                 if "access token" in str(e) and keep_token_once(force=True):
                     WAKE.set()                         # renewed: scan again right away
                     set_state(status="starting", message="Dhan token renewed automatically. Scanning…")
                 else:
                     set_state(status="error", message=str(e))
             except Exception as e:
+                warn("scan", e)
                 set_state(status="error", message=f"Scan failed: {e}")
             first = False
             if not market_open() and not DEMO and STATE["status"] == "live":
@@ -1323,7 +1412,7 @@ def scanner():
             try:
                 track_once()
             except Exception as e:
-                print(f"  tracking: {e}", file=sys.stderr)
+                warn("tracking", e)
 
 
 def save_keys(client_id, token):
@@ -1682,6 +1771,8 @@ class Handler(BaseHTTPRequestHandler):
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
                             "urls": [] if CLOUD else local_addresses()})
+        elif url.path == "/api/health":
+            self.send(200, health_report())
         elif url.path == "/api/journal":
             live = []
             for f in sorted(SETTINGS_DIR.glob("trades-*.json")):

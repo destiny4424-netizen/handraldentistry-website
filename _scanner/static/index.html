@@ -229,6 +229,10 @@
   .gexbox .rg { font: 700 11px var(--mono); padding: 2px 8px; border-radius: 6px; }
   .gexbox .rg.pos { background: rgba(41,98,255,.18); color: #8fb0ff; } .gexbox .rg.neg { background: rgba(255,170,0,.15); color: #ffcf70; }
   .mstrip, .moresheet { display: none; }
+  .hrow { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .hrow b { display: block; } .hrow .ic { font-size: 15px; } .hrow.ok .ic { color: var(--bull); } .hrow.warn .ic { color: #ffcf70; }
+  .hrow.bad .ic { color: var(--bear); } .hrow span { color: var(--muted); }
+  #hSum.ok { color: var(--bull); } #hSum.warn { color: #ffcf70; } #hSum.bad { color: #ff8193; }
   details.more > summary { cursor: pointer; color: var(--accent); font-size: 12px; margin-top: 8px; list-style: none; }
   details.more > summary::-webkit-details-marker { display: none; }
   details.more > summary::before { content: "▸ "; } details.more[open] > summary::before { content: "▾ "; }
@@ -464,6 +468,14 @@
     </div>
   </form>
 </dialog>
+<dialog id="health">
+  <form method="dialog">
+    <h3>Scanner health</h3>
+    <p id="hSum">Checking…</p>
+    <div id="hList"></div>
+    <div class="actions"><button type="button" class="ghost" id="hRefresh">Check again</button><button type="submit">Close</button></div>
+  </form>
+</dialog>
 <dialog id="keys">
   <form id="keysForm" method="dialog">
     <h3>Settings</h3>
@@ -622,7 +634,7 @@
     <div class="legend"><span class="bear-t">Bearish</span><span>Choppy ← → Strongest</span><span class="bull-t">Bullish</span></div>
   </section>
   <footer>Order blocks, breakouts and scores are computed from price and volume only. They are not trading advice.
-    <span id="ver"></span></footer>
+    <span id="ver"></span> · <a href="#" id="healthLink" style="color:var(--accent)">Scanner health</a></footer>
 </div>
 <aside class="ws-side">
   <section class="panel" id="picksPanel" hidden>
@@ -666,6 +678,7 @@
   <button data-go="pk:mGex">NIFTY gamma (GEX)</button>
   <button data-go="pk:flowPanel">Scan funnel</button>
   <button id="moreSettings" type="button">Settings</button>
+  <button id="moreHealth" type="button">Scanner health</button>
 </div>
 
 <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
@@ -1331,6 +1344,24 @@ document.addEventListener("click", ev => {
 $("moreBtn").onclick = ev => { ev.stopPropagation(); $("moreSheet").hidden = !$("moreSheet").hidden; };
 document.addEventListener("click", ev => { if (!ev.target.closest("#moreSheet, #moreBtn")) $("moreSheet").hidden = true; });
 $("moreSettings").onclick = () => { $("moreSheet").hidden = true; $("keysBtn").click(); };
+async function openHealth() {
+  $("moreSheet").hidden = true;
+  if (!$("health").open) $("health").showModal();
+  $("hSum").className = ""; $("hSum").textContent = "Checking…"; $("hList").innerHTML = "";
+  try {
+    const r = await fetch("/api/health", { cache: "no-store" }), h = await r.json();
+    $("hSum").className = h.level;
+    $("hSum").textContent = h.level === "ok" ? "✓ Everything is working." : h.level === "warn" ? "⚠ Working, with something to look at below."
+      : "✗ Something needs fixing — see the red line below.";
+    $("hList").innerHTML = h.checks.map(c => `<div class="hrow ${c.level}"><span class="ic">${c.level === "ok" ? "✓" : c.level === "warn" ? "⚠" : "✗"}</span>
+        <div><b>${esc(c.name)}</b><span>${esc(c.text)}</span></div></div>`).join("") +
+      (h.errors.length ? `<div class="hrow warn"><span class="ic">!</span><div><b>Recent problems (${h.errors.length})</b>${h.errors.map(e =>
+        `<span style="display:block">${esc(e.at)} · ${esc(e.where)}: ${esc(e.msg)}</span>`).join("")}</div></div>` : "");
+  } catch (err) { $("hSum").className = "bad"; $("hSum").textContent = "✗ The scanner didn't answer: " + err.message; }
+}
+$("moreHealth").onclick = openHealth;
+$("healthLink").onclick = ev => { ev.preventDefault(); openHealth(); };
+$("hRefresh").onclick = openHealth;
 $("mstrip").onclick = () => { if (mode !== "pk") { mode = "pk"; selected = null; render(); } setTimeout(() => $("marketPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
 function renderStrip(s) {
   const m = s.market || {}, n = m.nifty, g = m.gex, v = m.vix, r = s.risk;

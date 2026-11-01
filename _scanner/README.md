@@ -160,6 +160,20 @@ automatically, for intraday and BTST separately. A variant you pick with **Use**
 **Use** switches the live scanner (and later backtests) to that variant from the next scan. It is stored in
 settings.json as `rules` / `rules_names`. "Current rules" goes back to the defaults.
 
+## Scanner health
+**Scanner health** (in the footer, or under More on the phone; also `GET /api/health`) checks:
+- the server and the version it runs
+- the Dhan token
+- the last scan: when, how long it took, and whether one is overdue during market hours
+- how many liquid stocks were analysed and which ones failed
+- the setup in use and today's picks
+- trade tracking
+- the NIFTY GEX, crude/USD-INR, news and NSE results sources
+- the risk engine
+- the last rule comparison
+
+It also lists the last problems the scanner logged. Each line is ✓ ok, ⚠ worth a look, or ✗ needs fixing.
+
 ## NIFTY gamma (GEX)
 The Market panel shows NIFTY's dealer gamma exposure, read from the nearest-expiry option chain
 (`gex.py`, refreshed every 5 minutes).
