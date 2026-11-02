@@ -118,7 +118,10 @@ After 5 wrong PINs, that device is locked out for 10 minutes.
    - Support and resistance are the nearest swing points.
    - Liquidity is the next swing point beyond them, where stop-losses usually sit. If there isn't one, it is the previous day's low (for bullish) or high (for bearish).
 
-## Intraday setup 2: Opening Range Breakout on stocks in play
+## Opening Range Breakout (switched off)
+The owner chose key-level breakouts only, so the ORB below is not used live or in Compare rules. `orb.py` is kept for reference.
+
+### How it worked
 This follows Zarattini, Barbon & Aziz, "A Profitable Day Trading Strategy For The U.S. Equity Market"
 (2023–24), the best-documented published intraday setup, adapted to NSE (`orb.py`). The paper reports a
 Sharpe ratio of 2.81 on US stocks, 2016–2023.
