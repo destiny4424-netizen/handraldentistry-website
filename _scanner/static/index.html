@@ -656,6 +656,7 @@
     <div id="bullList"></div>
   </section>
   <section class="panel" id="listsPanel">
+    <div class="hint" id="listHint" style="margin-bottom:8px"></div>
     <div class="cols">
       <div><h2 class="bull-t">↗ Bullish</h2><div class="list" id="bullList"></div></div>
       <div><h2 class="bear-t">↘ Bearish</h2><div class="list" id="bearList"></div></div>
@@ -767,6 +768,9 @@ function render() {
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
   document.querySelector("#bearList").previousElementSibling.textContent = mode === "ob" ? "↘ Bearish" : "↘ Breakdowns";
+  $("listHint").textContent = mode === "bo"
+    ? "Every 15-min close through a key level (yesterday's high/low, last week's high/low, swing levels), strong or weak. Bullish = closed above a level, Bearish = closed below one. Only the cleanest yesterday's-high/low breakouts on volume become Intraday picks."
+    : mode === "ob" ? "Order blocks and liquidity, strongest first (a separate setup from the Intraday breakouts)." : "";
   renderList("bullList", v.bullish, "bull");
   renderList("bearList", v.bearish, "bear");
   drawDist();
@@ -787,8 +791,8 @@ function renderList(id, rows, side) {
       <span class="n">${String(i + 1).padStart(2, "0")}</span>
       <div class="card">
         <div class="sym">${r.symbol}<small>${fmt(r.price)}</small></div>
-        <div class="meta">${pct(r.pct)}<span class="bar"><b style="width:${Math.max(4, r.score)}%"></b></span></div>
-        ${r.level ? `<div class="sub"><span class="st st-${r.status}">${r.status}</span>${r.level} ${fmt(r.level_price)} · ${r.time}</div>` : ""}
+        <div class="meta"><span style="color:${r.pct >= 0 ? css("--bull") : css("--bear")}">${pct(r.pct)}</span><span class="bar"><b style="width:${Math.max(4, r.score)}%"></b></span></div>
+        ${r.level ? `<div class="sub"><span class="st st-${r.status}">${r.status}</span>${side === "bull" ? "▲ closed above" : "▼ closed below"} ${r.level} ${fmt(r.level_price)} · ${r.time}</div>` : ""}
       </div>
     </div>`).join("");
   el.querySelectorAll(".row").forEach(row => row.onclick = () => {
@@ -1362,7 +1366,10 @@ async function openHealth() {
 $("moreHealth").onclick = openHealth;
 $("healthLink").onclick = ev => { ev.preventDefault(); openHealth(); };
 $("hRefresh").onclick = openHealth;
-$("mstrip").onclick = () => { if (mode !== "pk") { mode = "pk"; selected = null; render(); } setTimeout(() => $("marketPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
+$("mstrip").onclick = ev => {
+  const act = ev.target.closest("[data-act]");
+  if (act && act.dataset.act === "scan") { $("scan").click(); act.textContent = "SCANNING…"; return; }
+  if (act && act.dataset.act === "health") { openHealth(); return; } if (mode !== "pk") { mode = "pk"; selected = null; render(); } setTimeout(() => $("marketPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
 function renderStrip(s) {
   const m = s.market || {}, n = m.nifty, g = m.gex, v = m.vix, r = s.risk;
   const out = [];
@@ -1372,7 +1379,12 @@ function renderStrip(s) {
   if (m.breadth) out.push(`<span>${m.breadth.advances}↑ ${m.breadth.declines}↓</span>`);
   if (r && r.capital) out.push(`<span class="${r.status === "OK" ? "up" : "wa"}">RISK ${r.status} · ${r.day_r >= 0 ? "+" : ""}${r.day_r}R</span>`);
   if (state.events && state.events.risk && state.events.risk.level !== "Low") out.push(`<span class="wa">EVENTS ${state.events.risk.level.toUpperCase()}</span>`);
-  $("mstrip").innerHTML = out.join("");
+  // When was the last scan, and a scan button (the header's are off-screen on phones).
+  const scanTxt = s.status === "scanning" ? `SCANNING ${s.scanned || 0}/${s.total || ""}` :
+    s.status === "error" ? "SCAN FAILED · tap Scanner health" :
+    `SCANNED ${s.last_scan || "—"}${s.next_scan ? ` · NEXT ${s.next_scan}` : ""}`;
+  $("mstrip").innerHTML = `<span class="${s.status === "error" ? "dn" : s.status === "scanning" ? "bl" : ""}" data-act="health">${esc(scanTxt)}</span>
+    <span class="bl" data-act="scan">↻ SCAN NOW</span>` + out.join("");
 }
 document.querySelectorAll(".bnav button[data-go], .moresheet button[data-go]").forEach(b => b.onclick = () => {
   $("moreSheet").hidden = true;

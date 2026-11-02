@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "1 Nov · scanner health"
+VERSION = "2 Nov · scan time on phone, fixes"
 
 
 def load_env():
@@ -1096,6 +1096,10 @@ def scan_once():
     picks_from = SETTINGS.get("intraday_from") or INTRADAY_FROM
     clock = max((d["c15"][-1]["end"] for d in funnel_in.values() if d["c15"]), default=time.time())
     session_time = datetime.fromtimestamp(clock, IST).strftime("%H:%M")
+    if not demo:
+        # The real time of day. (Before the first 15-min candle closes, the newest closed candle is
+        # yesterday's 15:15 one, which made a 9:20 scan think it was 15:30.)
+        session_time = datetime.now(IST).strftime("%H:%M")
     if demo and os.environ.get("OBS_DEMO_CLOCK"):     # testing: pretend it is this time of day
         session_time = os.environ["OBS_DEMO_CLOCK"]
     ev = fetch_events(demo, market.vix_view(*idx["INDIAVIX"]) if "INDIAVIX" in idx else None)
@@ -1225,7 +1229,7 @@ def scan_once():
             c["opt_size"] = risk.size_option(c["option"], rcfg)
             c["take"] = i < rcfg["btst_max"]               # the risk engine takes only the best few overnight
     btst_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
-    if not demo and session_time >= "15:00":            # lock in the 3 PM list as today's BTST trades
+    if not demo and market_open() and session_time >= "15:00":   # lock in the 3 PM list as today's BTST trades
         for c in btst_picks:
             if c.get("take"):
                 BTSTS.record(c, btst_now)
@@ -1275,7 +1279,7 @@ def scan_once():
         _, st, _, r = bo[sym]
         return {"symbol": sym, "price": r["price"], "pct": r["pct"], "score": st["score"],
                 "level": st["level"], "level_price": round(st["level_price"], 2),
-                "status": st["status"], "time": datetime.fromtimestamp(st["time"], IST).strftime("%H:%M"),
+                "status": st["status"], "time": datetime.fromtimestamp(st["time"] + 900, IST).strftime("%H:%M"),   # candle close
                 "key": f'{sym}|{st["level"]}|{st["time"]}'}
 
     bo_bull = sorted((s for s in bo if bo[s][1]["side"] == "bull"), key=lambda s: -bo[s][1]["score"])
@@ -1681,7 +1685,7 @@ def breakout_payload(symbol):
             "breakout_index": st["index"] - (len(c15) - len(view)) if st["index"] >= len(c15) - len(view) else None,
             "level": st["level"], "level_price": st["level_price"], "status": st["status"],
             "stop": st["stop"], "target": st["target"], "vol_ratio": st["vol_ratio"],
-            "score": st["score"], "time": datetime.fromtimestamp(st["time"], IST).strftime("%d %b %H:%M"),
+            "score": st["score"], "time": datetime.fromtimestamp(st["time"] + 900, IST).strftime("%d %b %H:%M"),
             "levels": [{"name": l["name"], "price": l["price"]} for l in near]}
 
 
