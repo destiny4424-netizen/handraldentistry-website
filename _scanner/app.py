@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "2 Nov · intraday = key-level breakouts (PDH/PDL, weekly, swing)"
+VERSION = "3 Nov · ORB choice cleared"
 
 
 def load_env():
@@ -1971,6 +1971,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    r = dict(SETTINGS.get("rules") or {})              # intraday is breakouts only: drop a saved ORB choice
+    if (r.get("intraday") or {}).get("setup", "breakout") != "breakout":
+        r["intraday"] = {}
+        save_settings(rules=r, rules_names=dict(SETTINGS.get("rules_names") or {}, intraday="Current rules"),
+                      rules_manual=dict(SETTINGS.get("rules_manual") or {}, intraday=False))
     try:                                               # a comparison made before auto-pick existed: use it once
         if not SETTINGS.get("auto_applied") and (SETTINGS_DIR / "compare.json").exists():
             apply_best(json.loads((SETTINGS_DIR / "compare.json").read_text(encoding="utf-8")))
