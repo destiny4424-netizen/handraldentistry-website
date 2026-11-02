@@ -270,10 +270,12 @@ and Today's trades then start from zero. The files are kept there, not deleted, 
 The last reset was on 28 Oct 2026, when intraday switched to PDH/PDL breakouts.
 
 ## How intraday picks are chosen
-Intraday is one setup only: a **15-minute breakout of yesterday's high (buy) or low (sell) on volume**.
+Intraday is one setup only: a **15-minute breakout of a key level on volume**. The key levels are
+yesterday's high/low (PDH/PDL), last week's high/low (PWH/PWL) and daily swing highs/lows from the last 60 days.
+A level counts only if today crossed it, meaning price was on the other side of it at yesterday's close.
 Order blocks have their own tab and are not mixed in. Scans run every 15 minutes from 9:30 to 14:00,
 20 seconds after each candle closes, over every liquid F&O stock.
-1. **Broke PDH/PDL:** a 15-minute candle closed above yesterday's high (or below its low). If a later candle
+1. **Broke a key level:** a 15-minute candle closed above a key level (or below one). If a later candle
    closes back through the level, that breakout has failed. A fresh break after that counts again.
 2. **Volume 1.5×+:** the breakout candle traded at least 1.5× the usual volume for that time of day
    (the average of the same 15 minutes on the previous sessions).
