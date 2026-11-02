@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "2 Nov · scan time on phone, fixes"
+VERSION = "2 Nov · intraday = key-level breakouts (PDH/PDL, weekly, swing)"
 
 
 def load_env():
@@ -927,6 +927,8 @@ def apply_best(cmp):
             btst_edge = False
         if star and not manual.get(kind):
             rules[kind], names[kind] = star["rules"], star["name"]
+    if (rules.get("intraday") or {}).get("setup", "breakout") != "breakout":   # intraday = breakouts only
+        rules["intraday"], names["intraday"] = {}, "Current rules"
     save_settings(rules=rules, rules_names=names, btst_edge=btst_edge, auto_applied=cmp.get("ran_at") or "yes")
 
 
@@ -993,8 +995,12 @@ def health_report():
 
 
 def live_rules():
-    """The rule variants chosen in Performance → Compare rules (empty = the default rules)."""
-    return SETTINGS.get("rules") or {}
+    """The rule variants chosen in Performance → Compare rules (empty = the default rules).
+    Intraday is the 15-minute key-level breakout only (you asked for that): any ORB choice is ignored."""
+    r = dict(SETTINGS.get("rules") or {})
+    if (r.get("intraday") or {}).get("setup", "breakout") != "breakout":
+        r["intraday"] = {}
+    return r
 
 
 def backtest_job(compare=False):
@@ -1322,7 +1328,7 @@ def scan_once():
 INTRADAY_FROM, INTRADAY_UNTIL = "09:30", intraday.LAST_ENTRY
 # Every 15 minutes from 9:30 to 14:00 (right after each 15-min candle closes) for breakouts;
 # then 14:30 and 15:00 for BTST. BTST is also worked out in every scan from 11:00.
-INTRADAY_SCANS = [(9, 20)] + [(9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60) for i in range(19)]   # 9:20 (ORB), 9:30 ... 14:00
+INTRADAY_SCANS = [(9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60) for i in range(19)]   # 9:30 ... 14:00
 BTST_SCANS = [(14, 30), (15, 0)]
 SCHEDULE = INTRADAY_SCANS + BTST_SCANS
 TRACK_EVERY = 5                                        # minutes: follow the day's trades between scans

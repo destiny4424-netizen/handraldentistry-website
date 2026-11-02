@@ -1,8 +1,10 @@
-"""Intraday picks: 15-minute breakouts of yesterday's high (buy) or low (sell), confirmed by volume.
+"""Intraday picks: 15-minute breakouts of key levels, confirmed by volume. Key levels: yesterday's
+high/low (PDH/PDL), last week's high/low (PWH/PWL) and daily swing highs/lows.
 
 This is the classic day-trader setup, kept deliberately simple (order blocks have their own tab):
 
-    1. Broke the level   a 15-minute candle CLOSES above yesterday's high (PDH) / below its low (PDL)
+    1. Broke the level   a 15-minute candle CLOSES above a key level (buy) / below one (sell) that it
+                         was on the other side of at yesterday's close
     2. Volume            that candle traded at least 1.5x the usual volume for that time of day
     3. Strong candle     it closed near its high (low for a sell) with a real body, not a wick
     4. Holding           no 15-minute close back through the level since, and price is not more than
@@ -20,7 +22,7 @@ from market import supertrend
 from picks import sector_of, sector_table
 
 IST = timezone(timedelta(hours=5, minutes=30))
-STAGES = ["Scanned", "Broke PDH/PDL", "Volume 1.5×+", "Strong candle", "Holding", "Trend agrees", "Intraday picks"]
+STAGES = ["Scanned", "Broke a key level", "Volume 1.5×+", "Strong candle", "Holding", "Trend agrees", "Intraday picks"]
 VOL_X = 1.5                                            # breakout candle volume vs usual for that time
 LAST_ENTRY = "14:00"                                   # no fresh intraday breakouts after this (IST)
 # Rule switches. The backtest compares variants of these; the live scanner uses the ones you choose.
@@ -53,23 +55,35 @@ def usual_volume(c15, day):
 
 
 def analyse(c15, pdh, pdl, price, vwap, now_ts, levels, rules=None):
-    """Best PDH/PDL breakout today for one stock, or (None, stage reached, side)."""
+    """Best key-level breakout today for one stock, or (None, stage reached, side).
+    Key levels: yesterday's high/low (PDH/PDL), last week's high/low (PWH/PWL) and daily swing highs/lows."""
     rules = rules_of(rules)
     closed = [c for c in c15 if c["end"] <= now_ts]
-    if len(closed) < 2 or not pdh or not pdl:
+    if len(closed) < 2:
         return None, 0, None
     day = _day(closed[-1]["t"])
     today = [c for c in closed if _day(c["t"]) == day]
-    if not today:
+    if not today or len(today) == len(closed):
         return None, 0, None
-    if not any(c["c"] > pdh or c["c"] < pdl for c in today):
+    prev_close = closed[len(closed) - len(today) - 1]["c"]          # yesterday's last close
+    keys = [dict(l) for l in levels or []]
+    for name, v in (("PDH", pdh), ("PDL", pdl)):
+        if v and not any(abs(l["price"] - v) / v < 0.002 for l in keys):
+            keys.append({"name": name, "price": v, "weight": 4, "hits": 1})
+    hi_c, lo_c = max(c["c"] for c in today), min(c["c"] for c in today)
+    # A level counts only if today crossed it: it was on the other side at yesterday's close.
+    fresh = [(("bull" if l["price"] >= prev_close else "bear"), l) for l in keys
+             if prev_close <= l["price"] < hi_c or lo_c < l["price"] <= prev_close]
+    if not fresh:
         return None, 0, None                           # nothing broke yet: skip the heavier work
     usual, overall = usual_volume(closed, day)
     a15 = atr(closed)[-1] or price * 0.004
+    st = supertrend(closed) if len(closed) > 12 else []
     best, best_stage, best_side = None, 0, None
-    for side, L in (("bull", pdh), ("bear", pdl)):
+    for side, lv in fresh:
         if rules["sides"] not in ("both", side):
             continue
+        L, name = lv["price"], lv["name"]
         sign = 1 if side == "bull" else -1
         brk_i = next((i for i, c in enumerate(today) if (c["c"] - L) * sign > 0), None)
         if brk_i is None:
@@ -117,12 +131,11 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels, rules=None):
             holding = False                            # the 9:15 candle is too noisy on its own
         if stage >= 3 and holding:
             stage = 4
-        st = supertrend(closed) if len(closed) > 12 else []
         st_ok = bool(st) and (st[-1][1] == 1) == (side == "bull")
         vwap_ok = vwap is None or (price - vwap) * sign >= 0
         if stage >= 4 and vwap_ok and st_ok:
             stage = 5
-        ahead = sorted({round(l["price"], 2) for l in levels if (l["price"] - entry) * sign > 1.0 * risk},
+        ahead = sorted({round(l["price"], 2) for l in keys if (l["price"] - entry) * sign > 1.0 * risk},
                        key=lambda v: (v - entry) * sign)
         t1 = ahead[0] if ahead and (ahead[0] - entry) * sign <= 3 * risk else entry + sign * 1.5 * risk
         t2 = next((v for v in ahead if (v - t1) * sign > 0.5 * risk), entry + sign * 3 * risk)
@@ -130,15 +143,15 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels, rules=None):
             t1, t2 = entry + sign * rules["t1_r"] * risk, entry + sign * 2 * rules["t1_r"] * risk
         if (t2 - t1) * sign <= 0:
             t2 = t1 + sign * 1.5 * risk
-        also = [l["name"] for l in levels if l["name"] in (("PWH",) if side == "bull" else ("PWL",))
-                and (brk["c"] - l["price"]) * sign > 0 and (l["price"] - L) * sign >= 0]
+        also = lv.get("hits", 1) > 1                   # several levels at the same price (confluence)
         word = "Buy above" if side == "bull" else "Sell below"
-        name = "PDH" if side == "bull" else "PDL"
         age = len([c for c in today if c["t"] > brk["t"]])
+        weight = lv.get("weight", 3)                   # PWH/PWL 5, PDH/PDL 4, swing 3 (+ confluence)
         # Score out of 100, in five parts (shown on each pick):
         parts = {"volume": 25 * _clamp((vol_x - 1) / 2),                                   # /25
                  "candle": 12 * _clamp((close_pos - 0.5) / 0.5) + 8 * (1 if gap else _clamp(body)),   # /20
-                 "structure": min(15, 8 * (1 - _clamp(age / 8)) + (5 if retest else 0) + (2 if also else 0)),  # /15
+                 "structure": min(15, 6 * (1 - _clamp(age / 8)) + (5 if retest else 0)
+                                  + 4 * _clamp((weight - 3) / 3)),                          # /15
                  "trend": (5 if st_ok else 0) + (5 if vwap_ok and vwap else 0),             # /25 with sector + NIFTY
                  "participation": 0.0}                                                      # /15: RVOL + OI
         score = sum(parts.values())
@@ -155,7 +168,7 @@ def analyse(c15, pdh, pdl, price, vwap, now_ts, levels, rules=None):
                         "status": "Triggered" if hit else f"{word} {entry:.2f}",
                         "action": f"{word} {entry:.2f}" + (" (retest of " + name + ")" if retest else ""),
                         "pd_rule": True}}
-        if stage > best_stage or (stage == best_stage and best and res["score"] > best["score"]):
+        if stage > best_stage or (stage == best_stage and (best is None or res["score"] > best["score"])):
             best, best_stage, best_side = res, stage, side
     return best, best_stage, best_side
 
@@ -194,11 +207,15 @@ def build(stocks, n_picks=6, picks_open=True, nifty_trend=None, rules=None):
                               sources=[b["plan"]["basis"]]))
         elif not b or stage < 1:
             # Not broken yet: on the watchlist when price is within 0.5% of the level on good volume.
-            pdh, pdl = d.get("pdh"), d.get("pdl")
             rv = res.get("rvol") or 0
-            for sd, L in (("bull", pdh), ("bear", pdl)):
-                if L and rv >= 1.2 and 0 < (L - price if sd == "bull" else price - L) <= L * 0.005:
-                    watch.append({"symbol": sym, "side": sd, "price": price, "basis": f"{'PDH' if sd == 'bull' else 'PDL'} {L:.2f}",
+            keys = [(l["name"], l["price"]) for l in d.get("levels") or []] + \
+                   [(n, v) for n, v in (("PDH", d.get("pdh")), ("PDL", d.get("pdl"))) if v]
+            above = min(((n, L) for n, L in keys if L > price), key=lambda x: x[1], default=None)
+            below = max(((n, L) for n, L in keys if L < price), key=lambda x: x[1], default=None)
+            for sd, lv in (("bull", above), ("bear", below)):
+                if lv and rv >= 1.2 and abs(lv[1] - price) <= lv[1] * 0.005:
+                    n, L = lv
+                    watch.append({"symbol": sym, "side": sd, "price": price, "basis": f"{n} {L:.2f}",
                                   "status": "Near the level", "dist": abs(L - price) / L,
                                   "action": f"{'Buy' if sd == 'bull' else 'Sell'} only after a 15m close {'above' if sd == 'bull' else 'below'} {L:.2f} on 1.5× volume"})
         elif b and stage == 4:

@@ -276,11 +276,6 @@ INTRADAY_VARIANTS = [
     ("Targets 2R / 4R", {"t1_r": 2.0}),
     ("No new entries after 12:00", {"last_entry": "12:00"}),
     ("NIFTY trending + volume 2×", {"nifty": "trending", "vol_x": 2.0}),
-    # Opening Range Breakout on stocks in play (Zarattini, Barbon & Aziz): hold to the close, no target.
-    ("ORB 5-min · stop 10% ATR (study rules)", {"setup": "orb5", "orb_stop": "atr10"}),
-    ("ORB 5-min · stop at the range", {"setup": "orb5", "orb_stop": "range"}),
-    ("ORB 15-min · stop 10% ATR", {"setup": "orb15", "orb_stop": "atr10"}),
-    ("ORB 15-min · stop at the range", {"setup": "orb15", "orb_stop": "range"}),
 ]
 BTST_VARIANTS = [
     ("Current rules", {}),

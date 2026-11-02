@@ -496,7 +496,7 @@
       <b style="font-size:14px">Intraday</b>
       <label for="pickFrom">First intraday scan that gives picks (IST)</label>
       <select id="pickFrom"><option>09:30</option><option>09:45</option><option>10:00</option><option>10:15</option></select>
-      <div class="hint">Intraday = 15-minute breakouts of yesterday's high/low on volume. Scans every 15 minutes from this
+      <div class="hint">Intraday = 15-minute breakouts of key levels (yesterday's high/low, last week's high/low, swing levels) on volume. Scans every 15 minutes from this
       time to 14:00. Every breakout goes into one list (each stock once) to trade when its entry breaks.</div>
       <b style="font-size:14px;display:block;margin-top:14px">Liquid stocks only</b>
       <div class="hint">Only F&amp;O stocks that trade enough are scanned (averages of the last 20 sessions).
@@ -641,7 +641,7 @@
     <div class="ptitle"><h2 id="pickTitle">Intraday picks</h2><small id="pickNote"></small></div>
     <div class="riskbar" id="riskBar" hidden></div>
     <div id="pickList"></div>
-    <div class="ptitle" id="watchTitle" style="margin-top:18px"><h2>Watchlist</h2><small>close to yesterday's high/low, or broke out but not clean yet — not trades until a 15m close beyond the level on volume</small></div>
+    <div class="ptitle" id="watchTitle" style="margin-top:18px"><h2>Watchlist</h2><small>within 0.5% of a key level, or broke out but not clean yet — not trades until a 15m close beyond the level on volume</small></div>
     <div id="watchList"></div>
   </section>
   <section class="panel" id="btstPanel" hidden>
@@ -769,7 +769,7 @@ function render() {
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
   document.querySelector("#bearList").previousElementSibling.textContent = mode === "ob" ? "↘ Bearish" : "↘ Breakdowns";
   $("listHint").textContent = mode === "bo"
-    ? "Every 15-min close through a key level (yesterday's high/low, last week's high/low, swing levels), strong or weak. Bullish = closed above a level, Bearish = closed below one. Only the cleanest yesterday's-high/low breakouts on volume become Intraday picks."
+    ? "Every 15-min close through a key level (yesterday's high/low, last week's high/low, swing levels), strong or weak. Bullish = closed above a level, Bearish = closed below one. Only the clean ones (1.5×+ volume, strong candle, holding, with VWAP + Supertrend) become Intraday picks."
     : mode === "ob" ? "Order blocks and liquidity, strongest first (a separate setup from the Intraday breakouts)." : "";
   renderList("bullList", v.bullish, "bull");
   renderList("bearList", v.bearish, "bear");
@@ -1544,11 +1544,12 @@ function pickChips(c) {
     out.push(`<span>OPENING RANGE ${fmt(c.range[0])}–${fmt(c.range[1])}</span>`);
     out.push(`<span>HOLD TO 3:15 · NO TARGET</span>`);
   } else if (c.vol_x != null) {
-    out.push(`<span class="ok">✓ 15M CLOSE ${bull ? "ABOVE PDH" : "BELOW PDL"} ${fmt(c.level)} AT ${c.broke_at}</span>`);
+    out.push(`<span class="ok">✓ 15M CLOSE ${bull ? "ABOVE" : "BELOW"} ${esc(c.level_name || hl)} ${fmt(c.level)} AT ${c.broke_at}</span>`);
     out.push(`<span class="${c.vol_x >= 2 ? "ok" : ""}">BREAKOUT VOLUME ${c.vol_x}×</span>`);
-    if (c.retest) out.push(`<span class="ok">✓ RETESTED ${hl} AND HELD</span>`);
-    if (c.gap) out.push(`<span>GAP ${bull ? "ABOVE" : "BELOW"} ${hl}</span>`);
-    if ((c.also || []).length) out.push(`<span class="ok">✓ ALSO ${bull ? "ABOVE LAST WEEK'S HIGH" : "BELOW LAST WEEK'S LOW"}</span>`);
+    const ln = esc(c.level_name || hl);
+    if (c.retest) out.push(`<span class="ok">✓ RETESTED ${ln} AND HELD</span>`);
+    if (c.gap) out.push(`<span>GAP ${bull ? "ABOVE" : "BELOW"} ${ln}</span>`);
+    if (c.also === true || (c.also || []).length) out.push(`<span class="ok">✓ SEVERAL LEVELS AT THIS PRICE</span>`);
   }
   if (ch.pd) out.push(ch.pd.ok ? `<span class="ok">✓ 15M CLOSE ${bull ? "ABOVE" : "BELOW"} ${hl} ${fmt(ch.pd.level)} (${ch.pd.time})</span>`
                      : ch.pd.lost ? `<span class="bad">⚠ BACK ${bull ? "BELOW" : "ABOVE"} ${hl} ${fmt(ch.pd.level)}</span>`
@@ -1708,7 +1709,7 @@ function renderPicks() {
   $("pickTitle").textContent = "Today's breakouts";
   renderRiskBar();
   $("watchTitle").hidden = $("watchList").hidden = !!pk.window_closed;
-  $("pickNote").textContent = `15-min close above yesterday's high (buy) / below its low (sell) on 1.5×+ volume, holding, with VWAP + Supertrend` +
+  $("pickNote").textContent = `15-min close above a key level (buy) / below one (sell): yesterday's high/low, last week's high/low or a swing level, on 1.5×+ volume, holding, with VWAP + Supertrend` +
     ` · scans every 15 min 9:30–${pk.intraday_until || "14:00"} · each stock once, newest first` +
     (uv ? ` · ${uv.liquid} of ${uv.total} liquid F&O stocks scanned` : "");
   const hm = t => new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
@@ -1720,7 +1721,7 @@ function renderPicks() {
   const changed = list.dataset.sig !== sig; list.dataset.sig = sig;
   if (!pk.picks.length) {
     list.innerHTML = `<div class="empty">${!state.last_scan ? "Waiting for scan…"
-      : pk.list ? `No clean breakout yet today. Each 15-minute scan (9:30–${pk.intraday_until || "14:00"}) checks every liquid F&O stock; stocks close to yesterday's high/low are on the Watchlist below.`
+      : pk.list ? `No clean breakout yet today. Each 15-minute scan (9:30–${pk.intraday_until || "14:00"}) checks every liquid F&O stock; stocks close to a key level are on the Watchlist below.`
       : pk.picks_open === false ? `Intraday picks start with the ${pk.picks_from} scan. Until then, setups whose level holds wait on the Watchlist below.`
       : "No stock passes every filter right now. The next scan may find some."}</div>`;
   } else {

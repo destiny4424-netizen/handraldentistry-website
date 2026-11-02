@@ -200,8 +200,9 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
 
 ### After that
 - **Schedule:**
-  - **Intraday:** one setup only. A 15-minute candle has to close above yesterday's high (buy) or below
-    its low (sell) on 1.5× the usual volume, hold the level, and agree with VWAP and Supertrend.
+  - **Intraday:** one setup only. A 15-minute candle has to close through a key level on 1.5× the usual
+    volume, hold the level, and agree with VWAP and Supertrend. The key levels are yesterday's high/low,
+    last week's high/low and swing highs/lows. Closing above one is a buy, closing below one is a sell.
     Scans every 15 minutes from 9:30 to 14:00. Every breakout goes into **Today's breakouts**,
     each stock once, newest first, and is followed until 3:15. Order blocks stay on their own tab.
   - **BTST / STBT:** worked out from 11:00, with the final list at 3:00. A BTST must close at the day's
