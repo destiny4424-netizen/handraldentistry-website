@@ -1239,7 +1239,9 @@ function renderBacktest() {
   perfSec($("btBtst"), "Backtest · BTST / STBT", rep.btst, "btst");
 }
 function renderCompare(d) {
-  const c = d.compare, inUse = d.rules || {}, manual = d.manual || {};
+  const c0 = d.compare, inUse = d.rules || {}, manual = d.manual || {};
+  // ORB is switched off: hide its rows from comparisons made before that.
+  const c = c0 && Object.assign({}, c0, { intraday: (c0.intraday || []).filter(r => ((r.rules || {}).setup || "breakout") === "breakout") });
   $("cmpStatus").textContent = c ? `Last compared ${c.ran_at}${c.demo ? " (demo data)" : ""} · ${c.from} → ${c.to}. "Later" = ${c.split} onwards, kept aside to check each variant on days it wasn't chosen on.`
     : "Runs about 10 rule changes on the same history (~20 minutes after the first download) and shows which ones help.";
   const col = v => v == null ? "" : v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
