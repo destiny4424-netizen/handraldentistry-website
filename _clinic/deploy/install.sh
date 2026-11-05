@@ -47,7 +47,8 @@ main() {
   if [ ! -f "$LOGIN" ] || [ -n "${CLINIC_NEW_PASSWORD:-}" ]; then
     step "Creating the doctor's login"
     local pw
-    pw=$(LC_ALL=C tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' < /dev/urandom | head -c 12)
+    # (not tr | head: with pipefail, head closing the pipe makes tr fail and the script stop silently)
+    pw=$(python3 -c "import secrets; a='abcdefghjkmnpqrstuvwxyz23456789'; print(''.join(secrets.choice(a) for _ in range(12)))")
     pw="${pw:0:4}-${pw:4:4}-${pw:8:4}"
     echo "$pw" | runuser -u clinic -- env CLINIC_DB="$DATA/clinic.db" \
       python3 "$REPO/_clinic/server.py" set-password doctor >/dev/null
