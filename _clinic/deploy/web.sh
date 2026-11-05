@@ -59,7 +59,7 @@ CADDY
     echo "Caddy configuration is invalid:"; caddy validate --config "$main_cf" --adapter caddyfile
     return 1
   }
-  if command -v ufw >/dev/null && ufw status | grep -q 'Status: active'; then
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep 'Status: active' >/dev/null; then
     ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
   fi
   systemctl enable caddy >/dev/null 2>&1
