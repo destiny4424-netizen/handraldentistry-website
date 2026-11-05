@@ -122,6 +122,9 @@ dialog::backdrop{background:#000a}
 .toast.on{opacity:1}
 .foot{font-size:12px;color:var(--mute);margin-top:24px;text-align:center}
 #report{display:none}
+#dropOv{position:fixed;inset:0;z-index:40;background:#1d4ed8cc;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;pointer-events:none}
+.lm .au{font-size:11px;border-radius:999px;padding:0 6px;background:#0ea5e933;color:#0369a1}
+.lm .au.low{background:#f9731633;color:#c2410c}
 @media print{
   body>*:not(#report){display:none!important}
   #report{display:block;color:#000;font-size:12px}
@@ -137,6 +140,7 @@ dialog::backdrop{background:#000a}
     <h1>Ortho <span>Assess</span></h1>
     <select id="caseSel" class="btn" aria-label="Case"></select>
     <button class="btn primary" id="newCase">+ New case</button>
+    <label class="btn" title="Photos, scans, X-rays — any format, several at once"><input type="file" id="addAny" multiple hidden>⬆ Add files</label>
     <button class="btn" id="printBtn">Print report</button>
     <button class="btn" id="moreBtn" aria-label="More">⋯</button>
   </div>
@@ -194,7 +198,7 @@ dialog::backdrop{background:#000a}
 <!-- PHOTOS -->
 <section class="tab" id="tab-photos">
   <h2>Photographs</h2>
-  <p class="note">Tap a box to add a photo. Tap a photo to view it with a facial grid, replace or remove it.</p>
+  <p class="note">Tap a box to add a photo, or drop / ⬆ Add files for several at once — JPEG, HEIC (iPhone), PNG, TIFF, BMP, WebP, PDF and DICOM all work. Tap a photo to view it with a facial grid, replace or remove it.</p>
   <div class="slots" id="slots"></div>
   <h2>Extra-oral assessment</h2>
   <div class="card grid">
@@ -229,8 +233,8 @@ dialog::backdrop{background:#000a}
 <section class="tab" id="tab-models">
   <h2>3D dental models</h2>
   <div class="tools">
-    <label class="btn"><input type="file" id="upU" accept=".stl,.obj,.ply" hidden>Upload upper (STL/OBJ/PLY)</label>
-    <label class="btn"><input type="file" id="upL" accept=".stl,.obj,.ply" hidden>Upload lower</label>
+    <label class="btn"><input type="file" id="upU" hidden>Upload upper</label>
+    <label class="btn"><input type="file" id="upL" hidden>Upload lower</label>
     <button class="btn sm" id="tglU" aria-pressed="true">Upper</button>
     <button class="btn sm" id="tglL" aria-pressed="true">Lower</button>
     <select class="btn sm" id="mView" aria-label="View"><option value="">View…</option><option value="front">Front</option><option value="top">From above</option><option value="bottom">From below</option><option value="right">Right side</option><option value="left">Left side</option><option value="back">Back</option></select>
@@ -243,7 +247,7 @@ dialog::backdrop{background:#000a}
   <div class="split">
     <div class="stage" id="mStage">
       <canvas id="mGL"></canvas><canvas id="mOv" style="pointer-events:none"></canvas>
-      <div class="empty" id="mEmpty">Upload the upper and lower scans (STL, OBJ or PLY, in mm).<br>Drag to rotate · right-drag or two fingers to move · scroll or pinch to zoom.</div>
+      <div class="empty" id="mEmpty">Upload or drop the upper and lower scans — STL, OBJ, PLY, or a ZIP containing them (in mm).<br>Drag to rotate · right-drag or two fingers to move · scroll or pinch to zoom.</div>
       <div class="hint" id="mHint" hidden></div>
     </div>
     <div>
@@ -301,7 +305,10 @@ dialog::backdrop{background:#000a}
 <section class="tab" id="tab-ceph">
   <h2>Lateral cephalogram</h2>
   <div class="tools">
-    <label class="btn"><input type="file" id="upCeph" accept="image/*" hidden>Upload ceph</label>
+    <label class="btn"><input type="file" id="upCeph" hidden>Upload ceph</label>
+    <button class="btn sm primary" id="cAI" title="Find all landmarks with Claude AI">✨ Auto-detect</button>
+    <button class="btn sm" id="cQ3" aria-pressed="false" title="Tap S, N and Me — the rest are placed from an average skull">Quick place (3 taps)</button>
+    <button class="btn sm" id="cOK" hidden>✓ Accept all</button>
     <button class="btn sm" id="cCal" aria-pressed="false">Calibrate (ruler)</button>
     <label class="note">mm / pixel <input type="number" step="0.0001" data-k="ceph.mmpp" style="width:90px" class="btn sm"></label>
     <label class="note">☀︎ <input type="range" id="cBri" min="0.4" max="2" step="0.05" value="1"></label>
@@ -311,7 +318,7 @@ dialog::backdrop{background:#000a}
     <button class="btn sm" id="cFit">Fit</button>
   </div>
   <div class="split">
-    <div class="stage" id="cStage"><canvas id="cCv"></canvas><div class="empty" id="cEmpty">Upload a lateral cephalogram (patient facing either way).<br>Then tap each landmark in turn. Drag a placed point to adjust it.</div><div class="hint" id="cHint" hidden></div></div>
+    <div class="stage" id="cStage"><canvas id="cCv"></canvas><div class="empty" id="cEmpty">Upload or drop a lateral ceph — DICOM (.dcm), JPEG, PNG, TIFF, HEIC or PDF.<br>Then press ✨ Auto-detect, or tap each landmark in turn. Drag any point to adjust it.</div><div class="hint" id="cHint" hidden></div></div>
     <div class="lmlist" id="lmList"></div>
   </div>
   <h2>Cervical vertebral maturation</h2>
@@ -335,13 +342,13 @@ dialog::backdrop{background:#000a}
 <section class="tab" id="tab-opg">
   <h2>OPG (panoramic radiograph)</h2>
   <div class="tools">
-    <label class="btn"><input type="file" id="upOpg" accept="image/*" hidden>Upload OPG</label>
+    <label class="btn"><input type="file" id="upOpg" hidden>Upload OPG</label>
     <label class="note">☀︎ <input type="range" id="oBri" min="0.4" max="2" step="0.05" value="1"></label>
     <label class="note">◐ <input type="range" id="oCon" min="0.4" max="2.5" step="0.05" value="1"></label>
     <button class="btn sm" id="oInv" aria-pressed="false">Invert</button>
     <button class="btn sm" id="oFit">Fit</button>
   </div>
-  <div class="stage" id="oStage" style="height:min(55vh,560px)"><canvas id="oCv"></canvas><div class="empty" id="oEmpty">Upload the OPG. Drag to move, scroll or pinch to zoom.</div></div>
+  <div class="stage" id="oStage" style="height:min(55vh,560px)"><canvas id="oCv"></canvas><div class="empty" id="oEmpty">Upload or drop the OPG — DICOM, JPEG, PNG, TIFF, HEIC or PDF. Drag to move, scroll or pinch to zoom.</div></div>
   <h2>Dental chart</h2>
   <p class="note">Pick a finding, then tap the teeth it applies to. Tap again to set back to present.</p>
   <div class="legend" id="brushes"></div>
@@ -398,7 +405,7 @@ dialog::backdrop{background:#000a}
 </main>
 
 <dialog id="pvDlg"><div class="pv" id="pvBox"><img id="pvImg" alt=""><svg class="gridov" viewBox="0 0 100 100" preserveAspectRatio="none"><g stroke="#0ff" stroke-width=".25" fill="none" opacity=".85"><line x1="50" y1="0" x2="50" y2="100"/><line x1="0" y1="33.3" x2="100" y2="33.3"/><line x1="0" y1="66.6" x2="100" y2="66.6"/><line x1="25" y1="0" x2="25" y2="100" stroke-dasharray="1 1"/><line x1="75" y1="0" x2="75" y2="100" stroke-dasharray="1 1"/></g></svg></div>
-  <div class="row" style="padding:10px"><b id="pvTitle" style="flex:1"></b><button class="btn sm" id="pvGrid" aria-pressed="false">Grid</button><label class="btn sm"><input type="file" id="pvRep" accept="image/*" hidden>Replace</label><button class="btn sm danger" id="pvDel">Remove</button><button class="btn sm primary" id="pvClose">Close</button></div></dialog>
+  <div class="row" style="padding:10px"><b id="pvTitle" style="flex:1"></b><button class="btn sm" id="pvGrid" aria-pressed="false">Grid</button><label class="btn sm"><input type="file" id="pvRep" hidden>Replace</label><button class="btn sm danger" id="pvDel">Remove</button><button class="btn sm primary" id="pvClose">Close</button></div></dialog>
 
 <dialog id="moreDlg"><div style="padding:16px;display:flex;flex-direction:column;gap:8px">
   <b>Case</b>
@@ -408,6 +415,16 @@ dialog::backdrop{background:#000a}
   <button class="btn" onclick="this.closest('dialog').close()">Close</button>
 </div></dialog>
 
+<dialog id="signDlg"><form method="dialog" id="signForm" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+  <b>Sign in to the clinic server</b>
+  <span class="note">Auto-detect uses the Claude AI key saved in the clinic app (Settings → Claude AI). Sign in with your clinic login — the same one as handraldentistry.com/clinic.</span>
+  <label class="f">Username<input id="sgUser" autocomplete="username" required></label>
+  <label class="f">Password<input id="sgPass" type="password" autocomplete="current-password" required></label>
+  <details><summary class="note">Server</summary><label class="f">Clinic server address<input id="sgApi"></label></details>
+  <div class="note" id="sgErr" style="color:var(--bad)"></div>
+  <div class="row"><button class="btn primary" id="sgGo" value="go">Sign in</button><button class="btn" value="cancel" formnovalidate>Cancel</button></div>
+</form></dialog>
+<div id="dropOv" hidden><div>Drop files to add them to this case</div></div>
 <div id="report"></div>
 <div class="toast" id="toast"></div>
 
@@ -437,7 +454,7 @@ const DB={db:null,mem:{cases:new Map(),blobs:new Map()},
 
 let cases=[], cur=null, saveT=null;
 const urlCache=new Map();
-function blankCase(){return{id:uid(),created:Date.now(),pt:{name:'',h:{}},photos:{},fx:{},models:{},occ:{},w:{},arch:{},ceph:{pts:{}},opg:{teeth:{},f:{}},plan:{sel:[],refs:[]}}}
+function blankCase(){return{id:uid(),created:Date.now(),pt:{name:'',h:{}},photos:{},fx:{},models:{},occ:{},w:{},arch:{},ceph:{pts:{},auto:{}},opg:{teeth:{},f:{}},plan:{sel:[],refs:[]}}}
 function save(){if(!cur)return;clearTimeout(saveT);saveT=setTimeout(()=>{cur.updated=Date.now();DB.put(cur).catch(e=>toast('Could not save: '+e.message))},250)}
 function saveNow(){clearTimeout(saveT);if(cur)return DB.put(cur)}
 async function blobURL(k){if(!k)return null;if(urlCache.has(k))return urlCache.get(k);const b=await DB.getBlob(k);if(!b)return null;const u=URL.createObjectURL(b);urlCache.set(k,u);return u}
@@ -448,7 +465,7 @@ function blobRefs(c){const r=[];for(const s in c.photos)if(c.photos[s])r.push([c
 function caseLabel(c){return (c.pt.name||'Unnamed case')+(c.pt.file?' · '+c.pt.file:'')}
 function renderCaseSel(){const s=$('#caseSel');s.innerHTML=cases.sort((a,b)=>(b.updated||b.created)-(a.updated||a.created)).map(c=>`<option value="${c.id}">${esc(caseLabel(c))}</option>`).join('');if(cur)s.value=cur.id}
 async function openCase(c){await saveNow();for(const u of urlCache.values())URL.revokeObjectURL(u);urlCache.clear();cur=c;
-  for(const k of['photos','fx','models','occ','w','arch'])cur[k]=cur[k]||{};cur.ceph=cur.ceph||{pts:{}};cur.ceph.pts=cur.ceph.pts||{};cur.opg=cur.opg||{teeth:{},f:{}};cur.plan=cur.plan||{};cur.plan.sel=cur.plan.sel||[];cur.plan.refs=cur.plan.refs||[];cur.pt.h=cur.pt.h||{};
+  for(const k of['photos','fx','models','occ','w','arch'])cur[k]=cur[k]||{};cur.ceph=cur.ceph||{pts:{}};cur.ceph.pts=cur.ceph.pts||{};cur.ceph.auto=cur.ceph.auto||{};q3=null;cur.opg=cur.opg||{teeth:{},f:{}};cur.plan=cur.plan||{};cur.plan.sel=cur.plan.sel||[];cur.plan.refs=cur.plan.refs||[];cur.pt.h=cur.pt.h||{};
   try{localStorage.setItem('oa-last',c.id)}catch(e){}
   renderCaseSel();bindAll();renderPhotos();renderWidths();renderAnalysis();renderBrushes();renderChart();lmIdx=nextMissing(0);renderLm();renderCephTable();updDots();
   cephView.setImage(null);opgView.setImage(null);mesh.clear();
@@ -493,14 +510,113 @@ function updDots(){if(!cur)return;const d=$$('#tabs .dot');const has=o=>Object.v
   d[0].classList.toggle('on',!!(cur.pt.name||cur.pt.cc));d[1].classList.toggle('on',Object.values(cur.photos).some(Boolean));d[2].classList.toggle('on',!!(cur.models.upper||cur.models.lower||has(cur.occ)));
   d[3].classList.toggle('on',!!cur.ceph.img);d[4].classList.toggle('on',!!cur.opg.img)}
 
+/* ---------- opening files of any format ---------- */
+const LIB={heic:'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js',pako:'https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako_inflate.min.js',utif:'https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js',
+  pdf:'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',pdfw:'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',zip:'https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js'};
+const libP={};
+function loadLib(u){return libP[u]||(libP[u]=new Promise((res,rej)=>{const s=document.createElement('script');s.src=u;s.crossOrigin='anonymous';s.onload=res;s.onerror=()=>{delete libP[u];s.remove();rej(new Error('could not download the file reader — check the internet connection'))};document.head.appendChild(s)}))}
+const asc=(u8,a,b)=>String.fromCharCode(...u8.subarray(a,b));
+function sniff(u8,name){const ext=(name||'').toLowerCase().split('.').pop();
+  if(u8.length>132&&asc(u8,128,132)==='DICM')return'dicom';
+  if(asc(u8,0,4)==='%PDF')return'pdf';
+  if((u8[0]===0x49&&u8[1]===0x49&&u8[2]===42&&u8[3]===0)||(u8[0]===0x4d&&u8[1]===0x4d&&u8[2]===0&&u8[3]===42))return'tiff';
+  if(asc(u8,4,8)==='ftyp'){const b=asc(u8,8,12);if(/^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(b))return'heic'}
+  if(u8[0]===0x50&&u8[1]===0x4b&&u8[2]===3&&u8[3]===4)return'zip';
+  if(asc(u8,0,3)==='ply')return'ply';
+  if(['stl','obj','ply'].includes(ext))return ext;
+  if(['dcm','dicom','dic'].includes(ext))return'dicom';
+  if(/^(\xff\xd8|\x89PNG|GIF8|BM|RIFF)/.test(asc(u8,0,4)))return'image';
+  // DICOM written without the 128-byte preamble starts with group 0002 or 0008
+  if(u8.length>8&&((u8[0]===2&&u8[1]===0)||(u8[0]===8&&u8[1]===0))&&/^[A-Z]{2}$/.test(asc(u8,4,6)))return'dicom';
+  if(ext==='3mf')return'3mf';
+  return'image'}
+function canvasBlob(c,type='image/png',q){return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error('could not convert the image')),type,q))}
+function imgOK(blob){return new Promise(res=>{const u=URL.createObjectURL(blob),i=new Image();i.onload=()=>{URL.revokeObjectURL(u);res(i.width>0)};i.onerror=()=>{URL.revokeObjectURL(u);res(false)};i.src=u})}
+async function rgbaToBlob(rgba,w,h){const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer,rgba.byteOffset,w*h*4),w,h),0,0);return canvasBlob(c)}
+/* DICOM: uncompressed (8/16-bit grey or RGB) and JPEG-compressed images */
+function parseDicom(buf){const dv=new DataView(buf),u8=new Uint8Array(buf);let o=u8.length>132&&asc(u8,128,132)==='DICM'?132:0;
+  const LONG=new Set(['OB','OD','OF','OL','OW','SQ','UC','UR','UT','UN','OV','SV','UV']),E={};let ts='',explicit=true,decided=false;
+  const isVR=p=>p+6<=u8.length&&/^[A-Z]{2}$/.test(asc(u8,p+4,p+6));
+  function elem(p,exp){const g=dv.getUint16(p,true),e=dv.getUint16(p+2,true);if(g===0xFFFE)return{g,e,vo:p+8,len:dv.getUint32(p+4,true),hl:8};
+    if(exp){const vr=asc(u8,p+4,p+6);if(LONG.has(vr))return{g,e,vr,vo:p+12,len:dv.getUint32(p+8,true)};return{g,e,vr,vo:p+8,len:dv.getUint16(p+6,true)}}
+    return{g,e,vo:p+8,len:dv.getUint32(p+4,true)}}
+  function skipUndef(p,exp){while(p+8<=u8.length){const x=elem(p,exp);if(x.g===0xFFFE&&(x.e===0xE0DD||x.e===0xE00D))return x.vo;
+      if(x.len===0xFFFFFFFF)p=skipUndef(x.vo,exp);else p=x.vo+x.len}return u8.length}
+  while(o+8<=u8.length){const g=dv.getUint16(o,true);if(g!==2&&!decided){explicit=ts?ts!=='1.2.840.10008.1.2':isVR(o);decided=true}
+    const x=elem(o,g===2?true:explicit),tag=((x.g<<16)|x.e)>>>0;
+    if(tag===0x7FE00010){if(x.len===0xFFFFFFFF){const fr=[];let q=x.vo;while(q+8<=u8.length){const ie=dv.getUint16(q+2,true),il=dv.getUint32(q+4,true);q+=8;if(ie===0xE0DD)break;fr.push(u8.subarray(q,q+il));q+=il}E.frags=fr.slice(1)}else E.pixel={o:x.vo,len:x.len};break}
+    if(x.len===0xFFFFFFFF){o=skipUndef(x.vo,g===2?true:explicit);continue}
+    E[tag]={o:x.vo,len:x.len};if(tag===0x00020010)ts=asc(u8,x.vo,x.vo+x.len).replace(/[\0 ]+$/,'');o=x.vo+x.len}
+  const str=t=>E[t]?asc(u8,E[t].o,E[t].o+E[t].len).replace(/[\0 ]+$/,'').trim():'',us=t=>E[t]?dv.getUint16(E[t].o,true):0,ds=t=>{const v=parseFloat(str(t).split('\\')[0]);return isNaN(v)?null:v};
+  return{ts,E,str,us,ds,u8,dv}}
+async function dicomToBlob(buf){const d=parseDicom(buf),rows=d.us(0x00280010),cols=d.us(0x00280011);if(!rows||!cols)throw new Error('this DICOM file has no image in it');
+  const spacing=d.ds(0x00280030)||d.ds(0x00181164)||null;
+  if(d.E.frags){if(/^1\.2\.840\.10008\.1\.2\.4\.(50|51)$/.test(d.ts)||!d.ts){const b=new Blob(d.E.frags,{type:'image/jpeg'});if(await imgOK(b))return{blob:b,mmpp:spacing}}
+    throw new Error('this DICOM uses a compression the browser cannot read ('+d.ts+'). Export it as JPEG or PNG from the X-ray software')}
+  if(!d.E.pixel)throw new Error('this DICOM file has no image in it');
+  const bits=d.us(0x00280100)||8,spp=d.us(0x00280002)||1,signed=d.us(0x00280103)===1,photo=d.str(0x00280004)||'MONOCHROME2',planar=d.us(0x00280006),slope=d.ds(0x00281053)??1,icpt=d.ds(0x00281052)??0;
+  const n=rows*cols,o=d.E.pixel.o,out=new Uint8ClampedArray(n*4);
+  if(spp===3){for(let i=0;i<n;i++){for(let c=0;c<3;c++)out[i*4+c]=planar?d.u8[o+c*n+i]:d.u8[o+i*3+c];out[i*4+3]=255}}
+  else{const v=new Float32Array(n);for(let i=0;i<n;i++){let x=bits>8?(signed?d.dv.getInt16(o+i*2,true):d.dv.getUint16(o+i*2,true)):(signed?d.dv.getInt8(o+i):d.u8[o+i]);v[i]=x*slope+icpt}
+    let wc=d.ds(0x00281050),ww=d.ds(0x00281051),lo,hi;
+    if(wc!=null&&ww>1){lo=wc-ww/2;hi=wc+ww/2}else{const smp=[];for(let i=0;i<n;i+=Math.max(1,n>>14|0))smp.push(v[i]);smp.sort((a,b)=>a-b);lo=smp[Math.floor(smp.length*0.005)];hi=smp[Math.floor(smp.length*0.995)];if(hi<=lo)hi=lo+1}
+    const inv=photo==='MONOCHROME1',k=255/(hi-lo);for(let i=0;i<n;i++){let g=(v[i]-lo)*k;g=g<0?0:g>255?255:g;if(inv)g=255-g;out[i*4]=out[i*4+1]=out[i*4+2]=g;out[i*4+3]=255}}
+  return{blob:await rgbaToBlob(out,cols,rows),mmpp:spacing}}
+async function decodeImage(file){const buf=await file.arrayBuffer(),u8=new Uint8Array(buf),t=sniff(u8,file.name);
+  if(t==='dicom')return dicomToBlob(buf);
+  if(['zip','stl','obj','ply','3mf'].includes(t))throw new Error('this is a 3D model — add it in the 3D models tab');
+  if(await imgOK(file))return{blob:file};           // the browser reads it itself (Safari also reads HEIC and TIFF)
+  if(t==='heic'){await loadLib(LIB.heic);const b=await heic2any({blob:file,toType:'image/jpeg',quality:0.92});return{blob:Array.isArray(b)?b[0]:b}}
+  if(t==='tiff'){await loadLib(LIB.pako).catch(()=>{});await loadLib(LIB.utif);const ifds=UTIF.decode(buf);const f=ifds.find(i=>i.t256)||ifds[0];UTIF.decodeImage(buf,f,ifds);return{blob:await rgbaToBlob(UTIF.toRGBA8(f),f.width,f.height)}}
+  if(t==='pdf'){await loadLib(LIB.pdf);pdfjsLib.GlobalWorkerOptions.workerSrc=LIB.pdfw;const doc=await pdfjsLib.getDocument({data:u8}).promise,pg=await doc.getPage(1),v0=pg.getViewport({scale:1}),v=pg.getViewport({scale:Math.min(5,3200/Math.max(v0.width,v0.height))});
+    const c=document.createElement('canvas');c.width=Math.round(v.width);c.height=Math.round(v.height);await pg.render({canvasContext:c.getContext('2d'),viewport:v}).promise;return{blob:await canvasBlob(c,'image/jpeg',0.92)}}
+  throw new Error('this file could not be opened as a picture')}
+/* 3D: STL / OBJ / PLY, or a ZIP holding them */
+async function modelEntries(file){const buf=await file.arrayBuffer(),u8=new Uint8Array(buf),t=sniff(u8,file.name);
+  if(t==='zip'){await loadLib(LIB.zip);const all=fflate.unzipSync(u8,{filter:f=>/\.(stl|obj|ply)$/i.test(f.name)&&!/(^|\/)(__MACOSX|\.)/.test(f.name)});
+    const list=Object.entries(all).map(([n,d])=>({name:n.split('/').pop(),buf:d.buffer.slice(d.byteOffset,d.byteOffset+d.byteLength)}));if(!list.length)throw new Error('no STL, OBJ or PLY files inside this ZIP');return list}
+  if(t==='3mf')throw new Error('3MF is not supported yet — export STL, OBJ or PLY from the scanner software');
+  if(['dicom','pdf','tiff','heic'].includes(t)||(t==='image'&&!/\.(stl|obj|ply)$/i.test(file.name)&&/^(\xff\xd8|\x89PNG|GIF8)/.test(asc(u8,0,4))))throw new Error('this is a picture, not a 3D model');
+  return[{name:file.name,buf}]}
+const sideOf=n=>/(upper|maxill|\bmax\b|\bupr\b|top|_u\b|-u\b|\bu\.)/i.test(n)?'upper':/(lower|mandib|\bmand\b|\blwr\b|bottom|_l\b|-l\b|\bl\.)/i.test(n)?'lower':null;
+async function addModels(files,want){let n=0;for(const f of files){let list;try{list=await modelEntries(f)}catch(e){toast(f.name+': '+e.message);continue}
+  for(const m of list){const side=want&&list.length===1?want:sideOf(m.name)||(!cur.models.upper?'upper':!cur.models.lower?'lower':'upper');await loadModel(side,new File([m.buf],m.name));n++;want=null}}return n}
+/* sort a mixed batch of files into the right places */
+async function isGreyWide(blob){const u=URL.createObjectURL(blob);try{const i=await loadImg(u),c=document.createElement('canvas');c.width=48;c.height=48;const x=c.getContext('2d');x.drawImage(i,0,0,48,48);const d=x.getImageData(0,0,48,48).data;let s=0;for(let k=0;k<d.length;k+=4)s+=Math.abs(d[k]-d[k+1])+Math.abs(d[k+1]-d[k+2]);return{grey:s/(d.length/4)<10,wide:i.width/i.height>1.6}}finally{URL.revokeObjectURL(u)}}
+const PHOTO_HINTS=[['es',/smil/i],['e45',/(45|3.?4|oblique)/i],['ep',/(profile|lateral face|side face)/i],['ioj',/(overjet|oj)/i],['iu',/(upper|max).*occ|occ.*(upper|max)/i],['ilo',/(lower|mand).*occ|occ.*(lower|mand)/i],['ir',/right/i],['il',/left/i],['if',/(front|anterior).*(intra|teeth)|intra.*front/i],['ef',/(front|face)/i]];
+async function routeFiles(files){if(!cur)return;const done={photo:0,ceph:0,opg:0,model:0},bad=[];toast('Adding '+files.length+' file'+(files.length>1?'s':'')+'…');
+  for(const f of files){try{const head=new Uint8Array(await f.slice(0,512).arrayBuffer()),t=sniff(head,f.name),n=f.name.toLowerCase();
+      if(['zip','stl','obj','ply','3mf'].includes(t)){done.model+=await addModels([f]);continue}
+      const d=await decodeImage(f);let where=/(ceph|lat(eral)?[ _-]?(ceph|skull|xray|x-ray)|\blat\b)/.test(n)?'ceph':/(opg|pano|\bdpt\b|orthopan)/.test(n)?'opg':null;
+      if(!where&&(t==='dicom'||(await isGreyWide(d.blob)).grey)){const g=await isGreyWide(d.blob);where=g.wide?(cur.opg.img?'ceph':'opg'):(cur.ceph.img?'opg':'ceph')}
+      if(where==='ceph'){await storeXray('ceph',d,cephView);done.ceph++}else if(where==='opg'){await storeXray('opg',d,opgView);done.opg++}
+      else{const hint=PHOTO_HINTS.find(([k,re])=>re.test(n)&&!cur.photos[k]),slot=hint?hint[0]:(SLOTS.find(([k])=>!cur.photos[k])||[])[0];if(!slot){bad.push(f.name+' (all photo boxes are full)');continue}await storePhoto(slot,d.blob);done.photo++}}
+    catch(e){bad.push(f.name+': '+e.message)}}
+  const parts=[done.photo&&done.photo+' photo'+(done.photo>1?'s':''),done.ceph&&'ceph',done.opg&&'OPG',done.model&&done.model+' 3D model'+(done.model>1?'s':'')].filter(Boolean);
+  toast((parts.length?'Added '+parts.join(', '):'Nothing added')+(bad.length?' — could not add '+bad.join('; '):''));
+  if(done.model&&curTab!=='models')showTab('models');else if(done.ceph&&!done.photo&&curTab!=='ceph')showTab('ceph');else if(done.opg&&!done.photo&&!done.ceph)showTab('opg');else if(done.photo&&curTab!=='photos')showTab('photos')}
+$('#addAny').onchange=e=>{const fs=[...e.target.files];e.target.value='';if(fs.length)routeFiles(fs)};
+let dragN=0;
+addEventListener('dragenter',e=>{if(e.dataTransfer&&[...e.dataTransfer.types].includes('Files')){dragN++;$('#dropOv').hidden=false}});
+addEventListener('dragleave',()=>{if(--dragN<=0){dragN=0;$('#dropOv').hidden=true}});
+addEventListener('dragover',e=>{if(e.dataTransfer&&[...e.dataTransfer.types].includes('Files'))e.preventDefault()});
+addEventListener('drop',async e=>{if(!e.dataTransfer||!e.dataTransfer.files.length)return;e.preventDefault();dragN=0;$('#dropOv').hidden=true;const fs=[...e.dataTransfer.files],t=e.target;
+  const slot=t.closest&&t.closest('.slot');if(slot&&fs.length===1){phSlot=slot.dataset.slot;return setPhoto(phSlot,fs[0])}
+  if(t.closest&&t.closest('#cStage')&&fs.length===1)return setXray('ceph',fs[0],cephView);
+  if(t.closest&&t.closest('#oStage')&&fs.length===1)return setXray('opg',fs[0],opgView);
+  if(t.closest&&t.closest('#mStage'))return addModels(fs);
+  routeFiles(fs)});
+addEventListener('paste',e=>{const fs=[...(e.clipboardData&&e.clipboardData.files)||[]];if(fs.length&&!/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)){e.preventDefault();routeFiles(fs)}});
+
 /* ---------- photographs ---------- */
 const SLOTS=[['ef','Face – frontal at rest'],['es','Face – frontal smile'],['ep','Face – profile'],['e45','Face – ¾ smile'],['ir','Intra-oral – right buccal'],['if','Intra-oral – frontal'],['il','Intra-oral – left buccal'],['iu','Upper occlusal'],['ilo','Lower occlusal'],['ioj','Overjet (side view)']];
-async function renderPhotos(){const box=$('#slots');box.innerHTML=SLOTS.map(([k,l])=>`<div class="slot ${cur.photos[k]?'has':''}" data-slot="${k}"><div class="im ${cur.photos[k]?'full':''}">${cur.photos[k]?'':'+ Add photo'}</div><div class="lb">${esc(l)}</div></div>`).join('')+`<input type="file" id="phFile" accept="image/*" hidden>`;
+async function renderPhotos(){const box=$('#slots');box.innerHTML=SLOTS.map(([k,l])=>`<div class="slot ${cur.photos[k]?'has':''}" data-slot="${k}"><div class="im ${cur.photos[k]?'full':''}">${cur.photos[k]?'':'+ Add photo'}</div><div class="lb">${esc(l)}</div></div>`).join('')+`<input type="file" id="phFile" hidden>`;
   for(const[k]of SLOTS)if(cur.photos[k]){const u=await blobURL(cur.photos[k]);const im=$(`.slot[data-slot="${k}"] .im`,box);if(u&&im)im.innerHTML=`<img src="${u}" alt="">`}}
 let phSlot=null;
 $('#slots').onclick=e=>{const s=e.target.closest('.slot');if(!s)return;phSlot=s.dataset.slot;if(cur.photos[phSlot])openPv();else $('#phFile').click()};
 $('#slots').addEventListener('change',async e=>{if(e.target.id!=='phFile')return;const f=e.target.files[0];e.target.value='';if(f)await setPhoto(phSlot,f)});
-async function setPhoto(slot,f){const old=cur.photos[slot];const k='b:'+uid();await DB.putBlob(k,f);cur.photos[slot]=k;if(old)await DB.delBlob(old);save();renderPhotos();updDots()}
+async function setPhoto(slot,f){try{const d=await decodeImage(f);await storePhoto(slot,d.blob)}catch(e){toast(f.name+': '+e.message)}}
+async function storePhoto(slot,blob){const old=cur.photos[slot];const k='b:'+uid();await DB.putBlob(k,blob);cur.photos[slot]=k;if(old)await DB.delBlob(old);saveNow();renderPhotos();updDots()}
 async function openPv(){$('#pvImg').src=await blobURL(cur.photos[phSlot]);$('#pvTitle').textContent=SLOTS.find(s=>s[0]===phSlot)[1];$('#pvDlg').showModal()}
 $('#pvClose').onclick=()=>$('#pvDlg').close();
 $('#pvGrid').onclick=e=>{const on=e.target.getAttribute('aria-pressed')!=='true';e.target.setAttribute('aria-pressed',on);$('#pvBox').classList.toggle('grid',on)};
@@ -536,8 +652,10 @@ class ImgView{
 }
 function imgControls(view,p){$('#'+p+'Bri').oninput=e=>{view.bri=+e.target.value;view.draw()};$('#'+p+'Con').oninput=e=>{view.con=+e.target.value;view.draw()};
   $('#'+p+'Inv').onclick=e=>{view.inv=!view.inv;e.target.setAttribute('aria-pressed',view.inv);view.draw()};$('#'+p+'Fit').onclick=()=>view.fit()}
-async function setXray(which,f,view){const old=cur[which].img;const k='b:'+uid();await DB.putBlob(k,f);cur[which].img=k;if(old){await DB.delBlob(old);if(urlCache.has(old)){URL.revokeObjectURL(urlCache.get(old));urlCache.delete(old)}}
-  save();try{view.setImage(await loadImg(await blobURL(k)))}catch(e){toast(e.message)}updDots()}
+async function setXray(which,f,view){try{const d=await decodeImage(f);if(which==='ceph'&&Object.keys(cur.ceph.pts).length&&!confirm('Keep the landmarks already placed? (Cancel clears them)')){cur.ceph.pts={};cur.ceph.auto={}}await storeXray(which,d,view)}catch(e){toast(f.name+': '+e.message)}}
+async function storeXray(which,d,view){const old=cur[which].img;const k='b:'+uid();await DB.putBlob(k,d.blob);cur[which].img=k;
+  if(which==='ceph'){if(d.mmpp&&!num(cur.ceph.mmpp)){cur.ceph.mmpp=d.mmpp;$('[data-k="ceph.mmpp"]').value=d.mmpp;toast('Calibration read from the DICOM file: '+d.mmpp+' mm/pixel — check it against the ruler')}lmIdx=nextMissing(0);renderLm();renderCephTable()}if(old){await DB.delBlob(old);if(urlCache.has(old)){URL.revokeObjectURL(urlCache.get(old));urlCache.delete(old)}}
+  saveNow();try{view.setImage(await loadImg(await blobURL(k)))}catch(e){toast(e.message)}updDots()}
 
 /* ---------- cephalometrics ---------- */
 const LMS=[
@@ -598,31 +716,74 @@ function cephMeasures(c){
   return out}
 let lmIdx=0,calMode=false,calPts=[];
 function nextMissing(from){for(let i=0;i<LMS.length;i++){const j=(from+i)%LMS.length;if(!cur.ceph.pts[LMS[j][0]])return j}return Math.min(from,LMS.length-1)}
-function renderLm(){$('#lmList').innerHTML=LMS.map(([k,n,d],i)=>`<div class="lm ${i===lmIdx?'cur':''}" data-i="${i}"><b>${k}</b><span class="d"><span style="color:var(--ink)">${esc(n)}</span><br>${esc(d)}</span>${cur.ceph.pts[k]?`<span class="ok">✓</span><button class="btn sm" data-clr="${k}" title="Remove">×</button>`:''}</div>`).join('');
-  const h=$('#cHint');if(cephView.img){h.hidden=false;h.textContent=calMode?`Calibrate: tap ${calPts.length?'the second':'the first'} point on the ruler`:(LMS.every(l=>cur.ceph.pts[l[0]])?'All landmarks placed — drag any point to adjust it':`Tap to place ${LMS[lmIdx][1]} — ${LMS[lmIdx][2]}`)}else h.hidden=true}
-$('#lmList').onclick=e=>{const c=e.target.closest('[data-clr]');if(c){delete cur.ceph.pts[c.dataset.clr];save();renderLm();renderCephTable();cephView.draw();return}const r=e.target.closest('.lm');if(r){lmIdx=+r.dataset.i;renderLm()}};
+function renderLm(){$('#lmList').innerHTML=LMS.map(([k,n,d],i)=>`<div class="lm ${i===lmIdx?'cur':''}" data-i="${i}"><b>${k}</b><span class="d"><span style="color:var(--ink)">${esc(n)}</span><br>${esc(d)}</span>${cur.ceph.auto&&cur.ceph.auto[k]?`<span class="au ${cur.ceph.auto[k]==='low'?'low':''}">${cur.ceph.auto[k]==='tpl'?'draft':'auto'}</span>`:''}${cur.ceph.pts[k]?`<span class="ok">${cur.ceph.auto&&cur.ceph.auto[k]?'?':'✓'}</span><button class="btn sm" data-clr="${k}" title="Remove">×</button>`:''}</div>`).join('');
+  const h=$('#cHint');if(cephView.img){h.hidden=false;$('#cOK').hidden=!Object.keys(cur.ceph.auto||{}).length;if(aiBusy)return;h.textContent=q3?`Quick place: tap ${LMS.find(l=>l[0]===Q3[q3.length])[1]} (${q3.length+1} of 3)`:calMode?`Calibrate: tap ${calPts.length?'the second':'the first'} point on the ruler`:(LMS.every(l=>cur.ceph.pts[l[0]])?'All landmarks placed — drag any point to adjust it':`Tap to place ${LMS[lmIdx][1]} — ${LMS[lmIdx][2]}`)}else h.hidden=true}
+$('#lmList').onclick=e=>{const c=e.target.closest('[data-clr]');if(c){delete cur.ceph.pts[c.dataset.clr];delete cur.ceph.auto[c.dataset.clr];save();renderLm();renderCephTable();cephView.draw();return}const r=e.target.closest('.lm');if(r){lmIdx=+r.dataset.i;renderLm()}};
 const LINES=[['S','N'],['N','A'],['N','B'],['Po','Or'],['Go','Me'],['ANS','PNS'],['U1A','U1T'],['L1A','L1T'],['Prn','PogS'],['N','Pog'],['S','Gn']];
 const cephView=new ImgView($('#cStage'),$('#cCv'),{empty:$('#cEmpty'),
   hit:(q,tol)=>{let best=null,bd=tol;for(const k in cur.ceph.pts){const d=len(sub(cur.ceph.pts[k],q));if(d<bd){bd=d;best=k}}return best},
-  onDrag:(k,q)=>{cur.ceph.pts[k]=q.map(r1)},onDrop:()=>{save();renderCephTable()},
-  onTap:q=>{if(calMode){calPts.push(q);if(calPts.length===2){const px=len(sub(calPts[0],calPts[1]));const mm=parseFloat(prompt('Distance between the two points in mm:','10'));
+  onDrag:(k,q)=>{cur.ceph.pts[k]=q.map(r1);if(cur.ceph.auto[k]){delete cur.ceph.auto[k];renderLm()}},onDrop:()=>{save();renderCephTable()},
+  onTap:q=>{if(q3){q3Tap(q);return}if(calMode){calPts.push(q);if(calPts.length===2){const px=len(sub(calPts[0],calPts[1]));const mm=parseFloat(prompt('Distance between the two points in mm:','10'));
       if(mm>0&&px>0){cur.ceph.mmpp=+(mm/px).toFixed(5);$('[data-k="ceph.mmpp"]').value=cur.ceph.mmpp;save();toast('Calibrated: '+cur.ceph.mmpp+' mm per pixel')}calMode=false;calPts=[];$('#cCal').setAttribute('aria-pressed',false);renderCephTable()}
       renderLm();cephView.draw();return}
-    cur.ceph.pts[LMS[lmIdx][0]]=q.map(r1);save();lmIdx=nextMissing(lmIdx+1);renderLm();renderCephTable();cephView.draw()},
+    cur.ceph.pts[LMS[lmIdx][0]]=q.map(r1);delete cur.ceph.auto[LMS[lmIdx][0]];save();lmIdx=nextMissing(lmIdx+1);renderLm();renderCephTable();cephView.draw()},
   overlay:(c,v)=>{const P=cur.ceph.pts,d=v.dpr;c.lineWidth=1.5*d;
     if(cephView.trace!==false){c.strokeStyle='#38bdf8cc';for(const[a,b]of LINES)if(P[a]&&P[b]){const A=v.toScr(P[a]),B=v.toScr(P[b]);c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke()}
       if(P.U1T&&P.L1T&&P.Mo){c.strokeStyle='#a78bfacc';const A=v.toScr(P.Mo),B=v.toScr(mid(P.U1T,P.L1T));c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke()}}
-    c.font=`${11*d}px sans-serif`;for(const k in P){const[x,y]=v.toScr(P[k]);const on=LMS[lmIdx]&&LMS[lmIdx][0]===k;c.fillStyle=on?'#facc15':'#f43f5e';c.beginPath();c.arc(x,y,(on?5:4)*d,0,7);c.fill();c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=3*d;c.strokeText(k,x+6*d,y-6*d);c.fillText(k,x+6*d,y-6*d);c.lineWidth=1.5*d}
+    c.font=`${11*d}px sans-serif`;for(const k in P){const[x,y]=v.toScr(P[k]);const on=LMS[lmIdx]&&LMS[lmIdx][0]===k,au=cur.ceph.auto[k];c.fillStyle=on?'#facc15':au==='low'?'#f97316':au?'#22d3ee':'#f43f5e';c.beginPath();c.arc(x,y,(on?5:4)*d,0,7);c.fill();c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=3*d;c.strokeText(k,x+6*d,y-6*d);c.fillText(k,x+6*d,y-6*d);c.lineWidth=1.5*d}
+    for(const q of q3||[]){const[x,y]=v.toScr(q);c.strokeStyle='#facc15';c.lineWidth=2*d;c.beginPath();c.arc(x,y,8*d,0,7);c.stroke()}
     for(const q of calPts){const[x,y]=v.toScr(q);c.strokeStyle='#22c55e';c.beginPath();c.arc(x,y,7*d,0,7);c.stroke()}}});
 imgControls(cephView,'c');
 $('#cTrace').onclick=e=>{cephView.trace=cephView.trace===false;e.target.setAttribute('aria-pressed',cephView.trace);cephView.draw()};
-$('#cCal').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');calMode=!calMode;calPts=[];e.target.setAttribute('aria-pressed',calMode);renderLm();cephView.draw()};
-$('#upCeph').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;if(Object.keys(cur.ceph.pts).length&&!confirm('Keep the landmarks already placed? (Cancel clears them)'))cur.ceph.pts={};await setXray('ceph',f,cephView);lmIdx=nextMissing(0);renderLm();renderCephTable()};
+$('#cCal').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');q3=null;$('#cQ3').setAttribute('aria-pressed',false);calMode=!calMode;calPts=[];e.target.setAttribute('aria-pressed',calMode);renderLm();cephView.draw()};
+$('#upCeph').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)await setXray('ceph',f,cephView)};
 function tagFor(m){return m.v==null?`<span class="tag t-mute">${esc(m.why)}</span>`:`<span class="tag t-${m.st}">${esc(m.txt)}</span>`}
 function renderCephTable(){if(!cur)return;const M=cephMeasures(cur);let g='',h='<table><tr><th>Measurement</th><th style="text-align:right">Value</th><th style="text-align:right">Norm</th><th>Interpretation</th></tr>';
   for(const m of M){if(m.g!==g){g=m.g;h+=`<tr><td colspan="4" style="font-weight:700;padding-top:12px">${esc(g)}</td></tr>`}
     h+=`<tr><td>${esc(m.name)}</td><td class="n">${m.v==null?'—':r1(m.v)+' '+m.unit}</td><td class="n muted">${m.norm} ± ${m.sd}</td><td>${tagFor(m)}</td></tr>`}
   $('#cephTable').innerHTML=h+'</table>'}
+
+/* ---------- automatic landmarks ---------- */
+// Average adult skull (mm, facing right), tuned so its own values sit near the norms. Used by "Quick place".
+const TPL={S:[0,0],N:[69,-9],Or:[58,20],Po:[-12,20],Co:[-10,14],ANS:[73,44],PNS:[22,46],A:[69,52],B:[65,90],Pog:[67,102],Gn:[64,107],Me:[58,111],Go:[-8,80],
+  U1T:[73,75],U1A:[64,51],L1T:[70,73],L1A:[60,94],Mo:[38,74],Prn:[98,32],Cm:[91,43],Sn:[84,47],Ls:[86,62],Li:[84,78],PogS:[79,105]};
+const Q3=['S','N','Me'];let q3=null;
+function affine3(src,dst){// solve x' = a x + b y + c, y' = d x + e y + f from three point pairs
+  const[[x1,y1],[x2,y2],[x3,y3]]=src,det=x1*(y2-y3)-y1*(x2-x3)+(x2*y3-x3*y2);if(Math.abs(det)<1e-9)return null;
+  const solve=v=>[(v[0]*(y2-y3)-y1*(v[1]-v[2])+(v[1]*y3-v[2]*y2))/det,(x1*(v[1]-v[2])-v[0]*(x2-x3)+(x2*v[2]-x3*v[1]))/det,(x1*(y2*v[2]-y3*v[1])-y1*(x2*v[2]-x3*v[1])+v[0]*(x2*y3-x3*y2))/det];
+  const X=solve(dst.map(p=>p[0])),Y=solve(dst.map(p=>p[1]));return p=>[X[0]*p[0]+X[1]*p[1]+X[2],Y[0]*p[0]+Y[1]*p[1]+Y[2]]}
+$('#cQ3').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');if(q3){q3=null}else{if(Object.keys(cur.ceph.pts).length&&!confirm('Quick place replaces the landmarks already placed. Continue?'))return;q3=[]}
+  calMode=false;$('#cCal').setAttribute('aria-pressed',false);e.target.setAttribute('aria-pressed',!!q3);renderLm();cephView.draw()};
+function q3Tap(q){q3.push(q);if(q3.length<3){renderLm();cephView.draw();return}
+  const f=affine3(Q3.map(k=>TPL[k]),q3);q3=null;$('#cQ3').setAttribute('aria-pressed',false);if(!f){toast('Those three points are in a line — try again');renderLm();return}
+  cur.ceph.pts={};cur.ceph.auto={};for(const k in TPL){cur.ceph.pts[k]=f(TPL[k]).map(r1);cur.ceph.auto[k]=Q3.includes(k)?undefined:'tpl'}for(const k of Q3)delete cur.ceph.auto[k];
+  saveNow();lmIdx=nextMissing(0);renderLm();renderCephTable();cephView.draw();toast('All points placed from an average skull — drag each one onto the real anatomy')}
+// Claude AI through the clinic server (the key never comes to this device)
+const API_DEFAULT='https://clinicapi.handraldentistry.com';
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}},lsSet=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
+function signIn(){return new Promise(res=>{const d=$('#signDlg');$('#sgApi').value=lsGet('hd_api')||API_DEFAULT;$('#sgErr').textContent='';d.showModal();
+  $('#signForm').onsubmit=async ev=>{if(ev.submitter&&ev.submitter.value==='cancel'){d.close();return res(false)}ev.preventDefault();$('#sgErr').textContent='Signing in…';
+    const api=($('#sgApi').value.trim()||API_DEFAULT).replace(/\/+$/,'');
+    try{const r=await fetch(api+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('#sgUser').value.trim(),password:$('#sgPass').value})});const j=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(j.error||'Sign-in failed');lsSet('hd_token',j.token);lsSet('hd_api',api===API_DEFAULT?null:api);$('#sgPass').value='';d.close();res(true)}catch(err){$('#sgErr').textContent=err.message==='Failed to fetch'?'Could not reach the clinic server':err.message}}})}
+async function cephJPEG(img){const sc=Math.min(1,2576/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height);const b=await canvasBlob(c,'image/jpeg',0.92);const data=(await blobToDataURL(b)).split(',')[1];return{data,w:c.width,h:c.height,sc}}
+let aiBusy=false;
+$('#cAI').onclick=async()=>{if(aiBusy)return;const img=cephView.img;if(!img)return toast('Upload the ceph first');
+  if(!lsGet('hd_token')&&!(await signIn()))return;
+  if(lsGet('oa-ai-ok')!=='1'){if(!confirm('Auto-detect sends this X-ray image (no name or other details) through the clinic server to Claude AI (Anthropic) to find the landmarks. Continue?'))return;lsSet('oa-ai-ok','1')}
+  if(Object.keys(cur.ceph.pts).length&&!confirm('Replace the landmarks already placed with the AI result?'))return;
+  aiBusy=true;const btn=$('#cAI'),h=$('#cHint');btn.disabled=true;btn.textContent='✨ Detecting…';h.hidden=false;h.textContent='Claude AI is finding the landmarks — this takes about a minute…';const forCase=cur;
+  try{const j=await cephJPEG(img),api=lsGet('hd_api')||API_DEFAULT;
+    const r=await fetch(api+'/api/ai/ceph',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+lsGet('hd_token')},body:JSON.stringify({image:j.data,mime:'image/jpeg',width:j.w,height:j.h})});
+    const res=await r.json().catch(()=>({}));if(r.status===401){lsSet('hd_token',null);throw new Error('please sign in again and retry')}if(!r.ok)throw new Error(res.error||'HTTP '+r.status);
+    if(forCase!==cur)return;const pts={},auto={};for(const p of res.landmarks||[]){if(!LMS.some(l=>l[0]===p.key))continue;pts[p.key]=[r1(p.x/j.sc),r1(p.y/j.sc)];auto[p.key]=p.confidence||'medium'}
+    if(!Object.keys(pts).length)throw new Error('no landmarks were found');cur.ceph.pts=pts;cur.ceph.auto=auto;saveNow();lmIdx=nextMissing(0);renderLm();renderCephTable();cephView.draw();
+    const low=Object.values(auto).filter(c=>c==='low').length;
+    toast(`${Object.keys(pts).length} landmarks found${low?`, ${low} uncertain (orange)`:''} — check each one and drag any that are off`+(res.is_lateral_ceph===false?'. Warning: this may not be a lateral ceph.':'')+(res.note?' Note: '+res.note:''))}
+  catch(e){toast('Auto-detect failed: '+(e.message==='Failed to fetch'?'could not reach the clinic server':e.message))}
+  finally{aiBusy=false;btn.disabled=false;btn.textContent='✨ Auto-detect';renderLm()}};
+$('#cOK').onclick=()=>{cur.ceph.auto={};saveNow();renderLm();cephView.draw();toast('All landmarks accepted')};
 
 /* ---------- OPG + tooth chart ---------- */
 const opgView=new ImgView($('#oStage'),$('#oCv'),{empty:$('#oEmpty')});imgControls(opgView,'o');
@@ -651,7 +812,8 @@ function parsePLY(buf){const u8=new Uint8Array(buf);let he=0;const hs=new TextDe
     for(const el of els)for(let r=0;r<el.c;r++){let x,y,z,f;for(const p of el.p){if(p.list){const n=rd(p.ct);const a=[];for(let k=0;k<n;k++)a.push(rd(p.it));if(/vertex_ind/.test(p.name))f=a}else{const v=rd(p.t);if(p.name==='x')x=v;else if(p.name==='y')y=v;else if(p.name==='z')z=v}}
       if(el.n==='vertex')V.push([x,y,z]);else if(el.n==='face'&&f)for(let k=1;k<f.length-1;k++)for(const j of[f[0],f[k],f[k+1]])out.push(...V[j])}}
   if(!out.length)throw new Error('PLY has no faces (point clouds are not supported)');return new Float32Array(out)}
-function parseModel(name,buf){const x=name.toLowerCase().split('.').pop();return x==='obj'?parseOBJ(buf):x==='ply'?parsePLY(buf):parseSTL(buf)}
+function parseModel(name,buf){const u8=new Uint8Array(buf,0,Math.min(buf.byteLength,4096)),x=name.toLowerCase().split('.').pop(),head=String.fromCharCode(...u8);
+  if(head.startsWith('ply'))return parsePLY(buf);if(x==='obj'||(!/^solid/.test(head)&&/(^|\n)v\s+[-\d.]/.test(head)&&x!=='stl'))return parseOBJ(buf);return parseSTL(buf)}
 const m3=(a,b)=>{const o=[];for(let i=0;i<3;i++)for(let j=0;j<3;j++)o[i*3+j]=a[i*3]*b[j]+a[i*3+1]*b[3+j]+a[i*3+2]*b[6+j];return o};
 const rx=a=>{const c=Math.cos(a),s=Math.sin(a);return[1,0,0,0,c,-s,0,s,c]},ry=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,0,s,0,1,0,-s,0,c]};
 const RT=(r,v)=>[r[0]*v[0]+r[3]*v[1]+r[6]*v[2],r[1]*v[0]+r[4]*v[1]+r[7]*v[2],r[2]*v[0]+r[5]*v[1]+r[8]*v[2]];
@@ -716,8 +878,8 @@ async function loadModel(side,file){try{$('#mEmpty').hidden=true;$('#mHint').hid
 function updMeshInfo(){const m=cur.models;$('#mEmpty').hidden=!mesh.fail&&!!(m.upper||m.lower);
   $('#mInfo').innerHTML=['upper','lower'].map(s=>`<div><b>${s==='upper'?'Upper':'Lower'}:</b> ${m[s]?esc(m[s].name)+' <span class="muted">('+(m[s].tris||0).toLocaleString()+' triangles)</span> <button class="btn sm danger" data-rm="'+s+'">Remove</button>':'not loaded'}</div>`).join('')}
 $('#mInfo').onclick=async e=>{const s=e.target.dataset.rm;if(!s)return;await DB.delBlob(cur.models[s].key);delete cur.models[s];mesh.remove(s);mesh.render();save();updMeshInfo();updDots()};
-$('#upU').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)loadModel('upper',f)};
-$('#upL').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)loadModel('lower',f)};
+$('#upU').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)addModels([f],'upper')};
+$('#upL').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)addModels([f],'lower')};
 for(const[id,s]of[['tglU','upper'],['tglL','lower']])$('#'+id).onclick=e=>{const m=mesh.meshes[s];if(!m)return;m.vis=!m.vis;e.target.setAttribute('aria-pressed',m.vis);mesh.render()};
 $('#mView').onchange=e=>{if(e.target.value)mesh.view(e.target.value);e.target.value=''};$('#mFit').onclick=()=>mesh.fit();
 let lastMeas=null;

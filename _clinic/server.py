@@ -16,6 +16,7 @@ The app at https://handraldentistry.com/clinic/ talks to it with:
   GET  /api/files/<id>       download it
   GET/POST /api/ai-key       set the Anthropic key (admin; never sent back)
   POST /api/ai/read          read a photo of a register page with Claude
+  POST /api/ai/ceph          find cephalometric landmarks on a lateral ceph with Claude (Ortho Assess)
   POST /api/public/request   appointment request from the public website (no login)
   GET  /healthz
 
@@ -484,6 +485,97 @@ def ai_read(h, con, q):
     h.send_json(200, {"entries": [e for e in entries if isinstance(e, dict)]})
 
 
+CEPH_MODEL = os.environ.get("CLINIC_CEPH_MODEL", "claude-opus-5-5")
+CEPH_LANDMARKS = [
+    ("S", "Sella: centre of the sella turcica"), ("N", "Nasion: most anterior point of the fronto-nasal suture"),
+    ("Or", "Orbitale: lowest point on the inferior margin of the orbit"), ("Po", "Porion: top of the external auditory meatus"),
+    ("Co", "Condylion: most postero-superior point on the mandibular condyle"), ("ANS", "Tip of the anterior nasal spine"),
+    ("PNS", "Tip of the posterior nasal spine"), ("A", "Point A: deepest point on the anterior concavity of the maxilla"),
+    ("B", "Point B: deepest point on the anterior concavity of the mandibular symphysis"),
+    ("Pog", "Pogonion: most anterior point of the bony chin"), ("Gn", "Gnathion: midway between pogonion and menton on the symphysis"),
+    ("Me", "Menton: lowest point of the symphysis"), ("Go", "Gonion: most posterior-inferior point on the angle of the mandible"),
+    ("U1T", "Incisal edge of the most prominent upper central incisor"), ("U1A", "Root apex of that upper incisor"),
+    ("L1T", "Incisal edge of the most prominent lower central incisor"), ("L1A", "Root apex of that lower incisor"),
+    ("Mo", "Point where the upper and lower first molars meet (posterior end of the functional occlusal plane)"),
+    ("Prn", "Pronasale: tip of the nose (soft tissue)"), ("Cm", "Columella: lowest point on the columella of the nose"),
+    ("Sn", "Subnasale: where the columella meets the upper lip"), ("Ls", "Labrale superius: most anterior point of the upper lip"),
+    ("Li", "Labrale inferius: most anterior point of the lower lip"), ("PogS", "Soft-tissue pogonion: most anterior point of the soft-tissue chin"),
+]
+CEPH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_lateral_ceph": {"type": "boolean"},
+        "facing": {"type": "string", "enum": ["left", "right"]},
+        "landmarks": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"key": {"type": "string", "enum": [k for k, _ in CEPH_LANDMARKS]},
+                           "x": {"type": "number"}, "y": {"type": "number"},
+                           "confidence": {"type": "string", "enum": ["high", "medium", "low"]}},
+            "required": ["key", "x", "y", "confidence"], "additionalProperties": False}},
+        "note": {"type": "string"},
+    },
+    "required": ["is_lateral_ceph", "facing", "landmarks", "note"],
+    "additionalProperties": False,
+}
+
+
+def ai_ceph(h, con, q):
+    """Find cephalometric landmarks on a lateral ceph with Claude. The image carries no patient details."""
+    h.auth(con)
+    key = meta_get(con, "anthropic_key")
+    if not key:
+        raise ApiError(400, "Add the Claude AI key in the clinic app (Settings) first")
+    b = h.read_json()
+    img, mime = b.get("image") or "", b.get("mime") or "image/jpeg"
+    w, ht = int(b.get("width") or 0), int(b.get("height") or 0)
+    if mime not in ("image/jpeg", "image/png") or not img or w <= 0 or ht <= 0:
+        raise ApiError(400, "Send the ceph as a JPEG or PNG")
+    prompt = (
+        f"This should be a lateral cephalometric radiograph, {w} x {ht} pixels. Locate each landmark below and give its "
+        "position in pixels of this image (x from the left edge, y from the top edge). Work carefully: first find the "
+        "sella, nasion, orbit, ear rods / porion, maxilla, mandible, incisors, molars and soft-tissue profile, then place "
+        "each point on the exact anatomical spot. Use bilateral structures' midpoint when two outlines are visible "
+        "(gonion, porion, orbitale, molars). Give every landmark; mark ones you cannot see clearly as low confidence.\n\n"
+        + "\n".join(f"- {k}: {d}" for k, d in CEPH_LANDMARKS)
+        + "\n\nSet is_lateral_ceph to false if the image is not a lateral ceph. In note, mention anything that limits accuracy."
+    )
+    body = {
+        "model": CEPH_MODEL, "max_tokens": 16000, "fallbacks": "default",
+        "output_config": {"effort": "high", "format": {"type": "json_schema", "schema": CEPH_SCHEMA}},
+        "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": img}},
+            {"type": "text", "text": prompt}]}],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+        headers={"content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01",
+                 "anthropic-beta": "server-side-fallback-2026-07-01"})
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            res = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read()).get("error", {}).get("message", "")
+        except Exception:
+            msg = ""
+        raise ApiError(502, "Claude AI error: " + (msg or str(e.code)))
+    except Exception:
+        raise ApiError(502, "Could not reach Claude AI. Try again.")
+    if res.get("stop_reason") == "refusal":
+        raise ApiError(502, "Claude AI declined this image. Place the landmarks by hand.")
+    if res.get("stop_reason") == "max_tokens":
+        raise ApiError(502, "Claude AI ran out of room. Try again.")
+    text = "".join(p.get("text", "") for p in res.get("content", []) if p.get("type") == "text")
+    try:
+        out = json.loads(text)
+    except ValueError:
+        raise ApiError(502, "Claude AI gave an unreadable answer. Try again.")
+    pts = [p for p in out.get("landmarks", []) if isinstance(p, dict)
+           and 0 <= float(p.get("x", -1)) <= w and 0 <= float(p.get("y", -1)) <= ht]
+    h.send_json(200, {"landmarks": pts, "is_lateral_ceph": bool(out.get("is_lateral_ceph")),
+                      "facing": out.get("facing"), "note": out.get("note") or "", "model": res.get("model") or CEPH_MODEL})
+
+
 def public_request(h, con, q):
     """Appointment request from handraldentistry.com. No login; rate limited."""
     ip = h.client_ip()
@@ -537,6 +629,7 @@ ROUTES = {
     ("GET", "/api/ai-key"): ai_key,
     ("POST", "/api/ai-key"): ai_key,
     ("POST", "/api/ai/read"): ai_read,
+    ("POST", "/api/ai/ceph"): ai_ceph,
 }
 
 
