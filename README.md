@@ -5,6 +5,12 @@
 - `clinic/` — Staff clinic management app (handraldentistry.com/clinic). Records are kept in the cloud
   on the droplet (see "Handral Clinic cloud" below), so every tablet, phone and laptop that signs in
   sees the same patients, appointments and bills. Booking requests from the website appear on its Today page.
+- `ortho/` — Ortho Assess: orthodontic case assessment (handraldentistry.com/ortho). Tabs to add patient
+  photographs, upper/lower 3D scans (STL/OBJ/PLY), lateral ceph and OPG. Tap ceph landmarks to get Steiner,
+  Downs, Tweed, McNamara, Jarabak, E-line and Holdaway values; measure tooth widths on the 3D scans for Bolton and
+  space analysis; chart the OPG. The Diagnosis & plan tab lists problems and evidence-linked treatment options;
+  the Research tab searches the published literature (Europe PMC — only search words are sent). All records stay
+  in that browser on that device; use ⋯ → Export case for a backup file.
 - `_clinic/` — the cloud server for the clinic app (runs on the droplet; not published)
 - `photos/` — Clinic Photos: organise clinic and patient photos on the iPhone (handraldentistry.com/photos).
   Open it in Safari, Share → Add to Home Screen. Photos are picked from the Photo Library and kept only on

@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ortho Assess">
+<meta name="theme-color" content="#1d4ed8">
+<title>Ortho Assess</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#16202a;--mute:#5f6b78;--line:#dce1e6;--accent:#1d4ed8;--accent-ink:#fff;--soft:#1d4ed814;--ok:#15803d;--warn:#b45309;--bad:#b42318;--canvas:#0b0f14}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1318;--card:#161e25;--ink:#e6ecf1;--mute:#93a0ad;--line:#2a343d;--accent:#60a5fa;--accent-ink:#06162e;--soft:#60a5fa1f;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+button,select,input,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 8px) 16px 0}
+.top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;max-width:1240px;margin:0 auto}
+h1{font-size:19px;margin:0 8px 0 0;white-space:nowrap}
+h1 span{color:var(--accent)}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 12px;min-height:38px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.danger{color:var(--bad)}
+.btn.sm{min-height:30px;padding:3px 9px;font-size:13px}
+.btn[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+select.btn{padding-right:8px}
+#caseSel{max-width:240px;flex:1;min-width:150px}
+nav#tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;max-width:1240px;margin:8px auto 0}
+nav#tabs button{flex:none;border:0;background:none;padding:9px 12px;border-bottom:3px solid transparent;cursor:pointer;color:var(--mute);font-weight:600}
+nav#tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+nav#tabs .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-left:5px;vertical-align:middle;opacity:0}
+nav#tabs .dot.on{opacity:1}
+main{max-width:1240px;margin:0 auto;padding:16px 16px calc(env(safe-area-inset-bottom) + 60px)}
+section.tab{display:none}
+section.tab.on{display:block}
+h2{font-size:17px;margin:20px 0 10px}
+h2:first-child{margin-top:4px}
+h3{font-size:15px;margin:14px 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 14px}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:13px;color:var(--mute)}
+label.f input,label.f select,label.f textarea{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:7px 8px;font-size:15px;color:var(--ink);min-height:38px;width:100%}
+label.f textarea{min-height:64px;resize:vertical}
+label.c{display:inline-flex;gap:6px;align-items:center;margin:2px 14px 2px 0;font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.note{font-size:13px;color:var(--mute)}
+.muted{color:var(--mute)}
+.span2{grid-column:span 2}
+@media (max-width:520px){.span2{grid-column:span 1}}
+/* photos */
+.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.slot{background:var(--card);border:1px dashed var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer;min-height:150px}
+.slot.has{border-style:solid}
+.slot .im{flex:1;display:flex;align-items:center;justify-content:center;background:var(--soft);aspect-ratio:4/3;color:var(--mute);font-size:13px;text-align:center;padding:6px}
+.slot img{width:100%;height:100%;object-fit:cover;display:block}
+.slot .im.full{padding:0}
+.slot .lb{padding:6px 8px;font-size:13px;font-weight:600}
+/* canvases */
+.split{display:grid;grid-template-columns:1fr 300px;gap:12px}
+@media (max-width:860px){.split{grid-template-columns:1fr}}
+.stage{position:relative;background:var(--canvas);border-radius:12px;overflow:hidden;height:min(72vh,720px);touch-action:none}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.stage .hint{position:absolute;left:10px;top:10px;right:10px;color:#fff;background:#000a;border-radius:8px;padding:6px 10px;font-size:13px;pointer-events:none}
+.stage .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#aab;text-align:center;padding:20px}
+.tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.tools input[type=range]{width:90px}
+.lmlist{max-height:min(72vh,720px);overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.lm{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px}
+.lm:last-child{border-bottom:0}
+.lm b{min-width:38px;font-size:13px}
+.lm .d{flex:1;color:var(--mute)}
+.lm.cur{background:var(--soft);box-shadow:inset 3px 0 var(--accent)}
+.lm .ok{color:var(--ok);font-weight:700}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
+.t-ok{background:#15803d1f;color:var(--ok)}
+.t-warn{background:#b453091f;color:var(--warn)}
+.t-bad{background:#b423181f;color:var(--bad)}
+.t-mute{background:var(--soft);color:var(--mute)}
+.wrapx{overflow-x:auto}
+/* tooth chart */
+.chart{display:flex;flex-direction:column;gap:4px;overflow-x:auto;padding-bottom:4px}
+.chart .r{display:flex;gap:3px;justify-content:center}
+.chart .gap{width:12px}
+.th{width:40px;min-width:40px;height:46px;border:1px solid var(--line);border-radius:7px;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;font-size:12px;padding:0}
+.th small{font-size:10px;font-weight:700;min-height:12px}
+.th.prim{height:40px;border-style:dashed}
+.legend{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.legend button{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:4px 10px;font-size:13px;cursor:pointer}
+.legend button[aria-pressed=true]{outline:2px solid var(--accent)}
+/* plan */
+.opt{border:1px solid var(--line);border-left:4px solid var(--mute);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--card)}
+.opt.Recommended{border-left-color:var(--ok)}
+.opt.Consider{border-left-color:var(--accent)}
+.opt.Alternative{border-left-color:var(--warn)}
+.opt h4{margin:0 0 6px;font-size:15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.opt ul{margin:4px 0 6px;padding-left:20px}
+.opt .ev a{font-size:13px}
+ul.prob{margin:0;padding-left:20px}
+ul.prob li{margin:3px 0}
+.res{border-bottom:1px solid var(--line);padding:10px 0}
+.res a{font-weight:600;color:var(--accent);text-decoration:none}
+.res .m{font-size:13px;color:var(--mute)}
+.res details{font-size:14px;margin-top:4px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.chip{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font-size:13px;cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+a{color:var(--accent)}
+dialog{border:0;border-radius:14px;background:var(--card);color:var(--ink);padding:0;width:min(980px,calc(100vw - 24px));max-height:calc(100vh - 24px)}
+dialog::backdrop{background:#000a}
+.pv{position:relative;background:#000;display:flex;justify-content:center}
+.pv img{max-width:100%;max-height:calc(100vh - 140px);display:block}
+.pv .gridov{position:absolute;inset:0;pointer-events:none;display:none}
+.pv.grid .gridov{display:block}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:999px;font-size:14px;z-index:50;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+.toast.on{opacity:1}
+.foot{font-size:12px;color:var(--mute);margin-top:24px;text-align:center}
+#report{display:none}
+@media print{
+  body>*:not(#report){display:none!important}
+  #report{display:block;color:#000;font-size:12px}
+  #report h1{font-size:18px} #report h2{font-size:14px;margin:12px 0 4px}
+  #report table{font-size:11px} #report img{max-width:100%;max-height:380px}
+  .opt{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1>Ortho <span>Assess</span></h1>
+    <select id="caseSel" class="btn" aria-label="Case"></select>
+    <button class="btn primary" id="newCase">+ New case</button>
+    <button class="btn" id="printBtn">Print report</button>
+    <button class="btn" id="moreBtn" aria-label="More">⋯</button>
+  </div>
+  <nav id="tabs" role="tablist">
+    <button data-tab="patient" aria-selected="true">Patient<i class="dot"></i></button>
+    <button data-tab="photos">Photographs<i class="dot"></i></button>
+    <button data-tab="models">3D models<i class="dot"></i></button>
+    <button data-tab="ceph">Lateral ceph<i class="dot"></i></button>
+    <button data-tab="opg">OPG<i class="dot"></i></button>
+    <button data-tab="plan">Diagnosis &amp; plan</button>
+    <button data-tab="research">Research</button>
+  </nav>
+</header>
+
+<main>
+<!-- PATIENT -->
+<section class="tab on" id="tab-patient">
+  <h2>Patient details</h2>
+  <div class="card grid">
+    <label class="f">Name<input data-k="pt.name" autocomplete="off"></label>
+    <label class="f">File / OP number<input data-k="pt.file" autocomplete="off"></label>
+    <label class="f">Sex<select data-k="pt.sex"><option value="">—</option><option value="F">Female</option><option value="M">Male</option></select></label>
+    <label class="f">Date of birth<input type="date" data-k="pt.dob"></label>
+    <label class="f">Age (if no DOB)<input type="number" step="0.5" data-k="pt.age"></label>
+    <label class="f">Date of records<input type="date" data-k="pt.recDate"></label>
+    <label class="f span2">Chief complaint<textarea data-k="pt.cc" placeholder="In the patient's words"></textarea></label>
+    <label class="f span2">Medical history<textarea data-k="pt.med"></textarea></label>
+    <label class="f span2">Dental history<textarea data-k="pt.dent" placeholder="Previous orthodontics, trauma, extractions…"></textarea></label>
+  </div>
+  <h2>Habits, TMJ and oral health</h2>
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <label class="c"><input type="checkbox" data-k="pt.h.thumb">Thumb / digit sucking</label>
+      <label class="c"><input type="checkbox" data-k="pt.h.tongue">Tongue thrust</label>
+      <label class="c"><input type="checkbox" data-k="pt.h.mouth">Mouth breathing</label>
+      <label class="c"><input type="checkbox" data-k="pt.h.lip">Lip biting / sucking</label>
+      <label class="c"><input type="checkbox" data-k="pt.h.brux">Bruxism</label>
+      <label class="c"><input type="checkbox" data-k="pt.h.nail">Nail biting</label>
+    </div>
+    <div class="grid">
+      <label class="f">TMJ<select data-k="pt.tmj"><option value="">Not examined</option><option>No signs</option><option>Clicking</option><option>Pain / tenderness</option><option>Clicking and pain</option><option>Locking</option></select></label>
+      <label class="f">Max mouth opening (mm)<input type="number" data-k="pt.mmo"></label>
+      <label class="f">Deviation on opening<select data-k="pt.dev"><option value="">—</option><option>None</option><option>To right</option><option>To left</option></select></label>
+      <label class="f">Oral hygiene<select data-k="pt.oh"><option value="">—</option><option>Good</option><option>Fair</option><option>Poor</option></select></label>
+      <label class="f">Periodontal status<select data-k="pt.perio"><option value="">—</option><option>Healthy</option><option>Gingivitis</option><option>Periodontitis (stable)</option><option>Periodontitis (active)</option></select></label>
+      <label class="f">Motivation<select data-k="pt.motiv"><option value="">—</option><option>High</option><option>Average</option><option>Low</option></select></label>
+      <label class="f">Willing to consider surgery?<select data-k="pt.surg"><option value="">Not discussed</option><option>Yes</option><option>No</option><option>Unsure</option></select></label>
+      <label class="f">Willing to have extractions?<select data-k="pt.ext"><option value="">Not discussed</option><option>Yes</option><option>No</option></select></label>
+      <label class="f">Prefers<select data-k="pt.pref"><option value="">No preference</option><option>Clear aligners</option><option>Fixed braces</option><option>Lingual / hidden</option></select></label>
+    </div>
+  </div>
+  <p class="note">Everything in this app — details, photos, scans and X-rays — is saved only on this device (in this browser). Nothing is uploaded. Use ⋯ → Export case to keep a backup copy.</p>
+</section>
+
+<!-- PHOTOS -->
+<section class="tab" id="tab-photos">
+  <h2>Photographs</h2>
+  <p class="note">Tap a box to add a photo. Tap a photo to view it with a facial grid, replace or remove it.</p>
+  <div class="slots" id="slots"></div>
+  <h2>Extra-oral assessment</h2>
+  <div class="card grid">
+    <label class="f">Facial type<select data-k="fx.type"><option value="">—</option><option>Mesofacial</option><option>Dolichofacial (long)</option><option>Brachyfacial (short)</option></select></label>
+    <label class="f">Facial symmetry<select data-k="fx.sym"><option value="">—</option><option>Symmetrical</option><option>Mild asymmetry</option><option>Marked asymmetry</option></select></label>
+    <label class="f">Chin deviation<select data-k="fx.chinDev"><option value="">None</option><option>To right</option><option>To left</option></select></label>
+    <label class="f">Lower face height<select data-k="fx.lfh"><option value="">—</option><option>Normal</option><option>Increased</option><option>Decreased</option></select></label>
+    <label class="f">Profile<select data-k="fx.profile"><option value="">—</option><option>Straight</option><option>Convex</option><option>Concave</option></select></label>
+    <label class="f">Lips at rest<select data-k="fx.lips"><option value="">—</option><option>Competent</option><option>Incompetent (strain to close)</option><option>Potentially competent</option></select></label>
+    <label class="f">Lip protrusion<select data-k="fx.lipPro"><option value="">—</option><option>Normal</option><option>Protrusive</option><option>Retrusive</option></select></label>
+    <label class="f">Nasolabial angle<select data-k="fx.nla"><option value="">—</option><option>Normal</option><option>Acute</option><option>Obtuse</option></select></label>
+    <label class="f">Chin<select data-k="fx.chin"><option value="">—</option><option>Normal</option><option>Retrusive</option><option>Prominent</option></select></label>
+    <label class="f">Upper incisor show at rest (mm)<input type="number" step="0.5" data-k="fx.show"></label>
+    <label class="f">Gingival display on smile (mm)<input type="number" step="0.5" data-k="fx.gum"></label>
+    <label class="f">Smile arc<select data-k="fx.arc"><option value="">—</option><option>Consonant</option><option>Flat</option><option>Reverse</option></select></label>
+    <label class="f">Buccal corridors<select data-k="fx.corr"><option value="">—</option><option>Normal</option><option>Wide (dark)</option><option>Narrow</option></select></label>
+    <label class="f">Upper midline to face (mm, + = right)<input type="number" step="0.5" data-k="fx.umid"></label>
+    <label class="f">Lower midline to upper (mm, + = right)<input type="number" step="0.5" data-k="fx.lmid"></label>
+    <label class="f">Occlusal plane cant<select data-k="fx.cant"><option value="">None</option><option>Up on right</option><option>Up on left</option></select></label>
+  </div>
+  <h2>Intra-oral (from photos)</h2>
+  <div class="card grid">
+    <label class="f">Gingival biotype<select data-k="fx.bio"><option value="">—</option><option>Thick</option><option>Thin</option></select></label>
+    <label class="f">Recession<input data-k="fx.rec" placeholder="e.g. 31, 41 1 mm"></label>
+    <label class="f">White spot lesions / caries<input data-k="fx.wsl"></label>
+    <label class="f">Restorations / crowns<input data-k="fx.rest"></label>
+    <label class="f span2">Other observations<textarea data-k="fx.notes"></textarea></label>
+  </div>
+</section>
+
+<!-- MODELS -->
+<section class="tab" id="tab-models">
+  <h2>3D dental models</h2>
+  <div class="tools">
+    <label class="btn"><input type="file" id="upU" accept=".stl,.obj,.ply" hidden>Upload upper (STL/OBJ/PLY)</label>
+    <label class="btn"><input type="file" id="upL" accept=".stl,.obj,.ply" hidden>Upload lower</label>
+    <button class="btn sm" id="tglU" aria-pressed="true">Upper</button>
+    <button class="btn sm" id="tglL" aria-pressed="true">Lower</button>
+    <select class="btn sm" id="mView" aria-label="View"><option value="">View…</option><option value="front">Front</option><option value="top">From above</option><option value="bottom">From below</option><option value="right">Right side</option><option value="left">Left side</option><option value="back">Back</option></select>
+    <button class="btn sm" id="mFit">Fit</button>
+    <span class="muted">|</span>
+    <button class="btn sm" id="mDist" aria-pressed="false">📏 Distance</button>
+    <button class="btn sm" id="mPoly" aria-pressed="false">〰 Arch length</button>
+    <button class="btn sm" id="mClear">Clear marks</button>
+  </div>
+  <div class="split">
+    <div class="stage" id="mStage">
+      <canvas id="mGL"></canvas><canvas id="mOv" style="pointer-events:none"></canvas>
+      <div class="empty" id="mEmpty">Upload the upper and lower scans (STL, OBJ or PLY, in mm).<br>Drag to rotate · right-drag or two fingers to move · scroll or pinch to zoom.</div>
+      <div class="hint" id="mHint" hidden></div>
+    </div>
+    <div>
+      <div class="card">
+        <h3 style="margin-top:0">Measurement</h3>
+        <div id="mRes" class="note">Choose 📏 Distance and tap two points on the model (e.g. the mesial and distal contact points of a tooth). Use 〰 Arch length to tap along the arch from first molar to first molar, then press Done.</div>
+        <div class="row" style="margin-top:8px">
+          <select class="btn sm" id="mSaveTo" style="flex:1"></select>
+          <button class="btn sm primary" id="mSave">Save</button>
+        </div>
+        <div class="row" style="margin-top:6px"><button class="btn sm" id="mDone" hidden>Done</button></div>
+      </div>
+      <div class="card note" id="mInfo">No models loaded.</div>
+    </div>
+  </div>
+
+  <h2>Occlusion</h2>
+  <div class="card grid">
+    <label class="f">Molar relation – right<select data-k="occ.molR" class="molsel"></select></label>
+    <label class="f">Molar relation – left<select data-k="occ.molL" class="molsel"></select></label>
+    <label class="f">Canine relation – right<select data-k="occ.canR" class="molsel"></select></label>
+    <label class="f">Canine relation – left<select data-k="occ.canL" class="molsel"></select></label>
+    <label class="f">Incisor relationship<select data-k="occ.inc"><option value="">—</option><option>Class I</option><option>Class II div 1</option><option>Class II div 2</option><option>Class III</option></select></label>
+    <label class="f">Overjet (mm, − = reverse)<input type="number" step="0.5" data-k="occ.oj"></label>
+    <label class="f">Overbite (mm, − = open)<input type="number" step="0.5" data-k="occ.ob"></label>
+    <label class="f">Overbite<select data-k="occ.obType"><option value="">—</option><option>Normal</option><option>Deep – incomplete</option><option>Deep – complete to palate</option><option>Deep – traumatic</option><option>Edge to edge</option><option>Anterior open bite</option><option>Lateral open bite</option></select></label>
+    <label class="f">Anterior crossbite (teeth)<input data-k="occ.antX" placeholder="e.g. 12, 22 or blank"></label>
+    <label class="f">Posterior crossbite<select data-k="occ.postX"><option value="">None</option><option>Right</option><option>Left</option><option>Bilateral</option></select></label>
+    <label class="f">Scissor bite<select data-k="occ.scissor"><option value="">None</option><option>Right</option><option>Left</option><option>Bilateral</option></select></label>
+    <label class="f">Functional shift on closing<select data-k="occ.shift"><option value="">No</option><option>Yes – lateral</option><option>Yes – anterior</option></select></label>
+    <label class="f">Curve of Spee depth (mm)<input type="number" step="0.5" data-k="occ.spee"></label>
+    <label class="f">Upper crowding (mm, if not measured below)<input type="number" step="0.5" data-k="occ.crowdU"></label>
+    <label class="f">Lower crowding (mm, if not measured below)<input type="number" step="0.5" data-k="occ.crowdL"></label>
+    <label class="f">Upper spacing (mm)<input type="number" step="0.5" data-k="occ.spaceU"></label>
+    <label class="f">Lower spacing (mm)<input type="number" step="0.5" data-k="occ.spaceL"></label>
+    <label class="f">Arch form<select data-k="occ.form"><option value="">—</option><option>Ovoid</option><option>Tapered / V</option><option>Square</option><option>Asymmetric</option></select></label>
+    <label class="f span2">Rotations, ectopic teeth, other<textarea data-k="occ.notes"></textarea></label>
+  </div>
+
+  <h2>Tooth widths, Bolton and space analysis</h2>
+  <p class="note">Mesio-distal widths in mm — measure on the 3D model with 📏 and Save, or type them in from calipers.</p>
+  <div class="card wrapx" id="widths"></div>
+  <div class="card grid">
+    <label class="f">Upper arch length available (mm, 6–6 mesial)<input type="number" step="0.1" data-k="arch.availU"></label>
+    <label class="f">Lower arch length available (mm)<input type="number" step="0.1" data-k="arch.availL"></label>
+    <label class="f">Upper inter-canine width<input type="number" step="0.1" data-k="arch.icwU"></label>
+    <label class="f">Upper inter-molar width<input type="number" step="0.1" data-k="arch.imwU"></label>
+    <label class="f">Lower inter-canine width<input type="number" step="0.1" data-k="arch.icwL"></label>
+    <label class="f">Lower inter-molar width<input type="number" step="0.1" data-k="arch.imwL"></label>
+  </div>
+  <div class="card" id="analysisOut"></div>
+</section>
+
+<!-- CEPH -->
+<section class="tab" id="tab-ceph">
+  <h2>Lateral cephalogram</h2>
+  <div class="tools">
+    <label class="btn"><input type="file" id="upCeph" accept="image/*" hidden>Upload ceph</label>
+    <button class="btn sm" id="cCal" aria-pressed="false">Calibrate (ruler)</button>
+    <label class="note">mm / pixel <input type="number" step="0.0001" data-k="ceph.mmpp" style="width:90px" class="btn sm"></label>
+    <label class="note">☀︎ <input type="range" id="cBri" min="0.4" max="2" step="0.05" value="1"></label>
+    <label class="note">◐ <input type="range" id="cCon" min="0.4" max="2.5" step="0.05" value="1"></label>
+    <button class="btn sm" id="cInv" aria-pressed="false">Invert</button>
+    <button class="btn sm" id="cTrace" aria-pressed="true">Tracing</button>
+    <button class="btn sm" id="cFit">Fit</button>
+  </div>
+  <div class="split">
+    <div class="stage" id="cStage"><canvas id="cCv"></canvas><div class="empty" id="cEmpty">Upload a lateral cephalogram (patient facing either way).<br>Then tap each landmark in turn. Drag a placed point to adjust it.</div><div class="hint" id="cHint" hidden></div></div>
+    <div class="lmlist" id="lmList"></div>
+  </div>
+  <h2>Cervical vertebral maturation</h2>
+  <div class="card grid">
+    <label class="f span2">CVM stage (Baccetti)<select data-k="ceph.cvm">
+      <option value="">Not assessed</option>
+      <option value="CS1">CS1 – C2–C4 lower borders flat; peak ≥ 2 years away</option>
+      <option value="CS2">CS2 – concavity at C2 only; peak in about 1 year</option>
+      <option value="CS3">CS3 – concavities at C2 and C3; peak within the year</option>
+      <option value="CS4">CS4 – concavities C2–C4, bodies rectangular horizontal; peak just passed</option>
+      <option value="CS5">CS5 – C3 or C4 square; peak ended ≥ 1 year ago</option>
+      <option value="CS6">CS6 – C3 or C4 rectangular vertical; growth essentially complete</option>
+    </select></label>
+  </div>
+  <h2>Cephalometric analysis</h2>
+  <p class="note">Steiner, Downs, Tweed, McNamara, Jarabak, Ricketts E-line and Holdaway values. Millimetre values need calibration. Norms are for adult Caucasian samples — adjust for ethnicity and age.</p>
+  <div class="card wrapx" id="cephTable"></div>
+</section>
+
+<!-- OPG -->
+<section class="tab" id="tab-opg">
+  <h2>OPG (panoramic radiograph)</h2>
+  <div class="tools">
+    <label class="btn"><input type="file" id="upOpg" accept="image/*" hidden>Upload OPG</label>
+    <label class="note">☀︎ <input type="range" id="oBri" min="0.4" max="2" step="0.05" value="1"></label>
+    <label class="note">◐ <input type="range" id="oCon" min="0.4" max="2.5" step="0.05" value="1"></label>
+    <button class="btn sm" id="oInv" aria-pressed="false">Invert</button>
+    <button class="btn sm" id="oFit">Fit</button>
+  </div>
+  <div class="stage" id="oStage" style="height:min(55vh,560px)"><canvas id="oCv"></canvas><div class="empty" id="oEmpty">Upload the OPG. Drag to move, scroll or pinch to zoom.</div></div>
+  <h2>Dental chart</h2>
+  <p class="note">Pick a finding, then tap the teeth it applies to. Tap again to set back to present.</p>
+  <div class="legend" id="brushes"></div>
+  <label class="c"><input type="checkbox" data-k="opg.prim" id="showPrim">Show primary teeth</label>
+  <div class="card chart" id="toothChart"></div>
+  <h2>Radiographic findings</h2>
+  <div class="card grid">
+    <label class="f">Third molars<select data-k="opg.f.m3"><option value="">—</option><option>Absent</option><option>Developing, normal position</option><option>Impacted</option><option>Erupted</option></select></label>
+    <label class="f">Alveolar bone level<select data-k="opg.f.bone"><option value="">—</option><option>Normal</option><option>Mild horizontal loss</option><option>Moderate / severe loss</option><option>Vertical defects</option></select></label>
+    <label class="f">Root form / resorption<select data-k="opg.f.root"><option value="">—</option><option>Normal</option><option>Short / blunted roots</option><option>Existing resorption</option><option>Dilacerated root(s)</option></select></label>
+    <label class="f">Condyles<select data-k="opg.f.cond"><option value="">—</option><option>Symmetrical, normal</option><option>Asymmetrical</option><option>Flattening / erosion</option></select></label>
+    <label class="f">Maxillary sinus / nasal<select data-k="opg.f.sinus"><option value="">—</option><option>Normal</option><option>Abnormal – see notes</option></select></label>
+    <label class="f">Root parallelism<select data-k="opg.f.par"><option value="">—</option><option>Acceptable</option><option>Poor</option></select></label>
+    <label class="f">Dental age estimate<input data-k="opg.f.dage" placeholder="e.g. 11 years (Demirjian)"></label>
+    <label class="f span2">Pathology / other notes<textarea data-k="opg.f.path" placeholder="Cysts, radiolucencies, supernumeraries, odontomes…"></textarea></label>
+  </div>
+</section>
+
+<!-- PLAN -->
+<section class="tab" id="tab-plan">
+  <div id="planOut"></div>
+  <h2>Chosen treatment plan</h2>
+  <div class="card">
+    <div class="row" style="margin-bottom:8px"><button class="btn sm primary" id="buildPlan">Write plan from the ticked options</button><span class="note">You can then edit it freely.</span></div>
+    <label class="f"><textarea data-k="plan.text" style="min-height:220px" placeholder="Tick options above and press the button, or write the plan here."></textarea></label>
+    <div class="grid" style="margin-top:10px">
+      <label class="f">Appliance<select data-k="plan.appl"><option value="">—</option><option>Fixed – metal brackets</option><option>Fixed – ceramic brackets</option><option>Fixed – self-ligating</option><option>Lingual</option><option>Clear aligners</option><option>Functional then fixed</option><option>Removable</option></select></label>
+      <label class="f">Estimated duration (months)<input type="number" data-k="plan.months"></label>
+      <label class="f">Anchorage<select data-k="plan.anch"><option value="">—</option><option>Minimum</option><option>Moderate</option><option>Maximum – TADs</option><option>Maximum – TPA / Nance</option></select></label>
+      <label class="f">Retention<select data-k="plan.ret"><option value="">—</option><option>Bonded 3–3 + removable</option><option>Bonded only</option><option>Vacuum-formed</option><option>Hawley</option></select></label>
+    </div>
+  </div>
+  <div class="card" id="refsOut"></div>
+</section>
+
+<!-- RESEARCH -->
+<section class="tab" id="tab-research">
+  <h2>Search the literature for this case</h2>
+  <p class="note">Searches about 40 million papers (PubMed, PMC, Cochrane and more) through Europe PMC. Only the search words are sent — never the patient's name, photos or X-rays.</p>
+  <div class="card">
+    <div class="note">Suggested searches from this case's diagnosis:</div>
+    <div class="chips" id="qChips"></div>
+    <div class="row">
+      <input id="qBox" class="btn" style="flex:1;min-width:200px;text-align:left" placeholder="e.g. Class II functional appliance timing">
+      <select id="qFilt" class="btn"><option value="sr">Systematic reviews &amp; meta-analyses</option><option value="rct">Randomised trials</option><option value="all">All studies</option><option value="guide">Guidelines &amp; consensus</option></select>
+      <select id="qSort" class="btn"><option value="rel">Most relevant</option><option value="new">Newest first</option></select>
+      <button class="btn primary" id="qGo">Search</button>
+    </div>
+    <div class="row note" id="qLinks" style="margin-top:8px"></div>
+  </div>
+  <div id="qOut"></div>
+</section>
+<p class="foot">Ortho Assess is a decision-support aid. Measurements depend on landmark placement and calibration; the suggested options are a starting point and must be confirmed by the treating orthodontist.</p>
+</main>
+
+<dialog id="pvDlg"><div class="pv" id="pvBox"><img id="pvImg" alt=""><svg class="gridov" viewBox="0 0 100 100" preserveAspectRatio="none"><g stroke="#0ff" stroke-width=".25" fill="none" opacity=".85"><line x1="50" y1="0" x2="50" y2="100"/><line x1="0" y1="33.3" x2="100" y2="33.3"/><line x1="0" y1="66.6" x2="100" y2="66.6"/><line x1="25" y1="0" x2="25" y2="100" stroke-dasharray="1 1"/><line x1="75" y1="0" x2="75" y2="100" stroke-dasharray="1 1"/></g></svg></div>
+  <div class="row" style="padding:10px"><b id="pvTitle" style="flex:1"></b><button class="btn sm" id="pvGrid" aria-pressed="false">Grid</button><label class="btn sm"><input type="file" id="pvRep" accept="image/*" hidden>Replace</label><button class="btn sm danger" id="pvDel">Remove</button><button class="btn sm primary" id="pvClose">Close</button></div></dialog>
+
+<dialog id="moreDlg"><div style="padding:16px;display:flex;flex-direction:column;gap:8px">
+  <b>Case</b>
+  <button class="btn" id="expBtn">Export case (backup file)</button>
+  <label class="btn" style="text-align:center"><input type="file" id="impFile" accept=".json,application/json" hidden>Import case file</label>
+  <button class="btn danger" id="delCase">Delete this case</button>
+  <button class="btn" onclick="this.closest('dialog').close()">Close</button>
+</div></dialog>
+
+<div id="report"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* ---------- utilities ---------- */
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const num=v=>(v===''||v==null||isNaN(+v))?null:+v;
+const r1=v=>Math.round(v*10)/10;
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('on'),2600)}
+function getP(o,p){return p.split('.').reduce((a,k)=>a==null?undefined:a[k],o)}
+function setP(o,p,v){const ks=p.split('.');let a=o;for(let i=0;i<ks.length-1;i++){if(a[ks[i]]==null||typeof a[ks[i]]!=='object')a[ks[i]]={};a=a[ks[i]]}a[ks[ks.length-1]]=v}
+
+/* ---------- storage (IndexedDB, on this device only) ---------- */
+const DB={db:null,mem:{cases:new Map(),blobs:new Map()},
+  open(){return new Promise(res=>{try{const r=indexedDB.open('ortho-assess',1);r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore('cases',{keyPath:'id'});d.createObjectStore('blobs')};r.onsuccess=()=>{this.db=r.result;res()};r.onerror=()=>res()}catch(e){res()}})},
+  tx(st,mode,fn){if(!this.db){const m=this.mem[st];return Promise.resolve(fn({getAll:()=>({result:[...m.values()]}),put:(v,k)=>m.set(k??v.id,v),get:k=>({result:m.get(k)}),delete:k=>m.delete(k)})?.result)}
+    return new Promise((res,rej)=>{const t=this.db.transaction(st,mode);const q=fn(t.objectStore(st));t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error)})},
+  all(){return this.tx('cases','readonly',s=>s.getAll())},
+  put(c){return this.tx('cases','readwrite',s=>s.put(c))},
+  del(id){return this.tx('cases','readwrite',s=>s.delete(id))},
+  putBlob(k,b){return this.tx('blobs','readwrite',s=>s.put(b,k))},
+  getBlob(k){return this.tx('blobs','readonly',s=>s.get(k))},
+  delBlob(k){return this.tx('blobs','readwrite',s=>s.delete(k))}};
+
+let cases=[], cur=null, saveT=null;
+const urlCache=new Map();
+function blankCase(){return{id:uid(),created:Date.now(),pt:{name:'',h:{}},photos:{},fx:{},models:{},occ:{},w:{},arch:{},ceph:{pts:{}},opg:{teeth:{},f:{}},plan:{sel:[],refs:[]}}}
+function save(){if(!cur)return;clearTimeout(saveT);saveT=setTimeout(()=>{cur.updated=Date.now();DB.put(cur).catch(e=>toast('Could not save: '+e.message))},250)}
+function saveNow(){clearTimeout(saveT);if(cur)return DB.put(cur)}
+async function blobURL(k){if(!k)return null;if(urlCache.has(k))return urlCache.get(k);const b=await DB.getBlob(k);if(!b)return null;const u=URL.createObjectURL(b);urlCache.set(k,u);return u}
+function loadImg(u){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('Could not open image'));i.src=u})}
+function blobRefs(c){const r=[];for(const s in c.photos)if(c.photos[s])r.push([c.photos,s]);for(const s of['upper','lower'])if(c.models[s])r.push([c.models[s],'key']);if(c.ceph.img)r.push([c.ceph,'img']);if(c.opg.img)r.push([c.opg,'img']);return r}
+
+/* ---------- case list ---------- */
+function caseLabel(c){return (c.pt.name||'Unnamed case')+(c.pt.file?' · '+c.pt.file:'')}
+function renderCaseSel(){const s=$('#caseSel');s.innerHTML=cases.sort((a,b)=>(b.updated||b.created)-(a.updated||a.created)).map(c=>`<option value="${c.id}">${esc(caseLabel(c))}</option>`).join('');if(cur)s.value=cur.id}
+async function openCase(c){await saveNow();for(const u of urlCache.values())URL.revokeObjectURL(u);urlCache.clear();cur=c;
+  for(const k of['photos','fx','models','occ','w','arch'])cur[k]=cur[k]||{};cur.ceph=cur.ceph||{pts:{}};cur.ceph.pts=cur.ceph.pts||{};cur.opg=cur.opg||{teeth:{},f:{}};cur.plan=cur.plan||{};cur.plan.sel=cur.plan.sel||[];cur.plan.refs=cur.plan.refs||[];cur.pt.h=cur.pt.h||{};
+  try{localStorage.setItem('oa-last',c.id)}catch(e){}
+  renderCaseSel();bindAll();renderPhotos();renderWidths();renderAnalysis();renderBrushes();renderChart();lmIdx=nextMissing(0);renderLm();renderCephTable();updDots();
+  cephView.setImage(null);opgView.setImage(null);mesh.clear();
+  if(cur.ceph.img){blobURL(cur.ceph.img).then(u=>u&&loadImg(u)).then(i=>{if(i&&c===cur)cephView.setImage(i)}).catch(()=>{})}
+  if(cur.opg.img){blobURL(cur.opg.img).then(u=>u&&loadImg(u)).then(i=>{if(i&&c===cur)opgView.setImage(i)}).catch(()=>{})}
+  for(const s of['upper','lower'])if(cur.models[s])loadModel(s,null);
+  updMeshInfo();fillSaveTo();
+  if(curTab==='plan')renderPlan();if(curTab==='research')renderResearch();
+}
+async function newCase(){const c=blankCase();cases.push(c);await DB.put(c);await openCase(c);showTab('patient');$('[data-k="pt.name"]').focus()}
+$('#newCase').onclick=newCase;
+$('#caseSel').onchange=e=>{const c=cases.find(x=>x.id===e.target.value);if(c)openCase(c)};
+$('#moreBtn').onclick=()=>$('#moreDlg').showModal();
+$('#delCase').onclick=async()=>{if(!cur||!confirm('Delete '+caseLabel(cur)+' and all its photos, scans and X-rays from this device?'))return;
+  for(const[o,p]of blobRefs(cur))await DB.delBlob(o[p]);await DB.del(cur.id);cases=cases.filter(c=>c!==cur);cur=null;$('#moreDlg').close();
+  if(!cases.length)await newCase();else await openCase(cases[0]);toast('Case deleted')};
+function blobToDataURL(b){return new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(b)})}
+$('#expBtn').onclick=async()=>{await saveNow();const blobs={};for(const[o,p]of blobRefs(cur)){const b=await DB.getBlob(o[p]);if(b)blobs[o[p]]=await blobToDataURL(b)}
+  const out=new Blob([JSON.stringify({app:'ortho-assess',v:1,case:cur,blobs})],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(out);
+  a.download=(cur.pt.name||'case').replace(/[^\w-]+/g,'_')+'-ortho.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000);$('#moreDlg').close()};
+$('#impFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const d=JSON.parse(await f.text());if(d.app!=='ortho-assess')throw new Error('Not an Ortho Assess file');
+  const c=d.case;c.id=uid();for(const[o,p]of blobRefs(c)){const old=o[p],nk='b:'+uid();if(d.blobs[old]){const b=await(await fetch(d.blobs[old])).blob();await DB.putBlob(nk,b);o[p]=nk}else delete o[p]}
+  cases.push(c);await DB.put(c);$('#moreDlg').close();await openCase(c);toast('Case imported')}catch(err){toast('Import failed: '+err.message)}};
+
+/* ---------- form binding ---------- */
+function bindAll(){for(const el of $$('[data-k]')){const v=getP(cur,el.dataset.k);if(el.type==='checkbox')el.checked=!!v;else el.value=v??''}}
+document.addEventListener('input',onField);document.addEventListener('change',onField);
+function onField(e){const el=e.target;if(!el.dataset||!el.dataset.k||!cur)return;let v=el.type==='checkbox'?el.checked:el.value;if(el.type==='number')v=v===''?'':+v;
+  setP(cur,el.dataset.k,v);save();const k=el.dataset.k;
+  if(k.startsWith('pt.name')||k.startsWith('pt.file')){const o=$('#caseSel').selectedOptions[0];if(o)o.textContent=caseLabel(cur)}
+  if(/^(w\.|arch\.|occ\.)/.test(k))renderAnalysis();
+  if(k.startsWith('ceph.'))renderCephTable(),cephView.draw();
+  if(k==='opg.prim')renderChart();
+  updDots()}
+
+/* ---------- tabs ---------- */
+let curTab='patient';
+function showTab(t){curTab=t;for(const b of $$('#tabs button'))b.setAttribute('aria-selected',b.dataset.tab===t);for(const s of $$('section.tab'))s.classList.toggle('on',s.id==='tab-'+t);
+  if(t==='models')mesh.resize();if(t==='ceph')cephView.resize();if(t==='opg')opgView.resize();if(t==='plan')renderPlan();if(t==='research')renderResearch();scrollTo(0,0)}
+$('#tabs').onclick=e=>{const b=e.target.closest('button');if(b)showTab(b.dataset.tab)};
+function updDots(){if(!cur)return;const d=$$('#tabs .dot');const has=o=>Object.values(o||{}).some(v=>v!==''&&v!=null&&v!==false&&!(typeof v==='object'&&!Object.keys(v).length));
+  d[0].classList.toggle('on',!!(cur.pt.name||cur.pt.cc));d[1].classList.toggle('on',Object.values(cur.photos).some(Boolean));d[2].classList.toggle('on',!!(cur.models.upper||cur.models.lower||has(cur.occ)));
+  d[3].classList.toggle('on',!!cur.ceph.img);d[4].classList.toggle('on',!!cur.opg.img)}
+
+/* ---------- photographs ---------- */
+const SLOTS=[['ef','Face – frontal at rest'],['es','Face – frontal smile'],['ep','Face – profile'],['e45','Face – ¾ smile'],['ir','Intra-oral – right buccal'],['if','Intra-oral – frontal'],['il','Intra-oral – left buccal'],['iu','Upper occlusal'],['ilo','Lower occlusal'],['ioj','Overjet (side view)']];
+async function renderPhotos(){const box=$('#slots');box.innerHTML=SLOTS.map(([k,l])=>`<div class="slot ${cur.photos[k]?'has':''}" data-slot="${k}"><div class="im ${cur.photos[k]?'full':''}">${cur.photos[k]?'':'+ Add photo'}</div><div class="lb">${esc(l)}</div></div>`).join('')+`<input type="file" id="phFile" accept="image/*" hidden>`;
+  for(const[k]of SLOTS)if(cur.photos[k]){const u=await blobURL(cur.photos[k]);const im=$(`.slot[data-slot="${k}"] .im`,box);if(u&&im)im.innerHTML=`<img src="${u}" alt="">`}}
+let phSlot=null;
+$('#slots').onclick=e=>{const s=e.target.closest('.slot');if(!s)return;phSlot=s.dataset.slot;if(cur.photos[phSlot])openPv();else $('#phFile').click()};
+$('#slots').addEventListener('change',async e=>{if(e.target.id!=='phFile')return;const f=e.target.files[0];e.target.value='';if(f)await setPhoto(phSlot,f)});
+async function setPhoto(slot,f){const old=cur.photos[slot];const k='b:'+uid();await DB.putBlob(k,f);cur.photos[slot]=k;if(old)await DB.delBlob(old);save();renderPhotos();updDots()}
+async function openPv(){$('#pvImg').src=await blobURL(cur.photos[phSlot]);$('#pvTitle').textContent=SLOTS.find(s=>s[0]===phSlot)[1];$('#pvDlg').showModal()}
+$('#pvClose').onclick=()=>$('#pvDlg').close();
+$('#pvGrid').onclick=e=>{const on=e.target.getAttribute('aria-pressed')!=='true';e.target.setAttribute('aria-pressed',on);$('#pvBox').classList.toggle('grid',on)};
+$('#pvRep').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f){await setPhoto(phSlot,f);openPv()}};
+$('#pvDel').onclick=async()=>{const k=cur.photos[phSlot];delete cur.photos[phSlot];await DB.delBlob(k);save();$('#pvDlg').close();renderPhotos();updDots()};
+
+/* ---------- 2D image viewer (ceph + OPG) ---------- */
+class ImgView{
+  constructor(stage,cv,o={}){this.stage=stage;this.cv=cv;this.ctx=cv.getContext('2d');this.o=o;this.img=null;this.s=1;this.ox=0;this.oy=0;this.bri=1;this.con=1;this.inv=false;this.ptrs=new Map();
+    new ResizeObserver(()=>this.resize(true)).observe(stage);
+    cv.addEventListener('pointerdown',e=>this.down(e));cv.addEventListener('pointermove',e=>this.move(e));cv.addEventListener('pointerup',e=>this.up(e));cv.addEventListener('pointercancel',e=>this.up(e));
+    cv.addEventListener('wheel',e=>{if(!this.img)return;e.preventDefault();const[x,y]=this.cpx(e);this.zoomAt(x,y,Math.exp(-e.deltaY*0.0015))},{passive:false});
+    cv.addEventListener('contextmenu',e=>e.preventDefault())}
+  get dpr(){return window.devicePixelRatio||1}
+  resize(keep){const r=this.stage.getBoundingClientRect();if(!r.width)return;const w=Math.round(r.width*this.dpr),h=Math.round(r.height*this.dpr);if(w===this.cv.width&&h===this.cv.height&&keep)return;this.cv.width=w;this.cv.height=h;this.fit()}
+  setImage(img){this.img=img;this.o.empty&&(this.o.empty.hidden=!!img);this.resize();this.fit()}
+  fit(){if(!this.img){this.draw();return}const w=this.cv.width,h=this.cv.height;this.s=Math.min(w/this.img.width,h/this.img.height)*0.96;this.ox=(w-this.img.width*this.s)/2;this.oy=(h-this.img.height*this.s)/2;this.draw()}
+  cpx(e){const r=this.cv.getBoundingClientRect();return[(e.clientX-r.left)*this.dpr,(e.clientY-r.top)*this.dpr]}
+  toImg([x,y]){return[(x-this.ox)/this.s,(y-this.oy)/this.s]}
+  toScr([x,y]){return[x*this.s+this.ox,y*this.s+this.oy]}
+  zoomAt(x,y,f){const s2=Math.max(0.02,Math.min(40,this.s*f));f=s2/this.s;this.ox=x-(x-this.ox)*f;this.oy=y-(y-this.oy)*f;this.s=s2;this.draw()}
+  down(e){if(!this.img)return;this.cv.setPointerCapture(e.pointerId);const p=this.cpx(e);this.ptrs.set(e.pointerId,p);
+    if(this.ptrs.size===1){this.start=p;this.moved=false;this.btn=e.button;this.drag=this.o.hit?this.o.hit(this.toImg(p),14*this.dpr/this.s):null}else{this.drag=null;this.moved=true;const[a,b]=[...this.ptrs.values()];this.pinch=Math.hypot(a[0]-b[0],a[1]-b[1])}}
+  move(e){if(!this.ptrs.has(e.pointerId))return;const p=this.cpx(e),last=this.ptrs.get(e.pointerId);this.ptrs.set(e.pointerId,p);
+    if(this.ptrs.size===2){const[a,b]=[...this.ptrs.values()];const d=Math.hypot(a[0]-b[0],a[1]-b[1]);this.zoomAt((a[0]+b[0])/2,(a[1]+b[1])/2,d/this.pinch);this.pinch=d;this.ox+=(p[0]-last[0])/2;this.oy+=(p[1]-last[1])/2;this.draw();return}
+    if(!this.moved&&Math.hypot(p[0]-this.start[0],p[1]-this.start[1])>5*this.dpr)this.moved=true;if(!this.moved)return;
+    if(this.drag){this.o.onDrag(this.drag,this.toImg(p));this.draw()}else{this.ox+=p[0]-last[0];this.oy+=p[1]-last[1];this.draw()}}
+  up(e){if(!this.ptrs.has(e.pointerId))return;const p=this.ptrs.get(e.pointerId);this.ptrs.delete(e.pointerId);
+    if(this.ptrs.size===0){if(!this.moved&&this.btn===0&&this.o.onTap)this.o.onTap(this.toImg(p));else if(this.drag&&this.o.onDrop)this.o.onDrop(this.drag);this.drag=null}}
+  draw(){const c=this.ctx,w=this.cv.width,h=this.cv.height;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,w,h);if(!this.img)return;
+    c.filter=`brightness(${this.bri}) contrast(${this.con})${this.inv?' invert(1)':''}`;c.setTransform(this.s,0,0,this.s,this.ox,this.oy);c.drawImage(this.img,0,0);c.filter='none';c.setTransform(1,0,0,1,0,0);
+    this.o.overlay&&this.o.overlay(c,this)}
+}
+function imgControls(view,p){$('#'+p+'Bri').oninput=e=>{view.bri=+e.target.value;view.draw()};$('#'+p+'Con').oninput=e=>{view.con=+e.target.value;view.draw()};
+  $('#'+p+'Inv').onclick=e=>{view.inv=!view.inv;e.target.setAttribute('aria-pressed',view.inv);view.draw()};$('#'+p+'Fit').onclick=()=>view.fit()}
+async function setXray(which,f,view){const old=cur[which].img;const k='b:'+uid();await DB.putBlob(k,f);cur[which].img=k;if(old){await DB.delBlob(old);if(urlCache.has(old)){URL.revokeObjectURL(urlCache.get(old));urlCache.delete(old)}}
+  save();try{view.setImage(await loadImg(await blobURL(k)))}catch(e){toast(e.message)}updDots()}
+
+/* ---------- cephalometrics ---------- */
+const LMS=[
+ ['S','Sella','Centre of the sella turcica'],['N','Nasion','Most anterior point of the fronto-nasal suture'],
+ ['Or','Orbitale','Lowest point on the inferior orbital margin'],['Po','Porion','Top of the external auditory meatus'],
+ ['Co','Condylion','Most postero-superior point on the condyle'],['ANS','ANS','Tip of the anterior nasal spine'],['PNS','PNS','Tip of the posterior nasal spine'],
+ ['A','Point A','Deepest point on the anterior maxilla'],['B','Point B','Deepest point on the anterior mandible'],
+ ['Pog','Pogonion','Most anterior point of the bony chin'],['Gn','Gnathion','Midway between pogonion and menton'],['Me','Menton','Lowest point of the symphysis'],
+ ['Go','Gonion','Most outward point on the angle of the mandible'],
+ ['U1T','U1 tip','Incisal edge of the most prominent upper incisor'],['U1A','U1 apex','Root apex of the upper incisor'],
+ ['L1T','L1 tip','Incisal edge of the most prominent lower incisor'],['L1A','L1 apex','Root apex of the lower incisor'],
+ ['Mo','Molar contact','Where the first molars meet (posterior occlusal plane point)'],
+ ['Prn','Pronasale','Tip of the nose'],['Cm','Columella','Lowest point on the columella of the nose'],['Sn','Subnasale','Where the columella meets the upper lip'],
+ ['Ls','Upper lip','Most anterior point of the upper lip'],['Li','Lower lip','Most anterior point of the lower lip'],['PogS',"Soft pogonion",'Most anterior point of the soft-tissue chin']];
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1],len=a=>Math.hypot(a[0],a[1]),cr=(a,b)=>a[0]*b[1]-a[1]*b[0];
+const nrm=a=>{const l=len(a)||1;return[a[0]/l,a[1]/l]},mid=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];
+const DEG=180/Math.PI,ang=(u,v)=>Math.acos(Math.max(-1,Math.min(1,dot(u,v)/(len(u)*len(v)||1))))*DEG;
+const lineAng=(u,v)=>{const a=ang(u,v);return Math.min(a,180-a)};
+function cephMeasures(c){
+  const p=c.ceph.pts||{},mm=num(c.ceph.mmpp),sex=c.pt.sex,out=[];
+  const f=p.S&&p.N?Math.sign(p.N[0]-p.S[0])||1:1;      // +1 when the patient faces right
+  const ant=[f,0];
+  const perp=(P,A,B)=>{const d=sub(B,A);let n=nrm([-d[1],d[0]]);if(dot(n,ant)<0)n=[-n[0],-n[1]];return dot(sub(P,A),n)};
+  const sgnAng=(ref,v)=>ang(ref,v)*Math.sign(cr(ref,v)||1)*Math.sign(cr(ref,ant)||1);
+  const add=(g,key,name,ks,fn,unit,norm,sd,lo,hi)=>{const miss=ks.filter(k=>!p[k]);let v=null,why='';
+    if(miss.length)why='Needs '+miss.join(', ');else if(unit==='mm'&&!mm)why='Needs calibration';else{v=fn();if(unit==='mm'&&fn.px!==false)v*=mm}
+    out.push({g,key,name,unit,norm,sd,lo,hi,v:v==null||isNaN(v)?null:v,why})};
+  const at=(a,v,b)=>ang(sub(p[a],p[v]),sub(p[b],p[v]));
+  add('Skeletal – sagittal','SNA','SNA',['S','N','A'],()=>at('S','N','A'),'°',82,3,'Retrusive maxilla','Protrusive maxilla');
+  add('Skeletal – sagittal','SNB','SNB',['S','N','B'],()=>at('S','N','B'),'°',80,3,'Retrusive mandible','Protrusive mandible');
+  add('Skeletal – sagittal','ANB','ANB',['S','N','A','B'],()=>at('S','N','A')-at('S','N','B'),'°',2,2,'Class III tendency','Class II tendency');
+  add('Skeletal – sagittal','Wits','Wits appraisal',['A','B','U1T','L1T','Mo'],()=>{let d=nrm(sub(mid(p.U1T,p.L1T),p.Mo));if(dot(d,ant)<0)d=[-d[0],-d[1]];return dot(sub(p.A,p.B),d)},'mm',sex==='M'?-1:0,2,'Class III tendency','Class II tendency');
+  add('Skeletal – sagittal','ANp','A to N-perpendicular',['A','N','Po','Or'],()=>dot(sub(p.A,p.N),nrm(sub(p.Or,p.Po))),'mm',1,2,'Retrusive maxilla','Protrusive maxilla');
+  add('Skeletal – sagittal','PNp','Pog to N-perpendicular',['Pog','N','Po','Or'],()=>dot(sub(p.Pog,p.N),nrm(sub(p.Or,p.Po))),'mm',-2,3,'Retrusive chin','Prominent chin');
+  add('Skeletal – sagittal','CoA','Co–A (midface length)',['Co','A'],()=>len(sub(p.A,p.Co)),'mm',sex==='M'?99:91,4,'Short midface','Long midface');
+  add('Skeletal – sagittal','CoGn','Co–Gn (mandibular length)',['Co','Gn'],()=>len(sub(p.Gn,p.Co)),'mm',sex==='M'?134:120,5,'Short mandible','Long mandible');
+  add('Skeletal – sagittal','MxMd','Maxillo-mandibular difference',['Co','A','Gn'],()=>len(sub(p.Gn,p.Co))-len(sub(p.A,p.Co)),'mm',sex==='M'?32:29,3,'Class II / short mandible','Class III / long mandible');
+  add('Skeletal – sagittal','FacAng','Facial angle (FH–NPog)',['Po','Or','N','Pog'],()=>ang(sub(p.Po,p.Or),sub(p.Pog,p.N)),'°',87,3,'Retrognathic chin','Prognathic chin');
+  add('Skeletal – vertical','FMA','FMA (FH–MP)',['Po','Or','Go','Me'],()=>lineAng(sub(p.Or,p.Po),sub(p.Me,p.Go)),'°',25,5,'Low angle (hypodivergent)','High angle (hyperdivergent)');
+  add('Skeletal – vertical','SNMP','SN–GoGn',['S','N','Go','Gn'],()=>lineAng(sub(p.N,p.S),sub(p.Gn,p.Go)),'°',32,5,'Low angle','High angle');
+  add('Skeletal – vertical','PPMP','PP–MP',['ANS','PNS','Go','Me'],()=>lineAng(sub(p.ANS,p.PNS),sub(p.Me,p.Go)),'°',25,5,'Low angle','High angle');
+  add('Skeletal – vertical','Yax','Y-axis (FH–SGn)',['Po','Or','S','Gn'],()=>ang(sub(p.Or,p.Po),sub(p.Gn,p.S)),'°',59,4,'Horizontal growth','Vertical growth');
+  add('Skeletal – vertical','Jar','Jarabak ratio (S-Go / N-Me)',['S','Go','N','Me'],()=>len(sub(p.Go,p.S))/len(sub(p.Me,p.N))*100,'%',63.5,2.5,'Vertical (clockwise) pattern','Horizontal (counter-clockwise) pattern');
+  add('Skeletal – vertical','LAFH','Lower face height (ANS-Me / N-Me)',['ANS','Me','N'],()=>len(sub(p.Me,p.ANS))/len(sub(p.Me,p.N))*100,'%',55,2,'Reduced lower face','Increased lower face');
+  add('Dental','U1SN','U1 – SN',['U1T','U1A','S','N'],()=>ang(sub(p.U1T,p.U1A),sub(p.S,p.N)),'°',103,6,'Retroclined upper incisors','Proclined upper incisors');
+  add('Dental','U1NAa','U1 – NA (angle)',['U1T','U1A','N','A'],()=>sgnAng(sub(p.A,p.N),sub(p.U1T,p.U1A)),'°',22,5,'Retroclined','Proclined');
+  add('Dental','U1NAm','U1 – NA (mm)',['U1T','N','A'],()=>perp(p.U1T,p.N,p.A),'mm',4,2,'Retrusive','Protrusive');
+  add('Dental','L1NBa','L1 – NB (angle)',['L1T','L1A','N','B'],()=>sgnAng(sub(p.N,p.B),sub(p.L1T,p.L1A)),'°',25,5,'Retroclined','Proclined');
+  add('Dental','L1NBm','L1 – NB (mm)',['L1T','N','B'],()=>perp(p.L1T,p.N,p.B),'mm',4,2,'Retrusive','Protrusive');
+  add('Dental','IMPA','IMPA (L1–MP)',['L1T','L1A','Go','Me'],()=>ang(sub(p.L1T,p.L1A),sub(p.Go,p.Me)),'°',90,5,'Retroclined lower incisors','Proclined lower incisors');
+  add('Dental','FMIA','FMIA',['L1T','L1A','Go','Me','Po','Or'],()=>180-lineAng(sub(p.Or,p.Po),sub(p.Me,p.Go))-ang(sub(p.L1T,p.L1A),sub(p.Go,p.Me)),'°',65,5,'Lower incisors proclined for the face','Lower incisors upright for the face');
+  add('Dental','II','Inter-incisal angle',['U1T','U1A','L1T','L1A'],()=>ang(sub(p.U1A,p.U1T),sub(p.L1A,p.L1T)),'°',131,6,'Bimaxillary proclination','Retroclined incisors (deep-bite tendency)');
+  add('Soft tissue','ULE','Upper lip to E-line',['Ls','Prn','PogS'],()=>perp(p.Ls,p.Prn,p.PogS),'mm',-4,2,'Retrusive upper lip','Protrusive upper lip');
+  add('Soft tissue','LLE','Lower lip to E-line',['Li','Prn','PogS'],()=>perp(p.Li,p.Prn,p.PogS),'mm',-2,2,'Retrusive lower lip','Protrusive lower lip');
+  add('Soft tissue','NLA','Nasolabial angle',['Cm','Sn','Ls'],()=>at('Cm','Sn','Ls'),'°',102,8,'Acute (protrusive)','Obtuse (retrusive)');
+  add('Soft tissue','H','Holdaway H angle',['Ls','PogS','N','B'],()=>lineAng(sub(p.Ls,p.PogS),sub(p.N,p.B)),'°',10,3,'Flat / concave soft tissue','Convex soft tissue');
+  for(const m of out)if(m.v!=null){const z=(m.v-m.norm)/m.sd;m.z=z;m.st=Math.abs(z)<=1?'ok':Math.abs(z)<=2?'warn':'bad';m.txt=Math.abs(z)<=1?'Within normal':z>0?m.hi:m.lo}
+  return out}
+let lmIdx=0,calMode=false,calPts=[];
+function nextMissing(from){for(let i=0;i<LMS.length;i++){const j=(from+i)%LMS.length;if(!cur.ceph.pts[LMS[j][0]])return j}return Math.min(from,LMS.length-1)}
+function renderLm(){$('#lmList').innerHTML=LMS.map(([k,n,d],i)=>`<div class="lm ${i===lmIdx?'cur':''}" data-i="${i}"><b>${k}</b><span class="d"><span style="color:var(--ink)">${esc(n)}</span><br>${esc(d)}</span>${cur.ceph.pts[k]?`<span class="ok">✓</span><button class="btn sm" data-clr="${k}" title="Remove">×</button>`:''}</div>`).join('');
+  const h=$('#cHint');if(cephView.img){h.hidden=false;h.textContent=calMode?`Calibrate: tap ${calPts.length?'the second':'the first'} point on the ruler`:(LMS.every(l=>cur.ceph.pts[l[0]])?'All landmarks placed — drag any point to adjust it':`Tap to place ${LMS[lmIdx][1]} — ${LMS[lmIdx][2]}`)}else h.hidden=true}
+$('#lmList').onclick=e=>{const c=e.target.closest('[data-clr]');if(c){delete cur.ceph.pts[c.dataset.clr];save();renderLm();renderCephTable();cephView.draw();return}const r=e.target.closest('.lm');if(r){lmIdx=+r.dataset.i;renderLm()}};
+const LINES=[['S','N'],['N','A'],['N','B'],['Po','Or'],['Go','Me'],['ANS','PNS'],['U1A','U1T'],['L1A','L1T'],['Prn','PogS'],['N','Pog'],['S','Gn']];
+const cephView=new ImgView($('#cStage'),$('#cCv'),{empty:$('#cEmpty'),
+  hit:(q,tol)=>{let best=null,bd=tol;for(const k in cur.ceph.pts){const d=len(sub(cur.ceph.pts[k],q));if(d<bd){bd=d;best=k}}return best},
+  onDrag:(k,q)=>{cur.ceph.pts[k]=q.map(r1)},onDrop:()=>{save();renderCephTable()},
+  onTap:q=>{if(calMode){calPts.push(q);if(calPts.length===2){const px=len(sub(calPts[0],calPts[1]));const mm=parseFloat(prompt('Distance between the two points in mm:','10'));
+      if(mm>0&&px>0){cur.ceph.mmpp=+(mm/px).toFixed(5);$('[data-k="ceph.mmpp"]').value=cur.ceph.mmpp;save();toast('Calibrated: '+cur.ceph.mmpp+' mm per pixel')}calMode=false;calPts=[];$('#cCal').setAttribute('aria-pressed',false);renderCephTable()}
+      renderLm();cephView.draw();return}
+    cur.ceph.pts[LMS[lmIdx][0]]=q.map(r1);save();lmIdx=nextMissing(lmIdx+1);renderLm();renderCephTable();cephView.draw()},
+  overlay:(c,v)=>{const P=cur.ceph.pts,d=v.dpr;c.lineWidth=1.5*d;
+    if(cephView.trace!==false){c.strokeStyle='#38bdf8cc';for(const[a,b]of LINES)if(P[a]&&P[b]){const A=v.toScr(P[a]),B=v.toScr(P[b]);c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke()}
+      if(P.U1T&&P.L1T&&P.Mo){c.strokeStyle='#a78bfacc';const A=v.toScr(P.Mo),B=v.toScr(mid(P.U1T,P.L1T));c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke()}}
+    c.font=`${11*d}px sans-serif`;for(const k in P){const[x,y]=v.toScr(P[k]);const on=LMS[lmIdx]&&LMS[lmIdx][0]===k;c.fillStyle=on?'#facc15':'#f43f5e';c.beginPath();c.arc(x,y,(on?5:4)*d,0,7);c.fill();c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=3*d;c.strokeText(k,x+6*d,y-6*d);c.fillText(k,x+6*d,y-6*d);c.lineWidth=1.5*d}
+    for(const q of calPts){const[x,y]=v.toScr(q);c.strokeStyle='#22c55e';c.beginPath();c.arc(x,y,7*d,0,7);c.stroke()}}});
+imgControls(cephView,'c');
+$('#cTrace').onclick=e=>{cephView.trace=cephView.trace===false;e.target.setAttribute('aria-pressed',cephView.trace);cephView.draw()};
+$('#cCal').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');calMode=!calMode;calPts=[];e.target.setAttribute('aria-pressed',calMode);renderLm();cephView.draw()};
+$('#upCeph').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;if(Object.keys(cur.ceph.pts).length&&!confirm('Keep the landmarks already placed? (Cancel clears them)'))cur.ceph.pts={};await setXray('ceph',f,cephView);lmIdx=nextMissing(0);renderLm();renderCephTable()};
+function tagFor(m){return m.v==null?`<span class="tag t-mute">${esc(m.why)}</span>`:`<span class="tag t-${m.st}">${esc(m.txt)}</span>`}
+function renderCephTable(){if(!cur)return;const M=cephMeasures(cur);let g='',h='<table><tr><th>Measurement</th><th style="text-align:right">Value</th><th style="text-align:right">Norm</th><th>Interpretation</th></tr>';
+  for(const m of M){if(m.g!==g){g=m.g;h+=`<tr><td colspan="4" style="font-weight:700;padding-top:12px">${esc(g)}</td></tr>`}
+    h+=`<tr><td>${esc(m.name)}</td><td class="n">${m.v==null?'—':r1(m.v)+' '+m.unit}</td><td class="n muted">${m.norm} ± ${m.sd}</td><td>${tagFor(m)}</td></tr>`}
+  $('#cephTable').innerHTML=h+'</table>'}
+
+/* ---------- OPG + tooth chart ---------- */
+const opgView=new ImgView($('#oStage'),$('#oCv'),{empty:$('#oEmpty')});imgControls(opgView,'o');
+$('#upOpg').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)await setXray('opg',f,opgView)};
+const BR=[['','Present','#64748b'],['missing','Missing','#ef4444','M'],['agen','Congenitally absent','#dc2626','CA'],['impacted','Impacted','#f97316','I'],['unerupted','Unerupted / developing','#eab308','U'],['ectopic','Ectopic','#d946ef','Ec'],
+  ['caries','Caries','#7c3aed','C'],['restored','Restored','#2563eb','R'],['rct','Root canal treated','#0891b2','E'],['crown','Crown / bridge','#0d9488','Cr'],['resorb','Root resorption','#be123c','RR'],['implant','Implant','#475569','Im'],['retained','Retained primary','#a16207','RP'],['super','Supernumerary nearby','#16a34a','S']];
+let brush='missing';
+function renderBrushes(){$('#brushes').innerHTML=BR.slice(1).map(([k,n,c])=>`<button data-b="${k}" aria-pressed="${k===brush}"><span style="color:${c}">●</span> ${esc(n)}</button>`).join('')}
+$('#brushes').onclick=e=>{const b=e.target.closest('[data-b]');if(b){brush=b.dataset.b;renderBrushes()}};
+const UP=[18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28],LO=[48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38],PU=[55,54,53,52,51,61,62,63,64,65],PL=[85,84,83,82,81,71,72,73,74,75];
+function toothBtn(t,prim){const s=cur.opg.teeth[t]||'',b=BR.find(x=>x[0]===s)||BR[0];return`<button class="th ${prim?'prim':''}" data-t="${t}" title="${t}: ${b[1]}" style="${s?`border-color:${b[2]};background:${b[2]}22`:''}">${t}<small style="color:${b[2]}">${b[3]||''}</small></button>`}
+function row(a,prim){return`<div class="r">${a.slice(0,a.length/2).map(t=>toothBtn(t,prim)).join('')}<span class="gap"></span>${a.slice(a.length/2).map(t=>toothBtn(t,prim)).join('')}</div>`}
+function renderChart(){const p=cur.opg.prim;$('#toothChart').innerHTML=row(UP)+(p?row(PU,1)+row(PL,1):'')+row(LO)+'<div class="note" style="text-align:center">Patient\'s right ← → patient\'s left</div>'}
+$('#toothChart').onclick=e=>{const b=e.target.closest('[data-t]');if(!b)return;const t=b.dataset.t;cur.opg.teeth[t]=cur.opg.teeth[t]===brush?'':brush;if(!cur.opg.teeth[t])delete cur.opg.teeth[t];save();renderChart()};
+
+/* ---------- 3D model viewer (WebGL, no libraries) ---------- */
+function parseSTL(buf){const dv=new DataView(buf);if(buf.byteLength>=84){const n=dv.getUint32(80,true);if(84+n*50===buf.byteLength){const P=new Float32Array(n*9);for(let i=0;i<n;i++){const o=84+i*50+12;for(let k=0;k<9;k++)P[i*9+k]=dv.getFloat32(o+k*4,true)}return P}}
+  const t=new TextDecoder().decode(buf),re=/vertex\s+(\S+)\s+(\S+)\s+(\S+)/g,a=[];let m;while((m=re.exec(t)))a.push(+m[1],+m[2],+m[3]);if(!a.length)throw new Error('Not a valid STL file');return new Float32Array(a)}
+function parseOBJ(buf){const t=new TextDecoder().decode(buf),v=[],a=[];for(const ln of t.split('\n')){if(ln.startsWith('v ')){const s=ln.trim().split(/\s+/);v.push([+s[1],+s[2],+s[3]])}else if(ln.startsWith('f ')){const s=ln.trim().split(/\s+/).slice(1).map(x=>{const i=parseInt(x);return i<0?v.length+i:i-1});for(let k=1;k<s.length-1;k++)for(const i of[s[0],s[k],s[k+1]])a.push(...v[i])}}if(!a.length)throw new Error('No faces in OBJ file');return new Float32Array(a)}
+function parsePLY(buf){const u8=new Uint8Array(buf);let he=0;const hs=new TextDecoder().decode(u8.slice(0,Math.min(u8.length,4096)));const e=hs.indexOf('end_header');if(e<0)throw new Error('Not a PLY file');he=hs.slice(0,e).length+'end_header'.length;while(u8[he]!==10)he++;he++;
+  const lines=hs.slice(0,e).split(/\r?\n/);const fmt=(lines.find(l=>l.startsWith('format'))||'').split(' ')[1];const els=[];for(const l of lines){const s=l.trim().split(/\s+/);if(s[0]==='element')els.push({n:s[1],c:+s[2],p:[]});else if(s[0]==='property')els[els.length-1].p.push(s[1]==='list'?{list:1,ct:s[2],it:s[3],name:s[4]}:{t:s[1],name:s[2]})}
+  const SZ={char:1,uchar:1,int8:1,uint8:1,short:2,ushort:2,int16:2,uint16:2,int:4,uint:4,int32:4,uint32:4,float:4,float32:4,double:8,float64:8};const V=[],out=[];
+  if(fmt==='ascii'){const tok=new TextDecoder().decode(u8.slice(he)).trim().split(/\s+/);let i=0;for(const el of els)for(let r=0;r<el.c;r++){const rec={};for(const p of el.p){if(p.list){const n=+tok[i++];rec[p.name]=tok.slice(i,i+n).map(Number);i+=n}else rec[p.name]=+tok[i++]}
+      if(el.n==='vertex')V.push([rec.x,rec.y,rec.z]);else if(el.n==='face'){const f=rec.vertex_indices||rec.vertex_index;for(let k=1;k<f.length-1;k++)for(const j of[f[0],f[k],f[k+1]])out.push(...V[j])}}}
+  else{const le=fmt==='binary_little_endian',dv=new DataView(buf);let o=he;const rd=t=>{let v;switch(t){case'char':case'int8':v=dv.getInt8(o);break;case'uchar':case'uint8':v=dv.getUint8(o);break;case'short':case'int16':v=dv.getInt16(o,le);break;case'ushort':case'uint16':v=dv.getUint16(o,le);break;case'int':case'int32':v=dv.getInt32(o,le);break;case'uint':case'uint32':v=dv.getUint32(o,le);break;case'float':case'float32':v=dv.getFloat32(o,le);break;default:v=dv.getFloat64(o,le)}o+=SZ[t];return v};
+    for(const el of els)for(let r=0;r<el.c;r++){let x,y,z,f;for(const p of el.p){if(p.list){const n=rd(p.ct);const a=[];for(let k=0;k<n;k++)a.push(rd(p.it));if(/vertex_ind/.test(p.name))f=a}else{const v=rd(p.t);if(p.name==='x')x=v;else if(p.name==='y')y=v;else if(p.name==='z')z=v}}
+      if(el.n==='vertex')V.push([x,y,z]);else if(el.n==='face'&&f)for(let k=1;k<f.length-1;k++)for(const j of[f[0],f[k],f[k+1]])out.push(...V[j])}}
+  if(!out.length)throw new Error('PLY has no faces (point clouds are not supported)');return new Float32Array(out)}
+function parseModel(name,buf){const x=name.toLowerCase().split('.').pop();return x==='obj'?parseOBJ(buf):x==='ply'?parsePLY(buf):parseSTL(buf)}
+const m3=(a,b)=>{const o=[];for(let i=0;i<3;i++)for(let j=0;j<3;j++)o[i*3+j]=a[i*3]*b[j]+a[i*3+1]*b[3+j]+a[i*3+2]*b[6+j];return o};
+const rx=a=>{const c=Math.cos(a),s=Math.sin(a);return[1,0,0,0,c,-s,0,s,c]},ry=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,0,s,0,1,0,-s,0,c]};
+const RT=(r,v)=>[r[0]*v[0]+r[3]*v[1]+r[6]*v[2],r[1]*v[0]+r[4]*v[1]+r[7]*v[2],r[2]*v[0]+r[5]*v[1]+r[8]*v[2]];
+const Rv=(r,v)=>[r[0]*v[0]+r[1]*v[1]+r[2]*v[2],r[3]*v[0]+r[4]*v[1]+r[5]*v[2],r[6]*v[0]+r[7]*v[1]+r[8]*v[2]];
+const dist3=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+class MeshView{
+  constructor(stage,cv,ov){this.stage=stage;this.cv=cv;this.ov=ov;this.oc=ov.getContext('2d');this.meshes={};this.R=[1,0,0,0,1,0,0,0,1];this.t=[0,0,0];this.d=100;this.fov=40/DEG;this.marks=[];this.mode=null;this.ptrs=new Map();
+    const gl=this.gl=cv.getContext('webgl',{antialias:true,preserveDrawingBuffer:true});if(!gl){this.fail=true;return}
+    const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o};const pr=this.pr=gl.createProgram();
+    gl.attachShader(pr,sh(gl.VERTEX_SHADER,'attribute vec3 p;attribute vec3 n;uniform mat4 M;varying vec3 vn;void main(){vn=n;gl_Position=M*vec4(p,1.0);}'));
+    gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,'precision mediump float;varying vec3 vn;uniform vec3 L;uniform vec3 C;void main(){float d=abs(dot(normalize(vn),L));gl_FragColor=vec4(C*(0.3+0.7*d)+vec3(0.2)*pow(d,30.0),1.0);}'));
+    gl.linkProgram(pr);gl.useProgram(pr);this.aP=gl.getAttribLocation(pr,'p');this.aN=gl.getAttribLocation(pr,'n');this.uM=gl.getUniformLocation(pr,'M');this.uL=gl.getUniformLocation(pr,'L');this.uC=gl.getUniformLocation(pr,'C');
+    new ResizeObserver(()=>this.resize()).observe(stage);
+    cv.addEventListener('pointerdown',e=>this.down(e));cv.addEventListener('pointermove',e=>this.move(e));cv.addEventListener('pointerup',e=>this.up(e));cv.addEventListener('pointercancel',e=>this.up(e));
+    cv.addEventListener('wheel',e=>{e.preventDefault();this.d*=Math.exp(e.deltaY*0.0012);this.render()},{passive:false});cv.addEventListener('contextmenu',e=>e.preventDefault())}
+  clear(){for(const k in this.meshes)this.remove(k);this.marks=[];this.render()}
+  remove(k){const m=this.meshes[k];if(!m)return;this.gl.deleteBuffer(m.bp);this.gl.deleteBuffer(m.bn);delete this.meshes[k]}
+  set(k,P,color){if(this.fail)return;this.remove(k);const gl=this.gl,N=new Float32Array(P.length);const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
+    for(let i=0;i<P.length;i+=9){const ax=P[i+3]-P[i],ay=P[i+4]-P[i+1],az=P[i+5]-P[i+2],bx=P[i+6]-P[i],by=P[i+7]-P[i+1],bz=P[i+8]-P[i+2];let nx=ay*bz-az*by,ny=az*bx-ax*bz,nz=ax*by-ay*bx;const l=Math.hypot(nx,ny,nz)||1;nx/=l;ny/=l;nz/=l;
+      for(let k=0;k<9;k+=3){N[i+k]=nx;N[i+k+1]=ny;N[i+k+2]=nz;for(let c=0;c<3;c++){const v=P[i+k+c];if(v<mn[c])mn[c]=v;if(v>mx[c])mx[c]=v}}}
+    const bp=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bp);gl.bufferData(gl.ARRAY_BUFFER,P,gl.STATIC_DRAW);const bn=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bn);gl.bufferData(gl.ARRAY_BUFFER,N,gl.STATIC_DRAW);
+    this.meshes[k]={P,bp,bn,n:P.length/3,color,mn,mx,vis:true};this.fit()}
+  fit(){const ms=Object.values(this.meshes);if(!ms.length)return this.render();const mn=[0,1,2].map(c=>Math.min(...ms.map(m=>m.mn[c]))),mx=[0,1,2].map(c=>Math.max(...ms.map(m=>m.mx[c])));
+    this.t=mn.map((v,c)=>(v+mx[c])/2);this.diag=dist3(mn,mx);this.d=this.diag/2/Math.tan(this.fov/2)*1.05;this.render()}
+  view(name){this.R={front:[1,0,0,0,1,0,0,0,1],back:ry(Math.PI),right:ry(-Math.PI/2),left:ry(Math.PI/2),top:rx(Math.PI/2),bottom:rx(-Math.PI/2)}[name];this.render()}
+  resize(){const r=this.stage.getBoundingClientRect();if(!r.width)return;const d=window.devicePixelRatio||1;for(const c of[this.cv,this.ov]){c.width=Math.round(r.width*d);c.height=Math.round(r.height*d)}this.render()}
+  mvp(){const r=this.R,t=this.t,d=this.d,a=this.cv.width/this.cv.height,f=1/Math.tan(this.fov/2),n=Math.max(d-(this.diag||100)*2,d*0.01),fa=d+(this.diag||100)*2,nf=1/(n-fa);
+    const tx=-(r[0]*t[0]+r[1]*t[1]+r[2]*t[2]),ty=-(r[3]*t[0]+r[4]*t[1]+r[5]*t[2]),tz=-(r[6]*t[0]+r[7]*t[1]+r[8]*t[2])-d;
+    const V=[r[0],r[3],r[6],0,r[1],r[4],r[7],0,r[2],r[5],r[8],0,tx,ty,tz,1],Pm=[f/a,0,0,0,0,f,0,0,0,0,(fa+n)*nf,-1,0,0,2*fa*n*nf,0],o=[];
+    for(let c=0;c<4;c++)for(let row=0;row<4;row++){let s=0;for(let k=0;k<4;k++)s+=Pm[k*4+row]*V[c*4+k];o[c*4+row]=s}return o}
+  render(){if(this.fail||!this.cv.width)return;cancelAnimationFrame(this.raf);this.raf=requestAnimationFrame(()=>this.paint())}
+  paint(){const gl=this.gl;gl.viewport(0,0,this.cv.width,this.cv.height);gl.clearColor(0.043,0.059,0.078,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);
+    gl.uniformMatrix4fv(this.uM,false,new Float32Array(this.mvp()));const L=RT(this.R,[0.25,0.35,1]),l=Math.hypot(...L);gl.uniform3f(this.uL,L[0]/l,L[1]/l,L[2]/l);
+    for(const m of Object.values(this.meshes)){if(!m.vis)continue;gl.uniform3fv(this.uC,m.color);gl.bindBuffer(gl.ARRAY_BUFFER,m.bp);gl.enableVertexAttribArray(this.aP);gl.vertexAttribPointer(this.aP,3,gl.FLOAT,false,0,0);
+      gl.bindBuffer(gl.ARRAY_BUFFER,m.bn);gl.enableVertexAttribArray(this.aN);gl.vertexAttribPointer(this.aN,3,gl.FLOAT,false,0,0);gl.drawArrays(gl.TRIANGLES,0,m.n)}
+    this.overlay()}
+  proj(p){const v=Rv(this.R,[p[0]-this.t[0],p[1]-this.t[1],p[2]-this.t[2]]);v[2]-=this.d;if(v[2]>=0)return null;const w=this.cv.width,h=this.cv.height,f=Math.tan(this.fov/2),a=w/h;return[((v[0]/-v[2])/(f*a)+1)/2*w,(1-(v[1]/-v[2])/f)/2*h]}
+  overlay(){const c=this.oc,d=window.devicePixelRatio||1;c.clearRect(0,0,this.ov.width,this.ov.height);const pts=this.marks.map(p=>this.proj(p));
+    c.lineWidth=2*d;c.strokeStyle='#facc15';c.beginPath();pts.forEach((p,i)=>{if(!p)return;i?c.lineTo(p[0],p[1]):c.moveTo(p[0],p[1])});c.stroke();
+    for(const p of pts)if(p){c.fillStyle='#f43f5e';c.beginPath();c.arc(p[0],p[1],4.5*d,0,7);c.fill()}}
+  pick(cx,cy){const r=this.cv.getBoundingClientRect(),w=r.width,h=r.height,f=Math.tan(this.fov/2),nx=(cx-r.left)/w*2-1,ny=1-(cy-r.top)/h*2;
+    const D=RT(this.R,[nx*f*(w/h),ny*f,-1]),O=RT(this.R,[0,0,this.d]).map((v,i)=>v+this.t[i]);let best=Infinity;
+    for(const m of Object.values(this.meshes)){if(!m.vis)continue;const P=m.P;for(let i=0;i<P.length;i+=9){const ax=P[i],ay=P[i+1],az=P[i+2],e1x=P[i+3]-ax,e1y=P[i+4]-ay,e1z=P[i+5]-az,e2x=P[i+6]-ax,e2y=P[i+7]-ay,e2z=P[i+8]-az;
+      const hx=D[1]*e2z-D[2]*e2y,hy=D[2]*e2x-D[0]*e2z,hz=D[0]*e2y-D[1]*e2x,A=e1x*hx+e1y*hy+e1z*hz;if(A>-1e-12&&A<1e-12)continue;const F=1/A,sx=O[0]-ax,sy=O[1]-ay,sz=O[2]-az,u=F*(sx*hx+sy*hy+sz*hz);if(u<0||u>1)continue;
+      const qx=sy*e1z-sz*e1y,qy=sz*e1x-sx*e1z,qz=sx*e1y-sy*e1x,v=F*(D[0]*qx+D[1]*qy+D[2]*qz);if(v<0||u+v>1)continue;const t=F*(e2x*qx+e2y*qy+e2z*qz);if(t>1e-6&&t<best)best=t}}
+    return best<Infinity?[O[0]+D[0]*best,O[1]+D[1]*best,O[2]+D[2]*best]:null}
+  down(e){this.cv.setPointerCapture(e.pointerId);this.ptrs.set(e.pointerId,[e.clientX,e.clientY]);if(this.ptrs.size===1){this.start=[e.clientX,e.clientY];this.moved=false;this.btn=e.button;this.sh=e.shiftKey}else{this.moved=true;const[a,b]=[...this.ptrs.values()];this.pinch=Math.hypot(a[0]-b[0],a[1]-b[1])}}
+  move(e){if(!this.ptrs.has(e.pointerId))return;const last=this.ptrs.get(e.pointerId),p=[e.clientX,e.clientY];this.ptrs.set(e.pointerId,p);const dx=p[0]-last[0],dy=p[1]-last[1];
+    if(!this.moved&&Math.hypot(p[0]-this.start[0],p[1]-this.start[1])>5)this.moved=true;if(!this.moved)return;
+    if(this.ptrs.size===2){const[a,b]=[...this.ptrs.values()],dd=Math.hypot(a[0]-b[0],a[1]-b[1]);this.d*=this.pinch/dd;this.pinch=dd;this.pan(dx/2,dy/2)}
+    else if(this.btn===2||this.sh)this.pan(dx,dy);else{this.R=m3(rx(dy*0.008),m3(ry(dx*0.008),this.R))}this.render()}
+  pan(dx,dy){const s=2*this.d*Math.tan(this.fov/2)/this.cv.getBoundingClientRect().height;const w=RT(this.R,[-dx*s,dy*s,0]);this.t=this.t.map((v,i)=>v+w[i])}
+  up(e){if(!this.ptrs.has(e.pointerId))return;this.ptrs.delete(e.pointerId);if(!this.ptrs.size&&!this.moved&&this.btn===0&&this.mode){const p=this.pick(e.clientX,e.clientY);if(p)this.onPick(p);else toast('Tap on the model surface')}}
+}
+const mesh=new MeshView($('#mStage'),$('#mGL'),$('#mOv'));
+if(mesh.fail)$('#mEmpty').textContent='This browser cannot show 3D (WebGL is off).';
+const COLORS={upper:[0.93,0.86,0.72],lower:[0.78,0.84,0.93]};
+async function loadModel(side,file){try{$('#mEmpty').hidden=true;$('#mHint').hidden=false;$('#mHint').textContent='Loading '+side+' model…';
+  let buf,name;if(file){buf=await file.arrayBuffer();name=file.name}else{const b=await DB.getBlob(cur.models[side].key);if(!b)throw new Error('File missing');buf=await b.arrayBuffer();name=cur.models[side].name}
+  const P=parseModel(name,buf);if(file){const old=cur.models[side]&&cur.models[side].key;const k='b:'+uid();await DB.putBlob(k,file);cur.models[side]={key:k,name,tris:P.length/9};if(old)await DB.delBlob(old);save();updDots()}
+  mesh.set(side,P,COLORS[side]);$('#mHint').hidden=true;updMeshInfo()}catch(err){$('#mHint').hidden=true;toast('Could not open model: '+err.message);if(!Object.keys(mesh.meshes).length)$('#mEmpty').hidden=false}}
+function updMeshInfo(){const m=cur.models;$('#mEmpty').hidden=!mesh.fail&&!!(m.upper||m.lower);
+  $('#mInfo').innerHTML=['upper','lower'].map(s=>`<div><b>${s==='upper'?'Upper':'Lower'}:</b> ${m[s]?esc(m[s].name)+' <span class="muted">('+(m[s].tris||0).toLocaleString()+' triangles)</span> <button class="btn sm danger" data-rm="'+s+'">Remove</button>':'not loaded'}</div>`).join('')}
+$('#mInfo').onclick=async e=>{const s=e.target.dataset.rm;if(!s)return;await DB.delBlob(cur.models[s].key);delete cur.models[s];mesh.remove(s);mesh.render();save();updMeshInfo();updDots()};
+$('#upU').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)loadModel('upper',f)};
+$('#upL').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)loadModel('lower',f)};
+for(const[id,s]of[['tglU','upper'],['tglL','lower']])$('#'+id).onclick=e=>{const m=mesh.meshes[s];if(!m)return;m.vis=!m.vis;e.target.setAttribute('aria-pressed',m.vis);mesh.render()};
+$('#mView').onchange=e=>{if(e.target.value)mesh.view(e.target.value);e.target.value=''};$('#mFit').onclick=()=>mesh.fit();
+let lastMeas=null;
+function setMode(m){mesh.mode=mesh.mode===m?null:m;mesh.marks=[];lastMeas=null;$('#mDist').setAttribute('aria-pressed',mesh.mode==='dist');$('#mPoly').setAttribute('aria-pressed',mesh.mode==='poly');$('#mDone').hidden=mesh.mode!=='poly';
+  $('#mHint').hidden=!mesh.mode;$('#mHint').textContent=mesh.mode==='dist'?'Tap two points on the model':'Tap points along the arch, then press Done';mesh.render()}
+$('#mDist').onclick=()=>setMode('dist');$('#mPoly').onclick=()=>setMode('poly');$('#mClear').onclick=()=>{mesh.marks=[];lastMeas=null;$('#mRes').textContent='Cleared.';mesh.render()};
+function polyLen(a){let s=0;for(let i=1;i<a.length;i++)s+=dist3(a[i-1],a[i]);return s}
+mesh.onPick=p=>{if(mesh.mode==='dist'){if(mesh.marks.length>=2)mesh.marks=[];mesh.marks.push(p);if(mesh.marks.length===2){lastMeas=r1(dist3(...mesh.marks)*10)/10;$('#mRes').innerHTML=`Distance: <b>${lastMeas.toFixed(2)} mm</b>`;suggestSave('tooth')}else $('#mRes').textContent='Now tap the second point.'}
+  else{mesh.marks.push(p);lastMeas=Math.round(polyLen(mesh.marks)*100)/100;$('#mRes').innerHTML=`Arch length so far: <b>${lastMeas.toFixed(2)} mm</b> (${mesh.marks.length} points)`}mesh.render()};
+$('#mDone').onclick=()=>{if(mesh.marks.length<2)return toast('Tap at least two points');$('#mRes').innerHTML=`Arch length: <b>${lastMeas.toFixed(2)} mm</b> — save it below.`;suggestSave('arch');mesh.mode=null;$('#mPoly').setAttribute('aria-pressed',false);$('#mDone').hidden=true;$('#mHint').hidden=true};
+const SAVE_TARGETS=[...[16,15,14,13,12,11,21,22,23,24,25,26].map(t=>['w.'+t,'Width of tooth '+t]),...[46,45,44,43,42,41,31,32,33,34,35,36].map(t=>['w.'+t,'Width of tooth '+t]),
+  ['arch.availU','Upper arch length available'],['arch.availL','Lower arch length available'],['arch.icwU','Upper inter-canine width'],['arch.imwU','Upper inter-molar width'],['arch.icwL','Lower inter-canine width'],['arch.imwL','Lower inter-molar width'],['occ.oj','Overjet'],['occ.ob','Overbite'],['occ.spee','Curve of Spee depth']];
+function fillSaveTo(){$('#mSaveTo').innerHTML='<option value="">Save measurement as…</option>'+SAVE_TARGETS.map(([k,l])=>`<option value="${k}">${l}${getP(cur,k)!=null&&getP(cur,k)!==''?' ('+getP(cur,k)+')':''}</option>`).join('')}
+function suggestSave(kind){fillSaveTo();const s=$('#mSaveTo');if(kind==='arch')s.value=cur.arch.availU?'arch.availL':'arch.availU';else{const nx=SAVE_TARGETS.find(([k])=>k.startsWith('w.')&&num(getP(cur,k))==null);s.value=nx?nx[0]:''}}
+$('#mSave').onclick=()=>{const k=$('#mSaveTo').value;if(lastMeas==null)return toast('Measure something first');if(!k)return toast('Choose where to save it');setP(cur,k,+lastMeas.toFixed(2));save();bindAll();renderWidths();renderAnalysis();toast('Saved '+lastMeas.toFixed(2)+' mm');mesh.marks=[];lastMeas=null;mesh.render();if(mesh.mode==='dist')$('#mRes').textContent='Saved. Tap two points for the next tooth.';fillSaveTo()};
+
+/* ---------- widths, Bolton, space analysis ---------- */
+const UW=[16,15,14,13,12,11,21,22,23,24,25,26],LW=[46,45,44,43,42,41,31,32,33,34,35,36];
+function renderWidths(){const cell=t=>`<td><label class="f" style="min-width:58px">${t}<input type="number" step="0.01" data-k="w.${t}" value="${cur.w[t]??''}"></label></td>`;
+  $('#widths').innerHTML=`<table><tr>${UW.map(cell).join('')}</tr><tr>${LW.map(cell).join('')}</tr></table>`}
+function sumW(list){let s=0,miss=0;for(const t of list){const v=num(cur.w[t]);if(v==null)miss++;else s+=v}return{s,miss}}
+function spaceCalc(c){c=c||cur;const g=(L)=>{let s=0,m=0;for(const t of L){const v=num(c.w[t]);if(v==null)m++;else s+=v}return{s,m}};const out={};
+  for(const[side,teeth,av]of[['U',[15,14,13,12,11,21,22,23,24,25],'availU'],['L',[45,44,43,42,41,31,32,33,34,35],'availL']]){const r=g(teeth),a=num(c.arch[av]);if(!r.m&&a!=null)out[side]={req:r.s,avail:a,disc:a-r.s}}
+  const u12=g(UW),l12=g(LW),u6=g([13,12,11,21,22,23]),l6=g([43,42,41,31,32,33]);
+  if(!u12.m&&!l12.m)out.overall={ratio:l12.s/u12.s*100,ex:l12.s/u12.s*100>91.3?{arch:'lower',mm:l12.s-u12.s*0.913}:{arch:'upper',mm:u12.s-l12.s/0.913}};
+  if(!u6.m&&!l6.m)out.ant={ratio:l6.s/u6.s*100,ex:l6.s/u6.s*100>77.2?{arch:'lower',mm:l6.s-u6.s*0.772}:{arch:'upper',mm:u6.s-l6.s/0.772}};return out}
+function renderAnalysis(){if(!cur)return;const s=spaceCalc();let h='<h3 style="margin-top:0">Results</h3>';
+  const sp=(k,n)=>s[k]?`<div>${n}: required ${r1(s[k].req)} mm, available ${r1(s[k].avail)} mm → <b>${s[k].disc<0?'crowding '+r1(-s[k].disc):'spacing '+r1(s[k].disc)} mm</b></div>`:`<div class="muted">${n}: enter widths 5–5 and the available arch length.</div>`;
+  h+=sp('U','Upper space analysis')+sp('L','Lower space analysis');
+  const bo=(k,n,norm,sd)=>{if(!s[k])return`<div class="muted">${n}: needs all ${k==='ant'?'6 + 6':'12 + 12'} widths.</div>`;const z=(s[k].ratio-norm)/sd;return`<div>${n}: <b>${s[k].ratio.toFixed(1)}%</b> (norm ${norm} ± ${sd}) <span class="tag t-${Math.abs(z)<=1?'ok':Math.abs(z)<=2?'warn':'bad'}">${Math.abs(z)<=1?'Normal':esc(s[k].ex.arch)+' excess '+s[k].ex.mm.toFixed(1)+' mm'}</span></div>`};
+  h+=bo('overall','Bolton overall ratio',91.3,1.91)+bo('ant','Bolton anterior ratio',77.2,1.65);$('#analysisOut').innerHTML=h}
+function molOpts(){const o=['','Class I','Class II ¼ unit','Class II ½ unit','Class II ¾ unit','Class II full unit','Class III ¼ unit','Class III ½ unit','Class III full unit','Not assessable'];for(const s of $$('.molsel'))s.innerHTML=o.map(x=>`<option value="${x}">${x||'—'}</option>`).join('')}
+molOpts();
+
+/* ---------- diagnosis + treatment-planning engine ---------- */
+function ageOf(c){if(c.pt.dob){const ref=c.pt.recDate?new Date(c.pt.recDate):new Date();return Math.round((ref-new Date(c.pt.dob))/31557600000*10)/10}return num(c.pt.age)}
+function growthOf(c){const cv=c.ceph.cvm,a=ageOf(c),f=c.pt.sex==='F';if(cv){const n=+cv[2];return{st:n<=2?'pre':n<=4?'peak':'post',txt:cv+(n<=2?' – before the pubertal growth spurt':n<=4?' – at the pubertal growth spurt':' – growth spurt over'),est:false}}
+  if(a==null)return{st:null,txt:'Unknown (enter age or CVM stage)',est:true};const lim=f?[10,13.5,15]:[11.5,15,17];
+  const st=a<lim[0]?'pre':a<lim[1]?'peak':a<lim[2]?'late':'post';return{st,txt:`Estimated from age ${a} (${st==='pre'?'probably before the growth spurt':st==='peak'?'probably near the growth spurt':st==='late'?'growth slowing':'growth probably complete'}) — confirm with CVM`,est:true}}
+const molCls=s=>!s||s==='Not assessable'?null:/^Class III/.test(s)?'III':/^Class II/.test(s)?'II':'I';
+const EV={
+  cl2Cochrane:['Cochrane review: orthodontic treatment for prominent upper front teeth (Class II) in children','https://pubmed.ncbi.nlm.nih.gov/?term=Cochrane+orthodontic+treatment+prominent+upper+front+teeth+Class+II+children'],
+  cvmTiming:['Herbst/functional appliance effect by CVM stage — Angle Orthodontist 2017;87(3):363','https://angle-orthodontist.kglmeridian.com/view/journals/angl/87/3/article-p363.xml'],
+  cl2Puberty:['Functional appliances are more effective at puberty (Franchi et al.)','https://pubmed.ncbi.nlm.nih.gov/22931200'],
+  cl3Cochrane:['Cochrane review: treatment for prominent lower front teeth (Class III) in children','https://pubmed.ncbi.nlm.nih.gov/?term=Cochrane+orthodontic+treatment+prominent+lower+front+teeth+Class+III+children'],
+  cl3Camo:['Borderline Class III: camouflage versus orthognathic surgery (Open Dent J 2008)','https://opendentistryjournal.com/VOLUME/2/PAGE/38/FULLTEXT/'],
+  cl3Sr:['Systematic review: cephalometric thresholds for camouflage vs surgery in Class III','https://pubmed.ncbi.nlm.nih.gov/?term=systematic+review+class+III+camouflage+orthognathic+surgery+cephalometric'],
+  bamp:['Bone-anchored maxillary protraction (BAMP) outcomes','https://pubmed.ncbi.nlm.nih.gov/?term=bone+anchored+maxillary+protraction+class+III'],
+  extract:['Factors in the extraction decision for borderline cases (PMC)','https://pmc.ncbi.nlm.nih.gov/articles/PMC8357218'],
+  extract2:['Extraction vs non-extraction: soft-tissue profile and crowding as main drivers (PMC)','https://pmc.ncbi.nlm.nih.gov/articles/PMC6599705'],
+  rme:['Rapid maxillary expansion vs MARPE / SARPE — systematic reviews','https://pubmed.ncbi.nlm.nih.gov/?term=systematic+review+miniscrew+assisted+rapid+palatal+expansion+adults'],
+  xbite:['Cochrane review: treatment of posterior crossbites','https://pubmed.ncbi.nlm.nih.gov/?term=Cochrane+orthodontic+treatment+posterior+crossbites'],
+  openbite:['Anterior open bite treatment and stability — systematic reviews','https://pubmed.ncbi.nlm.nih.gov/?term=systematic+review+anterior+open+bite+treatment+stability'],
+  deepbite:['Deep bite correction — systematic reviews','https://pubmed.ncbi.nlm.nih.gov/?term=systematic+review+deep+bite+correction+orthodontic'],
+  canine:['Interceptive treatment of palatally displaced canines — Cochrane / RCTs','https://pubmed.ncbi.nlm.nih.gov/?term=palatally+displaced+canine+interceptive+extraction+primary+canine+randomized'],
+  agenesis:['Missing upper laterals: space closure vs opening','https://pubmed.ncbi.nlm.nih.gov/?term=maxillary+lateral+incisor+agenesis+space+closure+versus+opening'],
+  bolton:['Bolton tooth-size discrepancy and its management','https://pubmed.ncbi.nlm.nih.gov/?term=Bolton+tooth+size+discrepancy+management'],
+  retention:['Cochrane review: retention procedures for stabilising tooth position','https://pubmed.ncbi.nlm.nih.gov/?term=Cochrane+retention+procedures+stabilising+tooth+position+after+orthodontic'],
+  resorption:['Orthodontically induced root resorption — risk factors','https://pubmed.ncbi.nlm.nih.gov/?term=systematic+review+orthodontically+induced+external+apical+root+resorption+risk+factors'],
+  perio:['Orthodontic treatment in periodontitis patients — EFP S4 guideline','https://pubmed.ncbi.nlm.nih.gov/?term=EFP+S4+level+clinical+practice+guideline+stage+IV+periodontitis'],
+  gummy:['Excessive gingival display — treatment options','https://pubmed.ncbi.nlm.nih.gov/?term=excessive+gingival+display+treatment+systematic+review'],
+  aligner:['Clear aligners: predictability of tooth movements','https://pubmed.ncbi.nlm.nih.gov/?term=systematic+review+clear+aligner+predictability+tooth+movement'],
+  bimax:['Bimaxillary protrusion: four-premolar extraction outcomes','https://pubmed.ncbi.nlm.nih.gov/?term=bimaxillary+protrusion+premolar+extraction+soft+tissue+changes']};
+function analyze(c){
+  const F=[],P=[],O=[],obj=[],Q=new Set(),M=cephMeasures(c),mv=k=>{const m=M.find(x=>x.key===k);return m&&m.v!=null?m.v:null},ms=k=>M.find(x=>x.key===k);
+  const A=ageOf(c),G=growthOf(c),o=c.occ||{},fx=c.fx||{},pt=c.pt||{},op=c.opg||{teeth:{},f:{}},sp=spaceCalc(c);
+  const growing=G.st==='pre'||G.st==='peak'||G.st==='late';
+  const add=(id,title,fit,why,steps,ev=[])=>O.push({id,title,fit,why,steps,ev:ev.map(k=>EV[k]).filter(Boolean)});
+  // records
+  const miss=[];if(!Object.values(c.photos).some(Boolean))miss.push('photographs');if(!c.models.upper&&!c.models.lower)miss.push('3D models');if(!c.ceph.img)miss.push('lateral ceph');if(!c.opg.img)miss.push('OPG');
+  // --- sagittal skeletal
+  const anb=mv('ANB'),wits=mv('Wits');let skel=null,sev=0,basis='';
+  if(anb!=null){skel=anb>4?'II':anb<0?'III':'I';sev=skel==='II'?(anb>8?3:anb>6?2:1):skel==='III'?(anb<-4?3:anb<-2?2:1):0;basis=`ANB ${r1(anb)}°`+(wits!=null?`, Wits ${r1(wits)} mm`:'')}
+  else if(wits!=null){skel=wits>2?'II':wits<-3?'III':'I';sev=Math.abs(wits)>8?3:Math.abs(wits)>5?2:skel==='I'?0:1;basis=`Wits ${r1(wits)} mm`}
+  if(anb!=null&&wits!=null){const wc=wits>2?'II':wits<-3?'III':'I';if(wc!==skel)F.push({a:'Skeletal',t:`ANB and Wits disagree (ANB suggests Class ${skel}, Wits Class ${wc}) — check point A/B, nasion position and the occlusal plane.`,l:1})}
+  const mol=[molCls(o.molR),molCls(o.molL)].filter(Boolean),dental=o.inc?(/III/.test(o.inc)?'III':/II/.test(o.inc)?'II':'I'):mol.length?(mol.includes('II')?'II':mol.includes('III')?'III':'I'):null;
+  const div2=/div 2/.test(o.inc||'');
+  if(!skel&&dental){skel=dental;basis='dental relationship only (no ceph)'}
+  const sevW=['','mild','moderate','severe'][sev]||'';
+  const maxRet=ms('SNA')?.z<-1||ms('ANp')?.z<-1,maxPro=ms('SNA')?.z>1||ms('ANp')?.z>1,mandRet=ms('SNB')?.z<-1||ms('PNp')?.z<-1||ms('MxMd')?.z<-1,mandPro=ms('SNB')?.z>1||ms('PNp')?.z>1||ms('MxMd')?.z>1;
+  const origin=[maxRet&&'retrusive maxilla',maxPro&&'protrusive maxilla',mandRet&&'retrusive mandible',mandPro&&'protrusive mandible'].filter(Boolean).join(' and ');
+  if(skel)F.push({a:'Skeletal',t:`Skeletal Class ${skel}${sevW&&skel!=='I'?' ('+sevW+')':''}${origin?' — '+origin:''} [${basis}]`,l:skel==='I'?0:sev});
+  // --- vertical
+  const fma=mv('FMA'),snmp=mv('SNMP'),jar=mv('Jar');let vert=null;
+  if(fma!=null||snmp!=null){const hi=(fma!=null&&fma>30)||(snmp!=null&&snmp>37),lo=(fma!=null&&fma<20)||(snmp!=null&&snmp<27);vert=hi?'high':lo?'low':'normal'}
+  else if(fx.lfh==='Increased'||/Dolicho/.test(fx.type||''))vert='high';else if(fx.lfh==='Decreased'||/Brachy/.test(fx.type||''))vert='low';
+  if(vert)F.push({a:'Skeletal',t:`Vertical pattern: ${vert==='high'?'high angle (hyperdivergent)':vert==='low'?'low angle (hypodivergent)':'average'}${fma!=null?` [FMA ${r1(fma)}°`+(snmp!=null?`, SN-GoGn ${r1(snmp)}°`:'')+(jar!=null?`, Jarabak ${r1(jar)}%`:'')+']':''}`,l:vert==='normal'?0:1});
+  // --- dental
+  const oj=num(o.oj),ob=num(o.ob),u1=ms('U1SN'),l1=ms('IMPA');
+  if(dental||mol.length)F.push({a:'Dental',t:`Molars R ${o.molR||'—'} / L ${o.molL||'—'}; canines R ${o.canR||'—'} / L ${o.canL||'—'}; incisors ${o.inc||'—'}`,l:dental&&dental!=='I'?1:0});
+  if(oj!=null)F.push({a:'Dental',t:`Overjet ${oj} mm${oj<0?' (reverse)':oj>9?' (very large)':oj>6?' (large — incisal trauma risk)':oj>4?' (increased)':''}`,l:oj<0||oj>6?2:oj>4?1:0});
+  const deep=(ob!=null&&ob>4)||/Deep/.test(o.obType||''),open=(ob!=null&&ob<0)||/open bite/i.test(o.obType||'');
+  if(ob!=null||o.obType)F.push({a:'Dental',t:`Overbite ${ob!=null?ob+' mm':''} ${o.obType?'('+o.obType+')':''}`.trim(),l:deep||open?1:0});
+  if(u1&&u1.v!=null)F.push({a:'Dental',t:`Upper incisors ${u1.st==='ok'?'normally inclined':u1.z>0?'proclined':'retroclined'} (U1-SN ${r1(u1.v)}°)`,l:u1.st==='ok'?0:1});
+  if(l1&&l1.v!=null)F.push({a:'Dental',t:`Lower incisors ${l1.st==='ok'?'normally inclined':l1.z>0?'proclined':'retroclined'} (IMPA ${r1(l1.v)}°)`,l:l1.st==='ok'?0:1});
+  const crowd={U:sp.U?Math.max(0,-sp.U.disc):num(o.crowdU),L:sp.L?Math.max(0,-sp.L.disc):num(o.crowdL)},spacing={U:sp.U&&sp.U.disc>0?sp.U.disc:num(o.spaceU),L:sp.L&&sp.L.disc>0?sp.L.disc:num(o.spaceL)};
+  const cmax=Math.max(crowd.U||0,crowd.L||0);
+  for(const s of['U','L']){if(crowd[s])F.push({a:'Dental',t:`${s==='U'?'Upper':'Lower'} crowding ${r1(crowd[s])} mm (${crowd[s]<4?'mild':crowd[s]<=8?'moderate':'severe'})${sp[s]?' — from space analysis':''}`,l:crowd[s]<4?1:2});if(spacing[s])F.push({a:'Dental',t:`${s==='U'?'Upper':'Lower'} spacing ${r1(spacing[s])} mm`,l:1})}
+  if(o.postX)F.push({a:'Transverse',t:`Posterior crossbite: ${o.postX}${o.shift&&o.shift!=='No'?' with functional shift':''}`,l:2});
+  if(o.scissor)F.push({a:'Transverse',t:`Scissor bite: ${o.scissor}`,l:2});
+  if(o.antX)F.push({a:'Dental',t:`Anterior crossbite: ${o.antX}`,l:2});
+  if(num(fx.umid)||num(fx.lmid))F.push({a:'Dental',t:`Midlines: upper ${num(fx.umid)?Math.abs(fx.umid)+' mm to the '+(fx.umid>0?'right':'left'):'centred'}; lower ${num(fx.lmid)?Math.abs(fx.lmid)+' mm to the '+(fx.lmid>0?'right':'left')+' of upper':'coincident'}`,l:1});
+  const ov=sp.overall,an=sp.ant,boltonBad=(ov&&Math.abs(ov.ratio-91.3)>2*1.91)||(an&&Math.abs(an.ratio-77.2)>2*1.65);
+  if(boltonBad){const b=an&&Math.abs(an.ratio-77.2)>2*1.65?an:ov;F.push({a:'Dental',t:`Bolton discrepancy: ${b.ex.arch} ${b===an?'anterior':'overall'} excess ${b.ex.mm.toFixed(1)} mm`,l:1})}
+  // --- soft tissue
+  const ule=ms('ULE'),lle=ms('LLE'),nla=ms('NLA');
+  const lipsPro=(lle&&lle.z>1)||(ule&&ule.z>1)||fx.lipPro==='Protrusive',lipsRet=(lle&&lle.z<-1)||fx.lipPro==='Retrusive';
+  if(fx.profile)F.push({a:'Soft tissue',t:`${fx.profile} profile${fx.lips?'; lips '+fx.lips.toLowerCase():''}${fx.chin&&fx.chin!=='Normal'?'; '+fx.chin.toLowerCase()+' chin':''}`,l:fx.profile==='Straight'?0:1});
+  if(lle&&lle.v!=null)F.push({a:'Soft tissue',t:`Lips to E-line: upper ${ule&&ule.v!=null?r1(ule.v):'—'} mm, lower ${r1(lle.v)} mm${lipsPro?' (protrusive)':lipsRet?' (retrusive)':''}`,l:lipsPro||lipsRet?1:0});
+  if(nla&&nla.v!=null&&nla.st!=='ok')F.push({a:'Soft tissue',t:`Nasolabial angle ${r1(nla.v)}° (${nla.txt.toLowerCase()})`,l:1});
+  const gum=num(fx.gum);if(gum!=null&&gum>3)F.push({a:'Soft tissue',t:`Gummy smile — ${gum} mm gingival display`,l:1});
+  if(fx.sym&&fx.sym!=='Symmetrical')F.push({a:'Soft tissue',t:`Facial asymmetry: ${fx.sym.toLowerCase()}${fx.chinDev?', chin '+fx.chinDev.toLowerCase():''}${fx.cant?', occlusal cant '+fx.cant.toLowerCase():''}`,l:fx.sym==='Marked asymmetry'?2:1});
+  // --- radiographic
+  const T=op.teeth||{},by=s=>Object.keys(T).filter(t=>T[t]===s).sort();
+  const imp=by('impacted'),missT=[...by('missing'),...by('agen')],agen=by('agen'),ect=by('ectopic'),car=by('caries'),res=by('resorb'),ret=by('retained'),sup=by('super'),uner=by('unerupted');
+  if(imp.length)F.push({a:'Radiographic',t:'Impacted: '+imp.join(', '),l:2});if(missT.length)F.push({a:'Radiographic',t:'Missing: '+missT.join(', ')+(agen.length?' (congenitally absent: '+agen.join(', ')+')':''),l:1});
+  if(ect.length)F.push({a:'Radiographic',t:'Ectopic: '+ect.join(', '),l:2});if(uner.length)F.push({a:'Radiographic',t:'Unerupted / developing: '+uner.join(', '),l:0});
+  if(ret.length)F.push({a:'Radiographic',t:'Retained primary teeth: '+ret.join(', '),l:1});if(sup.length)F.push({a:'Radiographic',t:'Supernumerary near: '+sup.join(', '),l:2});
+  if(car.length)F.push({a:'Radiographic',t:'Caries: '+car.join(', '),l:2});if(res.length)F.push({a:'Radiographic',t:'Root resorption: '+res.join(', '),l:2});
+  for(const[k,n]of[['m3','Third molars'],['bone','Bone level'],['root','Roots'],['cond','Condyles'],['par','Root parallelism']])if(op.f&&op.f[k])F.push({a:'Radiographic',t:`${n}: ${op.f[k]}`,l:/Impacted|loss|defect|resorption|Short|Asym|Flatten|Poor|Dilacer/.test(op.f[k])?1:0});
+  if(op.f&&op.f.path)F.push({a:'Radiographic',t:'Note: '+op.f.path,l:2});
+  // --- general
+  const habits=Object.entries(pt.h||{}).filter(([,v])=>v).map(([k])=>({thumb:'digit sucking',tongue:'tongue thrust',mouth:'mouth breathing',lip:'lip habit',brux:'bruxism',nail:'nail biting'})[k]);
+  if(habits.length)F.push({a:'General',t:'Habits: '+habits.join(', '),l:1});
+  if(pt.tmj&&pt.tmj!=='No signs')F.push({a:'General',t:'TMJ: '+pt.tmj+(num(pt.mmo)!=null?`, opening ${pt.mmo} mm`:''),l:2});
+  const perioBad=/Periodontitis|loss|defect/.test((pt.perio||'')+(op.f&&op.f.bone||''));
+  F.push({a:'General',t:`Growth status: ${G.txt}`,l:0});
+
+  /* ---- problem list (priority order) ---- */
+  if(car.length||(op.f&&op.f.path)||pt.perio==='Periodontitis (active)'||pt.oh==='Poor')P.push('Oral health first: '+[car.length&&'caries',op.f&&op.f.path&&'radiographic pathology',pt.perio==='Periodontitis (active)'&&'active periodontitis',pt.oh==='Poor'&&'poor hygiene'].filter(Boolean).join(', '));
+  if(pt.tmj&&pt.tmj!=='No signs')P.push('TMJ signs/symptoms — record baseline');
+  if(skel&&skel!=='I')P.push(`Skeletal Class ${skel} ${sevW}${origin?' ('+origin+')':''}`.trim());
+  if(vert&&vert!=='normal')P.push(`${vert==='high'?'High':'Low'} angle vertical pattern`);
+  if(open)P.push('Anterior open bite');if(deep)P.push(`Deep bite${div2?' (Class II div 2)':''}`);
+  if(oj!=null&&oj>6)P.push(`Large overjet (${oj} mm) — trauma risk`);if(oj!=null&&oj<0)P.push(`Reverse overjet (${oj} mm)`);
+  if(o.postX)P.push('Posterior crossbite'+(o.shift&&o.shift!=='No'?' with displacement':''));if(o.antX)P.push('Anterior crossbite: '+o.antX);
+  if(cmax)P.push(`Crowding U ${r1(crowd.U||0)} / L ${r1(crowd.L||0)} mm`);if(spacing.U||spacing.L)P.push('Spacing');
+  if(imp.length)P.push('Impacted teeth: '+imp.join(', '));if(missT.length)P.push('Missing teeth: '+missT.join(', '));
+  if(lipsPro)P.push('Lip protrusion');if(gum!=null&&gum>3)P.push('Excessive gingival display');if(boltonBad)P.push('Tooth-size (Bolton) discrepancy');
+  if(fx.sym==='Marked asymmetry')P.push('Facial asymmetry');if(habits.length)P.push('Habit(s): '+habits.join(', '));
+  if(cur&&c.pt.cc)obj.push('Address the chief complaint: '+c.pt.cc);
+
+  /* ---- options ---- */
+  const surgOK=pt.surg!=='No',extOK=pt.ext!=='No';
+  // pre-treatment
+  if(car.length||(op.f&&op.f.path)||perioBad||pt.oh==='Poor')add('pre','Pre-orthodontic care','Recommended',['Caries, pathology or periodontal disease must be controlled before appliances go on.'],['Restore carious teeth'+(car.length?' ('+car.join(', ')+')':''),'Periodontal therapy and stable maintenance'+(perioBad?' — use light forces, avoid moving teeth through thin bone':''),'Investigate radiographic findings (CBCT / referral as needed)','Oral-hygiene instruction; re-evaluate before bonding'],perioBad?['perio']:[]);
+  // Class II
+  if(skel==='II'){Q.add(`Class II malocclusion ${growing?'growing patients functional appliance':'adults camouflage orthognathic'}`);
+    if(growing){const ideal=G.st==='peak';
+      add('fa','Growth modification — functional appliance (Twin Block / Herbst / fixed functional)',mandRet||!origin?'Recommended':'Consider',[`Skeletal Class II${mandRet?' with a retrusive mandible':''} in a growing patient (${G.txt}).`,ideal?'Timing is good: skeletal effects are greatest around the pubertal growth spurt (CVM CS3–CS4).':G.st==='pre'?'Before the growth spurt: skeletal effect is smaller. Start now only if overjet is large (incisal trauma risk) or teasing is a concern; otherwise review in 6–12 months.':'Growth is slowing — expect mainly dento-alveolar correction; a fixed functional (Herbst / Forsus) is more reliable than a removable one.',
+        'Early treatment for a large overjet reduces new incisal trauma, but one-phase treatment at adolescence gives similar final results (Cochrane).'],
+        ['Functional appliance 9–12 months, aiming for slight overcorrection of overjet','Phase 2: fixed appliances to detail the occlusion','Monitor lower incisor proclination (IMPA)'+(vert==='high'?'; in a high-angle case prefer appliances with vertical control (Herbst, high-pull headgear combination)':''),'Retention'],['cl2Cochrane','cvmTiming','cl2Puberty']);
+      if(maxPro)add('hg','Headgear for maxillary restraint','Consider',['Maxilla is protrusive (SNA / A–N-perp high).',vert==='high'?'High-pull headgear for vertical control in a high-angle face.':'Cervical-pull headgear suits a low/average angle; avoid it in high-angle faces (extrudes molars).'],['12–14 hours per day wear','Combine with fixed appliances'],['cl2Cochrane'])}
+    else{const severe=sev>=3||(oj!=null&&oj>10)||(fx.profile==='Convex'&&fx.chin==='Retrusive'&&sev>=2);
+      if(severe)add('surg2','Orthognathic surgery — mandibular advancement (BSSO ± genioplasty)',surgOK?'Recommended':'Alternative',[`Severe skeletal Class II (${basis}) in a non-growing patient — camouflage cannot fully correct the profile.`,pt.surg==='No'?'Patient does not want surgery — discussed as the ideal option only.':'Discuss facial aesthetics and expectations; obtain surgical opinion.'],['Pre-surgical orthodontics: decompensate incisors (procline lower incisors back to normal IMPA)','Surgery: BSSO advancement ± genioplasty (± maxillary impaction if gummy / high angle)','Post-surgical detailing 6–9 months','Retention'],[]);
+      add('camo2',`Camouflage — ${cmax>=4||(crowd.L||0)>=4?'extraction of upper 4s (and lower 5s for lower crowding)':'upper first premolar extractions or molar distalisation with TADs'}`,severe?'Alternative':'Recommended',[`${sevW||'Mild'} skeletal Class II in a non-growing patient.`,'Upper premolar extractions retract the upper incisors to reduce overjet; lower incisors must not be proclined further'+(l1&&l1.z>1?' (they are already proclined).':'.'),sev<=1&&(oj==null||oj<=6)?'If the molar is ≤ ½ unit Class II, distalising the upper molars with TADs or aligners can avoid extractions.':'',vert==='high'?'High angle: avoid Class II elastics and molar extrusion; use TADs for anchorage.':''].filter(Boolean),['Extract 14 and 24'+((crowd.L||0)>=4?' and 35, 45':''),'Maximum upper anchorage (TADs or TPA)','Retract canines then incisors with torque control','Finish with Class II molar / Class I canine','Retention'],['extract','extract2'])}
+    if(div2||(deep&&u1&&u1.z<-1))add('div2','Class II div 2 / deep bite: procline upper incisors, then correct the bite','Recommended',['Retroclined upper incisors trap the mandible; proclining them unlocks the occlusion and allows forward mandibular posture.'],['Procline 11, 21 (and 12, 22) with a sectional or full arch','Level the curve of Spee — intrusion arches / TADs rather than molar extrusion in adults','Correct the sagittal problem once incisors are unlocked','Bonded retainer on upper incisor palatal surfaces (deep-bite relapse)'],['deepbite'])}
+  // Class III
+  if(skel==='III'){Q.add(`Class III malocclusion ${growing?'growing maxillary protraction':'adults camouflage versus orthognathic surgery'}`);
+    if(growing){if(G.st==='pre'||(A!=null&&A<11)||!mandPro)add('fm','Maxillary protraction — facemask with rapid maxillary expansion',G.st==='pre'?'Recommended':'Consider',[`Class III in a growing patient${maxRet?' with a retrusive maxilla':''}.`,'Facemask works best before the growth spurt (about age 8–10, CVM CS1–CS3).','Results can relapse with later mandibular growth — overcorrect and review until growth stops; surgery may still be needed.'],['RME (Hyrax) 1–2 weeks','Facemask 12–14 hours/day for 9–12 months, about 400 g per side','Overcorrect to positive overjet 2–4 mm','Follow up annually until growth is complete'],['cl3Cochrane']);
+      if(G.st!=='pre'&&A!=null&&A>=10)add('bamp','Bone-anchored maxillary protraction (miniplates + Class III elastics)','Consider',['Good option from about 11 years when tooth-borne facemask effects are smaller; avoids extra-oral wear.'],['Miniplates in the zygomatic buttress and anterior mandible','Class III elastics 24 h/day','Fixed appliances to detail'],['bamp']);
+      if(mandPro)add('cl3wait','Mandibular prognathism — monitor growth','Consider',['Mandibular excess tends to keep growing; chin-cups have little lasting effect.','Correct dental crossbites now, plan definitive treatment after growth (surgery if severe).'],['Annual lateral ceph to track growth','Definitive plan when CVM CS6 / growth complete'],['cl3Cochrane'])}
+    else{const impa=mv('IMPA'),hA=mv('H');const kerr=[anb!=null&&anb<-4&&`ANB ${r1(anb)}° (< −4°)`,impa!=null&&impa<83&&`IMPA ${r1(impa)}° (< 83°, lower incisors already compensated)`,hA!=null&&hA<3.5&&`Holdaway angle ${r1(hA)}° (< 3.5°)`].filter(Boolean);
+      const surgFav=kerr.length>=2||sev>=3;
+      add('surg3','Orthognathic surgery — Le Fort I advancement ± mandibular setback',surgFav&&surgOK?'Recommended':'Alternative',[surgFav?'Criteria favouring surgery (Kerr et al.): '+kerr.join('; ')+'.':'No strong surgical indicators, but surgery gives the best facial change.','The evidence gives no single cut-off; Wits, Holdaway angle and lower incisor inclination discriminate best — decide with the patient.'],['Pre-surgical decompensation (procline lower, upright upper incisors)','Bimaxillary surgery planned with 3D records','Post-surgical detailing','Retention'],['cl3Camo','cl3Sr']);
+      add('camo3','Camouflage — lower arch retraction (TADs / lower premolar extractions) with Class III elastics',surgFav?'Alternative':'Recommended',['Mild-moderate skeletal Class III in an adult with acceptable profile.',impa!=null&&impa<83?'Caution: lower incisors already retroclined — further retraction risks thin symphysis bone and recession.':'Lower incisors have room for retroclination.'],['Distalise the lower arch with TADs, or extract 34, 44 (or a lower incisor in selected cases)','Class III elastics; procline upper incisors as needed','Watch the lower labial bone and gingiva'],['cl3Camo','cl3Sr'])}}
+  // Class I / dental
+  if(cmax>0||spacing.U||spacing.L||skel==='I'||!skel){const U1p=u1&&u1.z>1,L1p=l1&&l1.z>1,bimax=(U1p&&L1p&&lipsPro)||(mv('II')!=null&&mv('II')<120&&lipsPro);
+    if(bimax&&extOK){Q.add('bimaxillary protrusion four premolar extraction');add('bimax','Bimaxillary protrusion — extract four first premolars, maximum anchorage','Recommended',['Both incisors proclined with protrusive lips.','Retraction improves lip strain and protrusion.'],['Extract 14, 24, 34, 44','TADs for maximum anchorage','En-masse retraction with torque control','Retention'],['bimax','extract'])}
+    else if(cmax>8&&extOK){Q.add('severe crowding premolar extraction');add('ext','Extraction treatment for severe crowding',vert==='low'||lipsRet?'Consider':'Recommended',[`Crowding ${r1(cmax)} mm (> 8 mm) — space is usually gained by extraction.`,vert==='low'||lipsRet?'Low angle / retrusive lips: extractions may flatten the profile; consider second premolars or expansion + IPR.':'',vert==='high'?'High angle: extractions help vertical control.':''].filter(Boolean),['Extract first premolars (or second premolars if crowding is less posterior)','Anchorage to suit the space needed','Align, level, close space','Retention'],['extract','extract2'])}
+    else if(cmax>=4){Q.add('borderline crowding extraction versus non-extraction');const favExt=(lipsPro?1:0)+(U1p||L1p?1:0)+(vert==='high'?1:0),favNon=(lipsRet||fx.profile==='Concave'?1:0)+(l1&&l1.z<-1?1:0)+(vert==='low'?1:0);
+      add('border','Borderline crowding (4–8 mm): '+(favExt>favNon&&extOK?'extraction favoured':'non-extraction favoured'),'Recommended',[`Crowding ${r1(cmax)} mm is borderline. Crowding, the soft-tissue profile and lower incisor inclination are the main deciding factors.`,
+        `For extraction: ${[lipsPro&&'protrusive lips',(U1p||L1p)&&'proclined incisors',vert==='high'&&'high angle'].filter(Boolean).join(', ')||'none'}. For non-extraction: ${[lipsRet&&'retrusive lips',fx.profile==='Concave'&&'concave profile',l1&&l1.z<-1&&'retroclined lower incisors',vert==='low'&&'low angle'].filter(Boolean).join(', ')||'none'}.`],
+        favExt>favNon&&extOK?['Extract premolars (choose 4s or 5s by crowding position)','Align, level, close space','Retention']:['Gain space by IPR (up to ~0.5 mm per contact), arch development / expansion and mild incisor proclination if inclination allows','Molar distalisation with TADs or aligners if needed','Retention — bonded retainers (non-extraction expansion relapses)'],['extract','extract2'])}
+    else if(cmax>0)add('nonext','Non-extraction alignment','Recommended',[`Mild crowding (${r1(cmax)} mm).`],['Align with fixed appliances or clear aligners','Minor IPR / arch coordination','Retention'],['aligner','retention']);
+    if(spacing.U||spacing.L)add('space','Spacing — close or redistribute','Consider',['Spacing present'+(missT.length?' with missing teeth':'')+'.',boltonBad?'Tooth-size discrepancy may explain some spacing.':''].filter(Boolean),['Close spaces; consider composite build-ups for small teeth','Bonded retainer to prevent re-opening'+(habits.includes('tongue thrust')?'; address tongue thrust':'')],[]);
+    if(skel==='I'&&!cmax&&!spacing.U&&!spacing.L&&(oj==null||(oj>=1&&oj<=4))&&!o.postX&&!o.antX&&!deep&&!open)add('min','Limited / no orthodontic treatment needed for the bite','Consider',['No significant malocclusion recorded.'],['Discuss aesthetic concerns; limited aligner treatment if desired'],[])}
+  // vertical
+  if(open){Q.add('anterior open bite treatment stability');add('aob','Anterior open bite',vert==='high'&&!growing?'Recommended':'Consider',[habits.length?'Habit present ('+habits.join(', ')+') — stop the habit first.':'',vert==='high'?'Skeletal component (high angle): avoid extrusion of incisors; intrude molars.':'Mostly dental: incisor extrusion is acceptable.','Open bite has a high relapse rate — plan long retention.'].filter(Boolean),
+      [habits.length?'Habit breaker (tongue crib / spurs) and myofunctional therapy':'Check tongue posture and airway',vert==='high'?'Molar intrusion with TADs (or posterior bite blocks while growing)':'Vertical elastics / incisor extrusion',vert==='high'&&!growing&&surgOK?'Severe skeletal open bite: Le Fort I posterior impaction':'','Long-term retention'].filter(Boolean),['openbite'])}
+  if(deep&&!(div2&&skel==='II')){Q.add('deep bite correction');add('deep','Deep bite correction','Consider',[vert==='low'?'Low angle: levelling by molar extrusion is acceptable while growing.':'Normal/high angle: correct by incisor intrusion rather than molar extrusion.',fx.show!=null&&num(fx.show)>4?'Upper incisor show is high — intrude upper incisors.':num(fx.show)!=null&&num(fx.show)<2?'Upper incisor show is low — intrude lower incisors instead.':''].filter(Boolean),['Anterior bite plane / bite turbos','Reverse-curve or intrusion arch (or TADs)','Level the curve of Spee'+(num(o.spee)?' ('+o.spee+' mm)':''),'Bonded retainers; nightly removable retainer'],['deepbite'])}
+  // transverse
+  if(o.postX){Q.add(`posterior crossbite ${growing?'rapid maxillary expansion children':'adults MARPE SARPE'}`);
+    add('exp',growing&&(A==null||A<15)?'Maxillary expansion — RME (Hyrax) / quad-helix':'Maxillary expansion in an adult — MARPE (miniscrew-assisted) or SARPE','Recommended',[`Posterior crossbite (${o.postX})${o.shift&&o.shift!=='No'?' with a functional shift — correct early to avoid asymmetric growth':''}.`,growing?'Mid-palatal suture is still responsive in children and adolescents.':'In adults the suture is interdigitated; skeletal expansion needs miniscrews or surgical release.'],
+      [growing?'RME: 0.25–0.5 mm/day until the palatal cusps of the upper molars touch the buccal cusps of the lowers':'MARPE with CBCT planning, or SARPE if MARPE fails','Hold 3–6 months','Fixed appliances to finish'],['rme','xbite'])}
+  if(o.antX&&skel!=='III')add('antx','Anterior crossbite (dental) — early correction','Recommended',['Dental anterior crossbite can cause gingival recession and enamel wear.'],['Removable appliance with z-springs, or 2×4 fixed appliance','Bite opening if needed during correction'],[]);
+  // impacted / missing
+  const impC=imp.filter(t=>/[1-4]3$/.test(t));
+  if(impC.length){Q.add('impacted maxillary canine management');add('canine','Impacted canine'+(impC.length>1?'s':'')+': '+impC.join(', '),'Recommended',['Locate with CBCT (palatal / buccal, root resorption of incisors).',A!=null&&A<=13?'Age ≤ 13: extracting the primary canine (with space opening) improves the chance of spontaneous eruption.':'Surgical exposure and orthodontic traction is the usual route.'],
+      [A!=null&&A<=13?'Extract primary canine; review in 6–12 months':'Open / maintain space','Surgical exposure (open or closed) with gold chain','Traction with light forces on a rigid archwire','If unfavourable: extraction and space closure / implant later'],['canine'])}
+  const impOther=imp.filter(t=>!/[1-4]3$/.test(t)&&!/[1-4]8$/.test(t));if(impOther.length)add('impO','Other impacted teeth: '+impOther.join(', '),'Consider',['Assess position and prognosis on CBCT.'],['Exposure and traction, or extraction and space management'],[]);
+  const lat=missT.filter(t=>['12','22'].includes(t));
+  if(lat.length){Q.add('missing maxillary lateral incisor space closure versus implant');add('lat','Missing upper lateral incisor'+(lat.length>1?'s':'')+': space closure or space opening',skel==='II'||cmax>=4?'Consider':'Consider',[skel==='II'||cmax>=4?'Class II molars / upper crowding favour space closure with canine substitution.':'Class I with no crowding favours opening space for an implant or bridge.','Canine substitution needs reshaping and gingival-margin management.'],
+      ['Closure: mesialise canines, reshape them as laterals, premolars as canines','Opening: create ~6–6.5 mm space, keep bone with a removable / resin-bonded bridge until growth ends, then implant'],['agenesis'])}
+  if(boltonBad){const b=an&&Math.abs(an.ratio-77.2)>2*1.65?an:ov;add('bol','Manage tooth-size discrepancy','Consider',[`${b.ex.arch==='lower'?'Lower':'Upper'} ${b===an?'anterior':'overall'} excess of ${b.ex.mm.toFixed(1)} mm.`],[`IPR in the ${b.ex.arch} arch, or composite build-ups in the other arch`,'Plan finishing with set-up before debond'],['bolton'])}
+  if(gum!=null&&gum>3)add('gum','Excessive gingival display ('+gum+' mm)','Consider',[vert==='high'?'Vertical maxillary excess component likely.':'Check for short clinical crowns (altered passive eruption) and lip hypermobility.'],['Upper incisor intrusion with TADs','Crown lengthening if crowns are short','Botulinum toxin / lip repositioning for hypermobile lip','Le Fort I impaction for marked vertical maxillary excess'],['gummy']);
+  if(res.length||(op.f&&/resorption|Short/.test(op.f.root||'')))add('rr','Root resorption risk','Recommended',['Pre-existing resorption or short roots increase the risk of further resorption.'],['Light continuous forces; avoid jiggling and long treatment','Periapical / OPG review at 6–9 months; pause if progressing'],['resorption']);
+  if(pt.pref==='Clear aligners')add('align','Patient prefers clear aligners','Consider',['Aligners do well for alignment, minor expansion and distalisation; extraction space closure, large rotations of round teeth and vertical changes are less predictable — use attachments, auxiliaries or TADs.'],['Digital set-up; refinements expected'],['aligner']);
+  add('ret','Retention','Recommended',['All orthodontic results relapse without retention.'],['Bonded 3–3 lower (and 2–2 upper if diastema / rotations / deep bite)','Removable retainer worn nightly long-term','Reviews at 3, 6 and 12 months'],['retention']);
+  // objectives
+  if(skel==='II')obj.push('Reduce overjet and achieve Class I canine relationship');if(skel==='III')obj.push('Achieve positive overjet and overbite');if(cmax)obj.push('Relieve crowding and align arches');if(deep)obj.push('Reduce overbite to 2–3 mm');if(open)obj.push('Close the open bite and gain stable incisor overlap');if(o.postX)obj.push('Correct the transverse discrepancy');if(impC.length)obj.push('Bring impacted canine(s) into the arch or plan alternatives');if(num(fx.umid)||num(fx.lmid))obj.push('Coordinate dental midlines');if(lipsPro)obj.push('Reduce lip protrusion');obj.push('Achieve a stable, functional occlusion with good facial and smile aesthetics');
+  // summary
+  const sum=[];if(skel)sum.push(`Skeletal Class ${skel}${sevW&&skel!=='I'?' ('+sevW+')':''}${origin?' with '+origin:''}`);if(vert)sum.push(`${vert==='normal'?'average':vert} angle`);
+  const dtxt=[o.inc,oj!=null&&`overjet ${oj} mm`,deep&&'deep bite',open&&'open bite',cmax&&`crowding up to ${r1(cmax)} mm`,o.postX&&`${o.postX.toLowerCase()} posterior crossbite`].filter(Boolean);if(dtxt.length)sum.push(dtxt.join(', '));
+  if(imp.length)sum.push('impacted '+imp.join(', '));if(missT.length)sum.push('missing '+missT.join(', '));
+  for(const p of P.filter(p=>!/^(Oral health|TMJ)/.test(p)).slice(0,3))Q.add(p.replace(/\(.*?\)|[\d.]+ mm|:.*$/g,'').trim()+' orthodontic treatment');
+  return{F,P,O,obj,Q:[...Q].filter(Boolean).slice(0,10),summary:sum.join('; '),miss,G,A,M}}
+
+const FIT_TAG={Recommended:'t-ok',Consider:'t-mute',Alternative:'t-warn'};
+function renderPlan(){const a=analyze(cur),pt=cur.pt;const lvl=['t-ok','t-warn','t-bad','t-bad'];let h=`<h2>Diagnosis</h2>`;
+  if(a.miss.length)h+=`<div class="card note">Records not yet added: <b>${a.miss.join(', ')}</b>. The assessment uses what is available.</div>`;
+  h+=`<div class="card"><div style="font-size:16px;margin-bottom:6px"><b>${esc(pt.name||'This patient')}</b>${a.A!=null?', '+a.A+' y':''}${pt.sex?' · '+(pt.sex==='F'?'female':'male'):''}</div>${pt.cc?`<div class="note">Complaint: ${esc(pt.cc)}</div>`:''}<p style="margin:8px 0 0">${esc(a.summary||'Add records to build the diagnosis.')}</p></div>`;
+  const groups={};for(const f of a.F)(groups[f.a]=groups[f.a]||[]).push(f);
+  h+='<div class="card"><table>'+Object.entries(groups).map(([g,fs])=>`<tr><td colspan="2" style="font-weight:700;padding-top:10px">${g}</td></tr>`+fs.map(f=>`<tr><td style="width:24px"><span class="tag ${lvl[f.l]||'t-ok'}">${f.l?'!':'✓'}</span></td><td>${esc(f.t)}</td></tr>`).join('')).join('')+'</table></div>';
+  h+=`<h2>Problem list</h2><div class="card">${a.P.length?'<ul class="prob">'+a.P.map(p=>`<li>${esc(p)}</li>`).join('')+'</ul>':'<span class="muted">No problems recorded yet.</span>'}</div>`;
+  h+=`<h2>Treatment objectives</h2><div class="card"><ul class="prob">${a.obj.map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>`;
+  h+=`<h2>Treatment options</h2><p class="note">Generated from the records using published criteria. Tick the ones you want in the final plan. Use the Research tab for the latest evidence on any option.</p>`;
+  h+=a.O.map(o=>`<div class="opt ${o.fit}"><h4><label class="c" style="margin:0"><input type="checkbox" data-opt="${o.id}" ${cur.plan.sel.includes(o.id)?'checked':''}></label>${esc(o.title)} <span class="tag ${FIT_TAG[o.fit]}">${o.fit}</span></h4>
+    <div class="note">Why</div><ul>${o.why.map(w=>`<li>${esc(w)}</li>`).join('')}</ul><div class="note">Steps</div><ul>${o.steps.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>
+    ${o.ev.length?`<div class="ev note">Evidence: ${o.ev.map(([t,u])=>`<a href="${u}" target="_blank" rel="noopener">${esc(t)}</a>`).join(' · ')}</div>`:''}</div>`).join('');
+  $('#planOut').innerHTML=h;renderRefs();planCache=a}
+let planCache=null;
+$('#planOut').addEventListener('change',e=>{const id=e.target.dataset.opt;if(!id)return;const s=cur.plan.sel;if(e.target.checked){if(!s.includes(id))s.push(id)}else cur.plan.sel=s.filter(x=>x!==id);save()});
+$('#buildPlan').onclick=()=>{const a=planCache||analyze(cur);const sel=a.O.filter(o=>cur.plan.sel.includes(o.id));if(!sel.length)return toast('Tick at least one option first');
+  if(cur.plan.text&&!confirm('Replace the current plan text?'))return;let n=1;
+  cur.plan.text=`DIAGNOSIS\n${a.summary}\n\nPROBLEMS\n${a.P.map(p=>'• '+p).join('\n')}\n\nPLAN\n`+sel.map(o=>`${n++}. ${o.title}\n`+o.steps.map(s=>'   – '+s).join('\n')).join('\n');
+  $('[data-k="plan.text"]').value=cur.plan.text;save();toast('Plan written — edit as needed')};
+function renderRefs(){const r=cur.plan.refs;$('#refsOut').innerHTML='<h3 style="margin-top:0">Saved references</h3>'+(r.length?'<ol>'+r.map((x,i)=>`<li><a href="${esc(x.u)}" target="_blank" rel="noopener">${esc(x.t)}</a> <span class="note">${esc(x.m)}</span> <button class="btn sm" data-rr="${i}">×</button></li>`).join('')+'</ol>':'<span class="note">Save papers from the Research tab to keep them with this case.</span>')}
+$('#refsOut').onclick=e=>{const i=e.target.dataset.rr;if(i==null)return;cur.plan.refs.splice(+i,1);save();renderRefs()};
+
+/* ---------- research (Europe PMC + external links) ---------- */
+const stripTags=s=>{const d=new DOMParser().parseFromString(s||'','text/html');return d.body.textContent||''};
+function renderResearch(){const a=analyze(cur);const qs=a.Q.length?a.Q:['orthodontic treatment planning','Class II malocclusion treatment','orthodontic retention'];
+  $('#qChips').innerHTML=qs.map(q=>`<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('');if(!$('#qBox').value)$('#qBox').value=qs[0];renderLinks()}
+function renderLinks(){const q=encodeURIComponent($('#qBox').value.trim()||'orthodontic treatment planning');
+  $('#qLinks').innerHTML='Also search: '+[['PubMed','https://pubmed.ncbi.nlm.nih.gov/?term='+q],['Google Scholar','https://scholar.google.com/scholar?q='+q],['Cochrane','https://www.cochranelibrary.com/search?searchBy=6&searchText='+q],['AJODO','https://www.ajodo.org/action/doSearch?text1='+q],['Angle Orthod','https://angle-orthodontist.kglmeridian.com/search?q='+q],['Whole web','https://www.google.com/search?q='+q]].map(([n,u])=>`<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join(' · ')}
+$('#qChips').onclick=e=>{const b=e.target.closest('[data-q]');if(b){$('#qBox').value=b.dataset.q;renderLinks();search()}};
+$('#qBox').addEventListener('input',renderLinks);$('#qBox').addEventListener('keydown',e=>{if(e.key==='Enter')search()});$('#qGo').onclick=search;
+let lastResults=[];
+async function search(){const q=$('#qBox').value.trim();if(!q)return;const fl=$('#qFilt').value,yr=new Date().getFullYear();
+  let qq=`(${q})`;if(fl==='sr')qq+=' AND (PUB_TYPE:"systematic-review" OR PUB_TYPE:"meta-analysis" OR TITLE:"systematic review" OR TITLE:"meta-analysis")';else if(fl==='rct')qq+=' AND (PUB_TYPE:"randomized controlled trial" OR TITLE:"randomized" OR TITLE:"randomised")';else if(fl==='guide')qq+=' AND (PUB_TYPE:"guideline" OR PUB_TYPE:"practice guideline" OR TITLE:"guideline" OR TITLE:"consensus")';
+  const url='https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&resultType=core&pageSize=15&query='+encodeURIComponent(qq)+($('#qSort').value==='new'?'&sort='+encodeURIComponent('P_PDATE_D desc'):'');
+  $('#qOut').innerHTML='<div class="card note">Searching…</div>';
+  try{const r=await fetch(url);if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();lastResults=(d.resultList&&d.resultList.result)||[];
+    if(!lastResults.length){$('#qOut').innerHTML=`<div class="card note">No results. Try fewer words${fl!=='all'?' or choose "All studies"':''}.</div>`;return}
+    $('#qOut').innerHTML=`<div class="card"><div class="note">${(d.hitCount||0).toLocaleString()} papers found — showing ${lastResults.length}</div>`+lastResults.map((x,i)=>{const u=x.doi?'https://doi.org/'+x.doi:`https://europepmc.org/article/${x.source}/${x.id}`;
+      return`<div class="res"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(stripTags(x.title))}</a><div class="m">${esc((x.authorString||'').slice(0,120))} · <i>${esc(x.journalTitle||x.bookOrReportDetails?.publisher||'')}</i> ${esc(x.pubYear||'')}${x.isOpenAccess==='Y'?' · <b>free full text</b>':''}${x.citedByCount?' · cited '+x.citedByCount+'×':''}</div>
+      ${x.abstractText?`<details><summary>Abstract</summary><p>${esc(stripTags(x.abstractText))}</p></details>`:''}<button class="btn sm" data-save="${i}" style="margin-top:4px">Save to case</button></div>`}).join('')+'</div>'}
+  catch(err){lastResults=[];$('#qOut').innerHTML=`<div class="card">Could not reach the literature database (${esc(err.message)}). Check the internet connection, or use the PubMed / Google Scholar links above.</div>`}}
+$('#qOut').onclick=e=>{const i=e.target.dataset.save;if(i==null)return;const x=lastResults[+i];const u=x.doi?'https://doi.org/'+x.doi:`https://europepmc.org/article/${x.source}/${x.id}`;
+  if(!cur.plan.refs.some(r=>r.u===u)){cur.plan.refs.push({t:stripTags(x.title),u,m:`${x.journalTitle||''} ${x.pubYear||''}`.trim()});saveNow()}e.target.textContent='Saved ✓';e.target.disabled=true};
+
+/* ---------- printable report ---------- */
+$('#printBtn').onclick=async()=>{const a=analyze(cur),pt=cur.pt;let h=`<h1>Orthodontic assessment — ${esc(pt.name||'')}</h1><div>${esc([pt.file&&'File '+pt.file,a.A!=null&&a.A+' years',pt.sex&&(pt.sex==='F'?'Female':'Male'),pt.recDate&&'Records '+pt.recDate].filter(Boolean).join(' · '))}</div>`;
+  if(pt.cc)h+=`<p><b>Chief complaint:</b> ${esc(pt.cc)}</p>`;h+=`<h2>Diagnosis</h2><p>${esc(a.summary)}</p><ul>${a.F.map(f=>`<li>${esc(f.a)}: ${esc(f.t)}</li>`).join('')}</ul><h2>Problem list</h2><ol>${a.P.map(p=>`<li>${esc(p)}</li>`).join('')}</ol>`;
+  const M=a.M.filter(m=>m.v!=null);if(M.length)h+=`<h2>Cephalometric values</h2><table><tr><th>Measure</th><th>Value</th><th>Norm</th><th></th></tr>${M.map(m=>`<tr><td>${esc(m.name)}</td><td>${r1(m.v)} ${m.unit}</td><td>${m.norm} ± ${m.sd}</td><td>${esc(m.txt)}</td></tr>`).join('')}</table>`;
+  if(cephView.img){try{h+=`<h2>Ceph tracing</h2><img src="${$('#cCv').toDataURL('image/jpeg',0.85)}">`}catch(e){}}
+  const sel=a.O.filter(o=>cur.plan.sel.includes(o.id));h+=`<h2>Treatment plan</h2>`+(cur.plan.text?`<pre style="white-space:pre-wrap;font:inherit">${esc(cur.plan.text)}</pre>`:sel.map(o=>`<div class="opt"><b>${esc(o.title)}</b><ul>${o.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>`).join('')||'<p>Not yet chosen.</p>');
+  if(cur.plan.refs.length)h+=`<h2>References</h2><ol>${cur.plan.refs.map(r=>`<li>${esc(r.t)} — ${esc(r.m)} ${esc(r.u)}</li>`).join('')}</ol>`;
+  h+=`<p style="font-size:10px;color:#555;margin-top:16px">Prepared with Ortho Assess, a decision-support aid. Final treatment decisions rest with the treating clinician.</p>`;$('#report').innerHTML=h;setTimeout(()=>window.print(),100)};
+
+/* ---------- start ---------- */
+addEventListener('pagehide',()=>saveNow());document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveNow()});
+(async()=>{await DB.open();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}cases=await DB.all()||[];
+  let last=null;try{last=localStorage.getItem('oa-last')}catch(e){}
+  if(!cases.length)await newCase();else await openCase(cases.find(c=>c.id===last)||cases[0]);
+  window.OA={cephView,mesh,analyze:()=>analyze(cur),cephMeasures:()=>cephMeasures(cur),get cur(){return cur}}})();
+</script>
+</body>
+</html>
