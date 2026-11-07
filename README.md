@@ -8,8 +8,8 @@
 - `ortho/` — Ortho Assess: orthodontic case assessment (handraldentistry.com/ortho). Tabs to add patient
   photographs, upper/lower 3D scans, lateral ceph and OPG — or drop a mixed batch on ⬆ Add files and it sorts
   them. Opens JPEG, HEIC (iPhone), PNG, TIFF, BMP, WebP, PDF and DICOM pictures, and STL/OBJ/PLY scans or a ZIP of
-  them. Ceph landmarks: ✨ Auto-detect finds all 25 with Claude AI through the clinic server (uses the key saved in
-  the clinic app; sign in with a clinic login), or Quick place puts them from an average skull after 3 taps
+  them. Ceph landmarks: ✨ Auto-detect finds all 25 with Claude AI using your own Claude key, saved only in that browser
+  (⋯ → Claude AI key); it has nothing to do with the clinic server or clinic logins, or Quick place puts them from an average skull after 3 taps
   (S, N, Me); drag each point to correct it. Landmarks give Steiner,
   Downs, Tweed, McNamara, Jarabak, E-line and Holdaway values; measure tooth widths on the 3D scans for Bolton and
   space analysis; chart the OPG. The Diagnosis & plan tab lists problems and evidence-linked treatment options;
@@ -64,7 +64,7 @@ once it is.
 3. Open https://handraldentistry.com/clinic/ on the clinic tablet that has the old records and sign in.
    Tap **Move them to the cloud** on the Today page. Do this on each device that was used before.
 4. In the app, Settings → **Who can sign in**: add a login for each staff member, and paste the Claude AI key
-   if you use "Read register" or Ortho Assess ✨ Auto-detect (the ceph landmarks use claude-opus-5-5; change with CLINIC_CEPH_MODEL).
+   if you use "Read register".
 
 ### After that
 - Starts on boot, restarts itself, installs new versions of `_clinic/` from GitHub within 5 minutes
