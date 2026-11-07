@@ -428,20 +428,21 @@ dialog::backdrop{background:#000a}
 
 <dialog id="moreDlg"><div style="padding:16px;display:flex;flex-direction:column;gap:8px">
   <b>Case</b>
-  <button class="btn" id="expBtn">Export case (backup file)</button>
-  <label class="btn" style="text-align:center"><input type="file" id="impFile" accept=".json,application/json" hidden>Import case file</label>
+  <button class="btn" id="expBtn">Export this case (backup file)</button>
+  <button class="btn" id="expAll">Export all cases (backup file)</button>
+  <label class="btn" style="text-align:center"><input type="file" id="impFile" accept=".json,application/json" hidden>Import case file(s)</label>
+  <b style="margin-top:6px">Settings</b>
+  <button class="btn" id="keyBtn">Claude AI key…</button>
   <button class="btn danger" id="delCase">Delete this case</button>
   <button class="btn" onclick="this.closest('dialog').close()">Close</button>
 </div></dialog>
 
-<dialog id="signDlg"><form method="dialog" id="signForm" style="padding:16px;display:flex;flex-direction:column;gap:10px">
-  <b>Sign in to the clinic server</b>
-  <span class="note">Auto-detect uses the Claude AI key saved in the clinic app (Settings → Claude AI). Sign in with your clinic login — the same one as handraldentistry.com/clinic.</span>
-  <label class="f">Username<input id="sgUser" autocomplete="username" required></label>
-  <label class="f">Password<input id="sgPass" type="password" autocomplete="current-password" required></label>
-  <details><summary class="note">Server</summary><label class="f">Clinic server address<input id="sgApi"></label></details>
-  <div class="note" id="sgErr" style="color:var(--bad)"></div>
-  <div class="row"><button class="btn primary" id="sgGo" value="go">Sign in</button><button class="btn" value="cancel" formnovalidate>Cancel</button></div>
+<dialog id="keyDlg"><form method="dialog" id="keyForm" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+  <b>Claude AI key for Auto-detect</b>
+  <span class="note">Create a key at console.anthropic.com → API Keys (it starts with sk-ant-) and paste it here. It is saved only in this browser on this device and is sent only to Anthropic when you press ✨ Auto-detect. Each ceph costs a few cents of Anthropic credit.</span>
+  <label class="f">Key<input id="keyIn" type="password" autocomplete="off" placeholder="sk-ant-…" spellcheck="false"></label>
+  <div class="note" id="keyErr" style="color:var(--bad)"></div>
+  <div class="row"><button class="btn primary" value="save">Save key</button><button class="btn danger" value="remove" formnovalidate id="keyDel">Remove key</button><button class="btn" value="cancel" formnovalidate>Cancel</button></div>
 </form></dialog>
 <div id="dropOv" hidden><div>Drop files to add them to this case</div></div>
 <div id="report"></div>
@@ -507,12 +508,14 @@ $('#delCase').onclick=async()=>{if(!cur||!confirm('Delete '+caseLabel(cur)+' and
   for(const[o,p]of blobRefs(cur))await DB.delBlob(o[p]);await DB.del(cur.id);cases=cases.filter(c=>c!==cur);cur=null;$('#moreDlg').close();
   if(!cases.length)await newCase();else await openCase(cases[0]);toast('Case deleted')};
 function blobToDataURL(b){return new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(b)})}
-$('#expBtn').onclick=async()=>{await saveNow();const blobs={};for(const[o,p]of blobRefs(cur)){const b=await DB.getBlob(o[p]);if(b)blobs[o[p]]=await blobToDataURL(b)}
-  const out=new Blob([JSON.stringify({app:'ortho-assess',v:1,case:cur,blobs})],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(out);
-  a.download=(cur.pt.name||'case').replace(/[^\w-]+/g,'_')+'-ortho.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000);$('#moreDlg').close()};
+async function exportCases(list,fname){await saveNow();const blobs={},out=[];for(const c of list){out.push(c);for(const[o,p]of blobRefs(c)){const b=await DB.getBlob(o[p]);if(b)blobs[o[p]]=await blobToDataURL(b)}}
+  const f=new Blob([JSON.stringify({app:'ortho-assess',v:2,cases:out,blobs})],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=fname;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
+$('#expBtn').onclick=async()=>{await exportCases([cur],(cur.pt.name||'case').replace(/[^\w-]+/g,'_')+'-ortho.json');$('#moreDlg').close()};
+$('#expAll').onclick=async()=>{await exportCases(cases,'ortho-assess-all-cases-'+new Date().toISOString().slice(0,10)+'.json');$('#moreDlg').close();toast('Saved '+cases.length+' case'+(cases.length>1?'s':''))};
 $('#impFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const d=JSON.parse(await f.text());if(d.app!=='ortho-assess')throw new Error('Not an Ortho Assess file');
-  const c=d.case;c.id=uid();for(const[o,p]of blobRefs(c)){const old=o[p],nk='b:'+uid();if(d.blobs[old]){const b=await(await fetch(d.blobs[old])).blob();await DB.putBlob(nk,b);o[p]=nk}else delete o[p]}
-  cases.push(c);await DB.put(c);$('#moreDlg').close();await openCase(c);toast('Case imported')}catch(err){toast('Import failed: '+err.message)}};
+  const list=d.cases||[d.case];let last=null;for(const c of list){c.id=uid();for(const[o,p]of blobRefs(c)){const old=o[p],nk='b:'+uid();if(d.blobs[old]){const b=await(await fetch(d.blobs[old])).blob();await DB.putBlob(nk,b);o[p]=nk}else delete o[p]}
+    cases.push(c);await DB.put(c);last=c}
+  $('#moreDlg').close();await openCase(last);toast(list.length>1?list.length+' cases imported':'Case imported')}catch(err){toast('Import failed: '+err.message)}};
 
 /* ---------- form binding ---------- */
 function bindAll(){for(const el of $$('[data-k]')){const v=getP(cur,el.dataset.k);if(el.type==='checkbox')el.checked=!!v;else el.value=v??''}}
@@ -871,30 +874,46 @@ function q3Tap(q){q3.push(q);if(q3.length<3){renderLm();cephView.draw();return}
   const f=affine3(Q3.map(k=>TPL[k]),q3);q3=null;$('#cQ3').setAttribute('aria-pressed',false);if(!f){toast('Those three points are in a line — try again');renderLm();return}
   cur.ceph.pts={};cur.ceph.auto={};for(const k in TPL){cur.ceph.pts[k]=f(TPL[k]).map(r1);cur.ceph.auto[k]=Q3.includes(k)?undefined:'tpl'}for(const k of Q3)delete cur.ceph.auto[k];
   saveNow();lmIdx=nextMissing(0);renderLm();renderCephTable();cephView.draw();toast('All points placed from an average skull — drag each one onto the real anatomy')}
-// Claude AI through the clinic server (the key never comes to this device)
-const API_DEFAULT='https://clinicapi.handraldentistry.com';
+// Claude AI, called straight from this browser with the user's own key (kept only on this device)
 const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}},lsSet=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
-function signIn(){return new Promise(res=>{const d=$('#signDlg');$('#sgApi').value=lsGet('hd_api')||API_DEFAULT;$('#sgErr').textContent='';d.showModal();
-  $('#signForm').onsubmit=async ev=>{if(ev.submitter&&ev.submitter.value==='cancel'){d.close();return res(false)}ev.preventDefault();$('#sgErr').textContent='Signing in…';
-    const api=($('#sgApi').value.trim()||API_DEFAULT).replace(/\/+$/,'');
-    try{const r=await fetch(api+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('#sgUser').value.trim(),password:$('#sgPass').value})});const j=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(j.error||'Sign-in failed');lsSet('hd_token',j.token);lsSet('hd_api',api===API_DEFAULT?null:api);$('#sgPass').value='';d.close();res(true)}catch(err){$('#sgErr').textContent=err.message==='Failed to fetch'?'Could not reach the clinic server':err.message}}})}
+const CLAUDE_MODEL='claude-opus-5-5';
+function askKey(msg){return new Promise(res=>{const d=$('#keyDlg');$('#keyIn').value='';$('#keyErr').textContent=msg||'';$('#keyDel').hidden=!lsGet('oa-claude-key');d.showModal();
+  $('#keyForm').onsubmit=ev=>{const v=ev.submitter&&ev.submitter.value;if(v==='cancel'){d.close();return res(false)}
+    if(v==='remove'){lsSet('oa-claude-key',null);d.close();toast('Claude key removed from this device');return res(false)}
+    ev.preventDefault();const k=$('#keyIn').value.trim();if(!/^sk-ant-[\w-]{20,}$/.test(k)){$('#keyErr').textContent='That does not look like a Claude key — it starts with sk-ant-';return}
+    lsSet('oa-claude-key',k);d.close();toast('Claude key saved on this device');res(true)}})}
+$('#keyBtn').onclick=()=>{$('#moreDlg').close();askKey()};
+const CEPH_SCHEMA={type:'object',properties:{is_lateral_ceph:{type:'boolean'},facing:{type:'string',enum:['left','right']},
+  landmarks:{type:'array',items:{type:'object',properties:{key:{type:'string',enum:LMS.map(l=>l[0])},x:{type:'number'},y:{type:'number'},confidence:{type:'string',enum:['high','medium','low']}},required:['key','x','y','confidence'],additionalProperties:false}},
+  note:{type:'string'}},required:['is_lateral_ceph','facing','landmarks','note'],additionalProperties:false};
+async function claudeCeph(j){const key=lsGet('oa-claude-key');
+  const prompt=`This should be a lateral cephalometric radiograph, ${j.w} x ${j.h} pixels. Locate each landmark below and give its position in pixels of this image (x from the left edge, y from the top edge). Work carefully: first find the sella, nasion, orbit, ear rods / porion, maxilla, mandible, incisors, molars and soft-tissue profile, then place each point on the exact anatomical spot. Where two outlines are visible (gonion, porion, orbitale, articulare, molars) use the midpoint. Give every landmark; mark ones you cannot see clearly as low confidence.\n\n`+
+    LMS.map(([k,n,d])=>`- ${k}: ${n} — ${d}`).join('\n')+'\n\nSet is_lateral_ceph to false if the image is not a lateral ceph. In note, mention anything that limits accuracy.';
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01',
+      'anthropic-beta':'server-side-fallback-2026-07-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:CLAUDE_MODEL,max_tokens:16000,fallbacks:'default',output_config:{effort:'high',format:{type:'json_schema',schema:CEPH_SCHEMA}},
+      messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:j.data}},{type:'text',text:prompt}]}]})});
+  const res=await r.json().catch(()=>({}));
+  if(r.status===401||r.status===403){const e=new Error('your Claude key was not accepted — check it in ⋯ → Claude AI key');e.badKey=true;throw e}
+  if(!r.ok)throw new Error((res.error&&res.error.message)||'Claude AI error '+r.status);
+  if(res.stop_reason==='refusal')throw new Error('Claude AI declined this image — place the landmarks by hand');
+  if(res.stop_reason==='max_tokens')throw new Error('Claude AI ran out of room — try again');
+  let out;try{out=JSON.parse((res.content||[]).filter(c=>c.type==='text').map(c=>c.text).join(''))}catch(e){throw new Error('Claude AI gave an unreadable answer — try again')}
+  out.landmarks=(out.landmarks||[]).filter(p=>p&&p.x>=0&&p.x<=j.w&&p.y>=0&&p.y<=j.h);return out}
 async function cephJPEG(img){const sc=Math.min(1,2576/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);
   c.getContext('2d').drawImage(img,0,0,c.width,c.height);const b=await canvasBlob(c,'image/jpeg',0.92);const data=(await blobToDataURL(b)).split(',')[1];return{data,w:c.width,h:c.height,sc}}
 let aiBusy=false;
 $('#cAI').onclick=async()=>{if(aiBusy)return;const img=cephView.img;if(!img)return toast('Upload the ceph first');
-  if(!lsGet('hd_token')&&!(await signIn()))return;
-  if(lsGet('oa-ai-ok')!=='1'){if(!confirm('Auto-detect sends this X-ray image (no name or other details) through the clinic server to Claude AI (Anthropic) to find the landmarks. Continue?'))return;lsSet('oa-ai-ok','1')}
+  if(!lsGet('oa-claude-key')&&!(await askKey()))return;
+  if(lsGet('oa-ai-ok')!=='1'){if(!confirm('Auto-detect sends this X-ray image (no name or other details) from this device to Claude AI (Anthropic) to find the landmarks. Continue?'))return;lsSet('oa-ai-ok','1')}
   if(Object.keys(cur.ceph.pts).length&&!confirm('Replace the landmarks already placed with the AI result?'))return;
   aiBusy=true;const btn=$('#cAI'),h=$('#cHint');btn.disabled=true;btn.textContent='✨ Detecting…';h.hidden=false;h.textContent='Claude AI is finding the landmarks — this takes about a minute…';const forCase=cur;
-  try{const j=await cephJPEG(img),api=lsGet('hd_api')||API_DEFAULT;
-    const r=await fetch(api+'/api/ai/ceph',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+lsGet('hd_token')},body:JSON.stringify({image:j.data,mime:'image/jpeg',width:j.w,height:j.h})});
-    const res=await r.json().catch(()=>({}));if(r.status===401){lsSet('hd_token',null);throw new Error('please sign in again and retry')}if(!r.ok)throw new Error(res.error||'HTTP '+r.status);
+  try{const j=await cephJPEG(img),res=await claudeCeph(j);
     if(forCase!==cur)return;const pts={},auto={};for(const p of res.landmarks||[]){if(!LMS.some(l=>l[0]===p.key))continue;pts[p.key]=[r1(p.x/j.sc),r1(p.y/j.sc)];auto[p.key]=p.confidence||'medium'}
     if(!Object.keys(pts).length)throw new Error('no landmarks were found');cur.ceph.pts=pts;cur.ceph.auto=auto;saveNow();lmIdx=nextMissing(0);renderLm();renderCephTable();cephView.draw();
     const low=Object.values(auto).filter(c=>c==='low').length;
     toast(`${Object.keys(pts).length} landmarks found${low?`, ${low} uncertain (orange)`:''} — check each one and drag any that are off`+(res.is_lateral_ceph===false?'. Warning: this may not be a lateral ceph.':'')+(res.note?' Note: '+res.note:''))}
-  catch(e){toast('Auto-detect failed: '+(e.message==='Failed to fetch'?'could not reach the clinic server':e.message))}
+  catch(e){toast('Auto-detect failed: '+(e.message==='Failed to fetch'?'could not reach Claude AI — check the internet connection':e.message))}
   finally{aiBusy=false;btn.disabled=false;btn.textContent='✨ Auto-detect';renderLm()}};
 $('#cOK').onclick=()=>{cur.ceph.auto={};saveNow();renderLm();cephView.draw();toast('All landmarks accepted')};
 
@@ -1072,7 +1091,8 @@ function analyze(c){
   const div2=/div 2/.test(o.inc||'');
   if(!skel&&dental){skel=dental;basis='dental relationship only (no ceph)'}
   const sevW=['','mild','moderate','severe'][sev]||'';
-  const maxRet=ms('SNA')?.z<-1||ms('ANp')?.z<-1,maxPro=ms('SNA')?.z>1||ms('ANp')?.z>1,mandRet=ms('SNB')?.z<-1||ms('PNp')?.z<-1||ms('MxMd')?.z<-1,mandPro=ms('SNB')?.z>1||ms('PNp')?.z>1||ms('MxMd')?.z>1;
+  const jaw=(main,...more)=>{const m=ms(main);if(m&&m.z!=null&&Math.abs(m.z)>1)return Math.sign(m.z);const o=more.map(ms).filter(x=>x&&x.z!=null&&Math.abs(x.z)>1),up=o.some(x=>x.z>0),dn=o.some(x=>x.z<0);return up&&!dn?1:dn&&!up?-1:0};
+  const mx=jaw('SNA','ANp'),md=jaw('SNB','PNp','MxMd'),maxRet=mx<0,maxPro=mx>0,mandRet=md<0,mandPro=md>0;// the main angle decides; extra measures only when they agree
   const origin=[maxRet&&'retrusive maxilla',maxPro&&'protrusive maxilla',mandRet&&'retrusive mandible',mandPro&&'protrusive mandible'].filter(Boolean).join(' and ');
   if(skel)F.push({a:'Skeletal',t:`Skeletal Class ${skel}${sevW&&skel!=='I'?' ('+sevW+')':''}${origin?' — '+origin:''} [${basis}]`,l:skel==='I'?0:sev});
   // --- vertical
