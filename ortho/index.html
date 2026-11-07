@@ -123,6 +123,15 @@ dialog::backdrop{background:#000a}
 .foot{font-size:12px;color:var(--mute);margin-top:24px;text-align:center}
 #report{display:none}
 #dropOv{position:fixed;inset:0;z-index:40;background:#1d4ed8cc;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;pointer-events:none}
+.side{display:flex;flex-direction:column;gap:10px;min-height:0;max-height:min(72vh,720px)}
+.side .lmlist{flex:1;min-height:160px;max-height:none}
+.live{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:13px;max-height:46%;overflow:auto}
+.live h4{margin:2px 0 6px;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;display:flex;justify-content:space-between}
+.lv{display:flex;gap:6px;align-items:center;padding:2px 4px;border-radius:6px}
+.lv .n{flex:1}.lv .v{font-variant-numeric:tabular-nums;font-weight:600}.lv .d{width:8px;height:8px;border-radius:50%}
+.lv.hot{background:#facc1533}
+.lv button{border:0;background:none;color:var(--bad);cursor:pointer;padding:0 4px;font-size:15px}
+@media (max-width:860px){.side{max-height:none}.live{max-height:none}}
 .lm .au{font-size:11px;border-radius:999px;padding:0 6px;background:#0ea5e933;color:#0369a1}
 .lm .au.low{background:#f9731633;color:#c2410c}
 @media print{
@@ -315,11 +324,15 @@ dialog::backdrop{background:#000a}
     <label class="note">◐ <input type="range" id="cCon" min="0.4" max="2.5" step="0.05" value="1"></label>
     <button class="btn sm" id="cInv" aria-pressed="false">Invert</button>
     <button class="btn sm" id="cTrace" aria-pressed="true">Tracing</button>
+    <span class="muted">|</span>
+    <button class="btn sm" id="cRul" aria-pressed="false" title="Tap two points — the distance is drawn on the X-ray">📏 Ruler</button>
+    <button class="btn sm" id="cAng" aria-pressed="false" title="Tap three points: end, corner, end">∠ Angle</button>
+    <button class="btn sm" id="cMag" aria-pressed="true" title="Zoom circle while you place or drag a point">🔍 Magnifier</button>
     <button class="btn sm" id="cFit">Fit</button>
   </div>
   <div class="split">
     <div class="stage" id="cStage"><canvas id="cCv"></canvas><div class="empty" id="cEmpty">Upload or drop a lateral ceph — DICOM (.dcm), JPEG, PNG, TIFF, HEIC or PDF.<br>Then press ✨ Auto-detect, or tap each landmark in turn. Drag any point to adjust it.</div><div class="hint" id="cHint" hidden></div></div>
-    <div class="lmlist" id="lmList"></div>
+    <div class="side"><div class="live" id="liveVals"></div><div class="lmlist" id="lmList"></div></div>
   </div>
   <h2>Cervical vertebral maturation</h2>
   <div class="card grid">
@@ -465,9 +478,9 @@ function blobRefs(c){const r=[];for(const s in c.photos)if(c.photos[s])r.push([c
 function caseLabel(c){return (c.pt.name||'Unnamed case')+(c.pt.file?' · '+c.pt.file:'')}
 function renderCaseSel(){const s=$('#caseSel');s.innerHTML=cases.sort((a,b)=>(b.updated||b.created)-(a.updated||a.created)).map(c=>`<option value="${c.id}">${esc(caseLabel(c))}</option>`).join('');if(cur)s.value=cur.id}
 async function openCase(c){await saveNow();for(const u of urlCache.values())URL.revokeObjectURL(u);urlCache.clear();cur=c;
-  for(const k of['photos','fx','models','occ','w','arch'])cur[k]=cur[k]||{};cur.ceph=cur.ceph||{pts:{}};cur.ceph.pts=cur.ceph.pts||{};cur.ceph.auto=cur.ceph.auto||{};q3=null;cur.opg=cur.opg||{teeth:{},f:{}};cur.plan=cur.plan||{};cur.plan.sel=cur.plan.sel||[];cur.plan.refs=cur.plan.refs||[];cur.pt.h=cur.pt.h||{};
+  for(const k of['photos','fx','models','occ','w','arch'])cur[k]=cur[k]||{};cur.ceph=cur.ceph||{pts:{}};cur.ceph.pts=cur.ceph.pts||{};cur.ceph.auto=cur.ceph.auto||{};cur.ceph.meas=cur.ceph.meas||[];q3=null;measMode=null;measPts=[];cur.opg=cur.opg||{teeth:{},f:{}};cur.plan=cur.plan||{};cur.plan.sel=cur.plan.sel||[];cur.plan.refs=cur.plan.refs||[];cur.pt.h=cur.pt.h||{};
   try{localStorage.setItem('oa-last',c.id)}catch(e){}
-  renderCaseSel();bindAll();renderPhotos();renderWidths();renderAnalysis();renderBrushes();renderChart();lmIdx=nextMissing(0);renderLm();renderCephTable();updDots();
+  renderCaseSel();bindAll();renderPhotos();renderWidths();renderAnalysis();renderBrushes();renderChart();lmIdx=nextMissing(0);renderLm();renderCephTable();renderLive(null);updDots();
   cephView.setImage(null);opgView.setImage(null);mesh.clear();
   if(cur.ceph.img){blobURL(cur.ceph.img).then(u=>u&&loadImg(u)).then(i=>{if(i&&c===cur)cephView.setImage(i)}).catch(()=>{})}
   if(cur.opg.img){blobURL(cur.opg.img).then(u=>u&&loadImg(u)).then(i=>{if(i&&c===cur)opgView.setImage(i)}).catch(()=>{})}
@@ -504,7 +517,7 @@ function onField(e){const el=e.target;if(!el.dataset||!el.dataset.k||!cur)return
 /* ---------- tabs ---------- */
 let curTab='patient';
 function showTab(t){curTab=t;for(const b of $$('#tabs button'))b.setAttribute('aria-selected',b.dataset.tab===t);for(const s of $$('section.tab'))s.classList.toggle('on',s.id==='tab-'+t);
-  if(t==='models')mesh.resize();if(t==='ceph')cephView.resize();if(t==='opg')opgView.resize();if(t==='plan')renderPlan();if(t==='research')renderResearch();scrollTo(0,0)}
+  if(t==='models')mesh.resize();if(t==='ceph'){cephView.resize();renderLive(null)}if(t==='opg')opgView.resize();if(t==='plan')renderPlan();if(t==='research')renderResearch();scrollTo(0,0)}
 $('#tabs').onclick=e=>{const b=e.target.closest('button');if(b)showTab(b.dataset.tab)};
 function updDots(){if(!cur)return;const d=$$('#tabs .dot');const has=o=>Object.values(o||{}).some(v=>v!==''&&v!=null&&v!==false&&!(typeof v==='object'&&!Object.keys(v).length));
   d[0].classList.toggle('on',!!(cur.pt.name||cur.pt.cc));d[1].classList.toggle('on',Object.values(cur.photos).some(Boolean));d[2].classList.toggle('on',!!(cur.models.upper||cur.models.lower||has(cur.occ)));
@@ -639,13 +652,13 @@ class ImgView{
   toScr([x,y]){return[x*this.s+this.ox,y*this.s+this.oy]}
   zoomAt(x,y,f){const s2=Math.max(0.02,Math.min(40,this.s*f));f=s2/this.s;this.ox=x-(x-this.ox)*f;this.oy=y-(y-this.oy)*f;this.s=s2;this.draw()}
   down(e){if(!this.img)return;this.cv.setPointerCapture(e.pointerId);const p=this.cpx(e);this.ptrs.set(e.pointerId,p);
-    if(this.ptrs.size===1){this.start=p;this.moved=false;this.btn=e.button;this.drag=this.o.hit?this.o.hit(this.toImg(p),14*this.dpr/this.s):null}else{this.drag=null;this.moved=true;const[a,b]=[...this.ptrs.values()];this.pinch=Math.hypot(a[0]-b[0],a[1]-b[1])}}
-  move(e){if(!this.ptrs.has(e.pointerId))return;const p=this.cpx(e),last=this.ptrs.get(e.pointerId);this.ptrs.set(e.pointerId,p);
+    if(this.ptrs.size===1){this.start=p;this.cursor=p;this.moved=false;this.btn=e.button;this.drag=this.o.hit?this.o.hit(this.toImg(p),14*this.dpr/this.s):null}else{this.drag=null;this.moved=true;const[a,b]=[...this.ptrs.values()];this.pinch=Math.hypot(a[0]-b[0],a[1]-b[1])}}
+  move(e){if(!this.ptrs.has(e.pointerId))return;const p=this.cpx(e),last=this.ptrs.get(e.pointerId);this.ptrs.set(e.pointerId,p);this.cursor=this.ptrs.size===1?p:null;
     if(this.ptrs.size===2){const[a,b]=[...this.ptrs.values()];const d=Math.hypot(a[0]-b[0],a[1]-b[1]);this.zoomAt((a[0]+b[0])/2,(a[1]+b[1])/2,d/this.pinch);this.pinch=d;this.ox+=(p[0]-last[0])/2;this.oy+=(p[1]-last[1])/2;this.draw();return}
     if(!this.moved&&Math.hypot(p[0]-this.start[0],p[1]-this.start[1])>5*this.dpr)this.moved=true;if(!this.moved)return;
     if(this.drag){this.o.onDrag(this.drag,this.toImg(p));this.draw()}else{this.ox+=p[0]-last[0];this.oy+=p[1]-last[1];this.draw()}}
   up(e){if(!this.ptrs.has(e.pointerId))return;const p=this.ptrs.get(e.pointerId);this.ptrs.delete(e.pointerId);
-    if(this.ptrs.size===0){if(!this.moved&&this.btn===0&&this.o.onTap)this.o.onTap(this.toImg(p));else if(this.drag&&this.o.onDrop)this.o.onDrop(this.drag);this.drag=null}}
+    if(this.ptrs.size===0){this.cursor=null;const dr=this.drag;this.drag=null;if(!this.moved&&this.btn===0&&this.o.onTap)this.o.onTap(this.toImg(p));else if(dr&&this.o.onDrop)this.o.onDrop(dr);this.draw()}}
   draw(){const c=this.ctx,w=this.cv.width,h=this.cv.height;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,w,h);if(!this.img)return;
     c.filter=`brightness(${this.bri}) contrast(${this.con})${this.inv?' invert(1)':''}`;c.setTransform(this.s,0,0,this.s,this.ox,this.oy);c.drawImage(this.img,0,0);c.filter='none';c.setTransform(1,0,0,1,0,0);
     this.o.overlay&&this.o.overlay(c,this)}
@@ -682,7 +695,7 @@ function cephMeasures(c){
   const sgnAng=(ref,v)=>ang(ref,v)*Math.sign(cr(ref,v)||1)*Math.sign(cr(ref,ant)||1);
   const add=(g,key,name,ks,fn,unit,norm,sd,lo,hi)=>{const miss=ks.filter(k=>!p[k]);let v=null,why='';
     if(miss.length)why='Needs '+miss.join(', ');else if(unit==='mm'&&!mm)why='Needs calibration';else{v=fn();if(unit==='mm'&&fn.px!==false)v*=mm}
-    out.push({g,key,name,unit,norm,sd,lo,hi,v:v==null||isNaN(v)?null:v,why})};
+    out.push({g,key,name,unit,norm,sd,lo,hi,ks,v:v==null||isNaN(v)?null:v,why})};
   const at=(a,v,b)=>ang(sub(p[a],p[v]),sub(p[b],p[v]));
   add('Skeletal – sagittal','SNA','SNA',['S','N','A'],()=>at('S','N','A'),'°',82,3,'Retrusive maxilla','Protrusive maxilla');
   add('Skeletal – sagittal','SNB','SNB',['S','N','B'],()=>at('S','N','B'),'°',80,3,'Retrusive mandible','Protrusive mandible');
@@ -717,13 +730,13 @@ function cephMeasures(c){
 let lmIdx=0,calMode=false,calPts=[];
 function nextMissing(from){for(let i=0;i<LMS.length;i++){const j=(from+i)%LMS.length;if(!cur.ceph.pts[LMS[j][0]])return j}return Math.min(from,LMS.length-1)}
 function renderLm(){$('#lmList').innerHTML=LMS.map(([k,n,d],i)=>`<div class="lm ${i===lmIdx?'cur':''}" data-i="${i}"><b>${k}</b><span class="d"><span style="color:var(--ink)">${esc(n)}</span><br>${esc(d)}</span>${cur.ceph.auto&&cur.ceph.auto[k]?`<span class="au ${cur.ceph.auto[k]==='low'?'low':''}">${cur.ceph.auto[k]==='tpl'?'draft':'auto'}</span>`:''}${cur.ceph.pts[k]?`<span class="ok">${cur.ceph.auto&&cur.ceph.auto[k]?'?':'✓'}</span><button class="btn sm" data-clr="${k}" title="Remove">×</button>`:''}</div>`).join('');
-  const h=$('#cHint');if(cephView.img){h.hidden=false;$('#cOK').hidden=!Object.keys(cur.ceph.auto||{}).length;if(aiBusy)return;h.textContent=q3?`Quick place: tap ${LMS.find(l=>l[0]===Q3[q3.length])[1]} (${q3.length+1} of 3)`:calMode?`Calibrate: tap ${calPts.length?'the second':'the first'} point on the ruler`:(LMS.every(l=>cur.ceph.pts[l[0]])?'All landmarks placed — drag any point to adjust it':`Tap to place ${LMS[lmIdx][1]} — ${LMS[lmIdx][2]}`)}else h.hidden=true}
+  const h=$('#cHint');if(cephView.img){h.hidden=false;$('#cOK').hidden=!Object.keys(cur.ceph.auto||{}).length;if(aiBusy)return;if(measMode){measHint();return}h.textContent=q3?`Quick place: tap ${LMS.find(l=>l[0]===Q3[q3.length])[1]} (${q3.length+1} of 3)`:calMode?`Calibrate: tap ${calPts.length?'the second':'the first'} point on the ruler`:(LMS.every(l=>cur.ceph.pts[l[0]])?'All landmarks placed — drag any point to adjust it':`Tap to place ${LMS[lmIdx][1]} — ${LMS[lmIdx][2]}`)}else h.hidden=true}
 $('#lmList').onclick=e=>{const c=e.target.closest('[data-clr]');if(c){delete cur.ceph.pts[c.dataset.clr];delete cur.ceph.auto[c.dataset.clr];save();renderLm();renderCephTable();cephView.draw();return}const r=e.target.closest('.lm');if(r){lmIdx=+r.dataset.i;renderLm()}};
 const LINES=[['S','N'],['N','A'],['N','B'],['Po','Or'],['Go','Me'],['ANS','PNS'],['U1A','U1T'],['L1A','L1T'],['Prn','PogS'],['N','Pog'],['S','Gn']];
 const cephView=new ImgView($('#cStage'),$('#cCv'),{empty:$('#cEmpty'),
-  hit:(q,tol)=>{let best=null,bd=tol;for(const k in cur.ceph.pts){const d=len(sub(cur.ceph.pts[k],q));if(d<bd){bd=d;best=k}}return best},
-  onDrag:(k,q)=>{cur.ceph.pts[k]=q.map(r1);if(cur.ceph.auto[k]){delete cur.ceph.auto[k];renderLm()}},onDrop:()=>{save();renderCephTable()},
-  onTap:q=>{if(q3){q3Tap(q);return}if(calMode){calPts.push(q);if(calPts.length===2){const px=len(sub(calPts[0],calPts[1]));const mm=parseFloat(prompt('Distance between the two points in mm:','10'));
+  hit:(q,tol)=>{let best=null,bd=tol;(cur.ceph.meas||[]).forEach((m,i)=>m.p.forEach((pt,j)=>{const d=len(sub(pt,q));if(d<bd){bd=d;best='#m'+i+'_'+j}}));for(const k in cur.ceph.pts){const d=len(sub(cur.ceph.pts[k],q));if(d<bd){bd=d;best=k}}return best},
+  onDrag:(k,q)=>{if(k.startsWith('#m')){const[i,j]=k.slice(2).split('_').map(Number);cur.ceph.meas[i].p[j]=q.map(r1);liveSoon(null);return}cur.ceph.pts[k]=q.map(r1);if(cur.ceph.auto[k]){delete cur.ceph.auto[k];renderLm()}liveSoon(k)},onDrop:()=>{save();renderCephTable();renderLive(null)},
+  onTap:q=>{if(measMode){measTap(q);return}if(q3){q3Tap(q);return}if(calMode){calPts.push(q);if(calPts.length===2){const px=len(sub(calPts[0],calPts[1]));const mm=parseFloat(prompt('Distance between the two points in mm:','10'));
       if(mm>0&&px>0){cur.ceph.mmpp=+(mm/px).toFixed(5);$('[data-k="ceph.mmpp"]').value=cur.ceph.mmpp;save();toast('Calibrated: '+cur.ceph.mmpp+' mm per pixel')}calMode=false;calPts=[];$('#cCal').setAttribute('aria-pressed',false);renderCephTable()}
       renderLm();cephView.draw();return}
     cur.ceph.pts[LMS[lmIdx][0]]=q.map(r1);delete cur.ceph.auto[LMS[lmIdx][0]];save();lmIdx=nextMissing(lmIdx+1);renderLm();renderCephTable();cephView.draw()},
@@ -732,16 +745,62 @@ const cephView=new ImgView($('#cStage'),$('#cCv'),{empty:$('#cEmpty'),
       if(P.U1T&&P.L1T&&P.Mo){c.strokeStyle='#a78bfacc';const A=v.toScr(P.Mo),B=v.toScr(mid(P.U1T,P.L1T));c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke()}}
     c.font=`${11*d}px sans-serif`;for(const k in P){const[x,y]=v.toScr(P[k]);const on=LMS[lmIdx]&&LMS[lmIdx][0]===k,au=cur.ceph.auto[k];c.fillStyle=on?'#facc15':au==='low'?'#f97316':au?'#22d3ee':'#f43f5e';c.beginPath();c.arc(x,y,(on?5:4)*d,0,7);c.fill();c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=3*d;c.strokeText(k,x+6*d,y-6*d);c.fillText(k,x+6*d,y-6*d);c.lineWidth=1.5*d}
     for(const q of q3||[]){const[x,y]=v.toScr(q);c.strokeStyle='#facc15';c.lineWidth=2*d;c.beginPath();c.arc(x,y,8*d,0,7);c.stroke()}
-    for(const q of calPts){const[x,y]=v.toScr(q);c.strokeStyle='#22c55e';c.beginPath();c.arc(x,y,7*d,0,7);c.stroke()}}});
+    for(const q of calPts){const[x,y]=v.toScr(q);c.strokeStyle='#22c55e';c.beginPath();c.arc(x,y,7*d,0,7);c.stroke()}
+    drawMeasures(c,v);drawDragValues(c,v);drawLoupe(c,v)}});
 imgControls(cephView,'c');
+/* ---------- ceph measuring: ruler, angle, live values, magnifier ---------- */
+let measMode=null,measPts=[],liveRaf=0,liveKey=null,liveM=[];
+const KEY_VALUES=['SNA','SNB','ANB','Wits','FMA','SNMP','U1SN','IMPA','II','ULE','LLE','NLA'];
+function measLabel(m){const mm=num(cur.ceph.mmpp);if(m.t==='d'){const px=len(sub(m.p[1],m.p[0]));return mm?(px*mm).toFixed(1)+' mm':Math.round(px)+' px (calibrate for mm)'}
+  return ang(sub(m.p[0],m.p[1]),sub(m.p[2],m.p[1])).toFixed(1)+'°'}
+function setMeasMode(t){measMode=measMode===t?null:t;measPts=[];q3=null;calMode=false;
+  for(const[id,k]of[['cRul','d'],['cAng','a']])$('#'+id).setAttribute('aria-pressed',measMode===k);$('#cQ3').setAttribute('aria-pressed',false);$('#cCal').setAttribute('aria-pressed',false);measHint();cephView.draw()}
+function measHint(){const h=$('#cHint');if(!measMode){renderLm();return}h.hidden=false;
+  h.textContent=measMode==='d'?`Ruler: tap point ${measPts.length+1} of 2 — Esc to stop`:`Angle: tap ${['the first end','the corner','the other end'][measPts.length]} — Esc to stop`}
+function measTap(q){measPts.push(q.map(r1));const need=measMode==='d'?2:3;
+  if(measPts.length===need){cur.ceph.meas.push({t:measMode,p:measPts});measPts=[];saveNow();renderLive(null);toast((measMode==='d'?'Distance ':'Angle ')+measLabel(cur.ceph.meas[cur.ceph.meas.length-1])+' — drag its ends to adjust')}
+  measHint();cephView.draw()}
+$('#cRul').onclick=()=>{if(!cephView.img)return toast('Upload the ceph first');setMeasMode('d')};
+$('#cAng').onclick=()=>{if(!cephView.img)return toast('Upload the ceph first');setMeasMode('a')};
+$('#cMag').onclick=e=>{cephView.mag=cephView.mag===false;e.target.setAttribute('aria-pressed',cephView.mag)};
+addEventListener('keydown',e=>{if(e.key!=='Escape'||curTab!=='ceph')return;if(measMode)setMeasMode(measMode);else if(q3||calMode){q3=null;calMode=false;calPts=[];$('#cQ3').setAttribute('aria-pressed',false);$('#cCal').setAttribute('aria-pressed',false);renderLm();cephView.draw()}});
+function label(c,x,y,text,d,bg='#0f172ae6',fg='#fff'){c.font=`600 ${12*d}px sans-serif`;const w=c.measureText(text).width+10*d,h=18*d;c.fillStyle=bg;c.beginPath();c.roundRect?c.roundRect(x-w/2,y-h/2,w,h,5*d):c.rect(x-w/2,y-h/2,w,h);c.fill();c.fillStyle=fg;c.textAlign='center';c.textBaseline='middle';c.fillText(text,x,y+0.5*d);c.textAlign='start';c.textBaseline='alphabetic'}
+function drawMeasures(c,v){const d=v.dpr,col='#4ade80';const all=[...cur.ceph.meas.map(m=>({...m,done:true})),...(measPts.length?[{t:measMode,p:measPts}]:[])];
+  for(const m of all){const S=m.p.map(q=>v.toScr(q));c.strokeStyle=col;c.lineWidth=2*d;c.setLineDash(m.done?[]:[6*d,4*d]);c.beginPath();S.forEach((q,i)=>i?c.lineTo(q[0],q[1]):c.moveTo(q[0],q[1]));c.stroke();c.setLineDash([]);
+    for(const q of S){c.fillStyle='#fff';c.strokeStyle=col;c.lineWidth=2*d;c.beginPath();c.rect(q[0]-4*d,q[1]-4*d,8*d,8*d);c.fill();c.stroke()}
+    if(!m.done)continue;
+    if(m.t==='d'){const M=mid(S[0],S[1]),n=nrm([-(S[1][1]-S[0][1]),S[1][0]-S[0][0]]);label(c,M[0]+n[0]*14*d,M[1]+n[1]*14*d,measLabel(m),d,'#14532dee')}
+    else{const a1=Math.atan2(S[0][1]-S[1][1],S[0][0]-S[1][0]),a2=Math.atan2(S[2][1]-S[1][1],S[2][0]-S[1][0]);let da=a2-a1;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;
+      c.strokeStyle=col;c.lineWidth=1.5*d;c.beginPath();c.arc(S[1][0],S[1][1],22*d,a1,a1+da,da<0);c.stroke();const am=a1+da/2;label(c,S[1][0]+Math.cos(am)*42*d,S[1][1]+Math.sin(am)*42*d,measLabel(m),d,'#14532dee')}}}
+function drawDragValues(c,v){const k=v.drag;if(!k||!v.moved||k.startsWith('#m')||!cur.ceph.pts[k])return;const d=v.dpr,dep=liveM.filter(m=>m.ks.includes(k)&&m.v!=null).slice(0,6);if(!dep.length)return;
+  const[x,y]=v.toScr(cur.ceph.pts[k]);c.font=`600 ${12*d}px sans-serif`;const lines=dep.map(m=>`${m.name.replace(/ \(.*\)$/,'')}  ${r1(m.v)}${m.unit==='°'?'°':' '+m.unit}`);
+  const w=Math.max(...lines.map(t=>c.measureText(t).width))+26*d,h=lines.length*17*d+8*d;let bx=x+18*d,by=y+18*d;if(bx+w>v.cv.width)bx=x-18*d-w;if(by+h>v.cv.height)by=y-18*d-h;
+  c.fillStyle='#0f172aee';c.beginPath();c.roundRect?c.roundRect(bx,by,w,h,6*d):c.rect(bx,by,w,h);c.fill();
+  dep.forEach((m,i)=>{const yy=by+14*d+i*17*d;c.fillStyle=m.st==='ok'?'#4ade80':m.st==='warn'?'#fbbf24':'#f87171';c.beginPath();c.arc(bx+10*d,yy-4*d,3.5*d,0,7);c.fill();c.fillStyle='#fff';c.fillText(lines[i],bx+18*d,yy)})}
+function drawLoupe(c,v){if(v.mag===false||!v.cursor||!v.img||(v.moved&&!v.drag))return;const d=v.dpr,R=70*d,Z=3,[px,py]=v.cursor,q=v.toImg(v.cursor);
+  let cx=R+12*d,cy=R+12*d;if(px<2*R+40*d&&py<2*R+40*d)cx=v.cv.width-R-12*d;
+  const sw=2*R/(v.s*Z);c.save();c.beginPath();c.arc(cx,cy,R,0,7);c.clip();c.fillStyle='#000';c.fillRect(cx-R,cy-R,2*R,2*R);
+  c.filter=`brightness(${v.bri}) contrast(${v.con})${v.inv?' invert(1)':''}`;c.drawImage(v.img,q[0]-sw/2,q[1]-sw/2,sw,sw,cx-R,cy-R,2*R,2*R);c.filter='none';
+  const L=p=>[cx+(p[0]-q[0])*v.s*Z,cy+(p[1]-q[1])*v.s*Z];for(const k in cur.ceph.pts){if(k===v.drag)continue;const[x,y]=L(cur.ceph.pts[k]);if(Math.hypot(x-cx,y-cy)<R){c.fillStyle='#f43f5e';c.beginPath();c.arc(x,y,3*d,0,7);c.fill()}}
+  c.strokeStyle='#facc15';c.lineWidth=1*d;c.beginPath();c.moveTo(cx-R,cy);c.lineTo(cx-5*d,cy);c.moveTo(cx+5*d,cy);c.lineTo(cx+R,cy);c.moveTo(cx,cy-R);c.lineTo(cx,cy-5*d);c.moveTo(cx,cy+5*d);c.lineTo(cx,cy+R);c.stroke();
+  c.restore();c.strokeStyle='#fff';c.lineWidth=2*d;c.beginPath();c.arc(cx,cy,R,0,7);c.stroke()}
+function liveSoon(k){liveKey=k;liveM=cephMeasures(cur);if(liveRaf)return;liveRaf=requestAnimationFrame(()=>{liveRaf=0;renderLive(liveKey)})}
+function renderLive(k){if(!cur)return;if(!k)liveM=cephMeasures(cur);const by=Object.fromEntries(liveM.map(m=>[m.key,m]));
+  const dep=k?liveM.filter(m=>m.ks.includes(k)):[],keys=[...new Set([...dep.map(m=>m.key),...KEY_VALUES])];
+  const row=m=>`<div class="lv ${k&&m.ks.includes(k)?'hot':''}"><span class="d" style="background:${m.v==null?'var(--line)':m.st==='ok'?'var(--ok)':m.st==='warn'?'var(--warn)':'var(--bad)'}"></span><span class="n">${esc(m.name)}</span><span class="v">${m.v==null?'—':r1(m.v)+(m.unit==='°'?'°':' '+m.unit)}</span></div>`;
+  let h=`<h4><span>${k?'Changing with '+esc(k):'Live values'}</span></h4>`+keys.map(x=>by[x]).filter(Boolean).map(row).join('');
+  const ms=cur.ceph.meas||[];h+=`<h4 style="margin-top:8px"><span>Ruler & angles</span></h4>`+(ms.length?ms.map((m,i)=>`<div class="lv"><span class="n">${m.t==='d'?'📏 Distance':'∠ Angle'} ${i+1}</span><span class="v">${esc(measLabel(m))}</span><button data-dm="${i}" title="Delete">×</button></div>`).join(''):'<div class="note">Press 📏 Ruler or ∠ Angle and tap on the X-ray.</div>');
+  $('#liveVals').innerHTML=h}
+$('#liveVals').onclick=e=>{const i=e.target.dataset.dm;if(i==null)return;cur.ceph.meas.splice(+i,1);saveNow();renderLive(null);cephView.draw()};
+
 $('#cTrace').onclick=e=>{cephView.trace=cephView.trace===false;e.target.setAttribute('aria-pressed',cephView.trace);cephView.draw()};
-$('#cCal').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');q3=null;$('#cQ3').setAttribute('aria-pressed',false);calMode=!calMode;calPts=[];e.target.setAttribute('aria-pressed',calMode);renderLm();cephView.draw()};
+$('#cCal').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');if(measMode)setMeasMode(measMode);q3=null;$('#cQ3').setAttribute('aria-pressed',false);calMode=!calMode;calPts=[];e.target.setAttribute('aria-pressed',calMode);renderLm();cephView.draw()};
 $('#upCeph').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)await setXray('ceph',f,cephView)};
 function tagFor(m){return m.v==null?`<span class="tag t-mute">${esc(m.why)}</span>`:`<span class="tag t-${m.st}">${esc(m.txt)}</span>`}
 function renderCephTable(){if(!cur)return;const M=cephMeasures(cur);let g='',h='<table><tr><th>Measurement</th><th style="text-align:right">Value</th><th style="text-align:right">Norm</th><th>Interpretation</th></tr>';
   for(const m of M){if(m.g!==g){g=m.g;h+=`<tr><td colspan="4" style="font-weight:700;padding-top:12px">${esc(g)}</td></tr>`}
     h+=`<tr><td>${esc(m.name)}</td><td class="n">${m.v==null?'—':r1(m.v)+' '+m.unit}</td><td class="n muted">${m.norm} ± ${m.sd}</td><td>${tagFor(m)}</td></tr>`}
-  $('#cephTable').innerHTML=h+'</table>'}
+  $('#cephTable').innerHTML=h+'</table>';if(typeof renderLive==='function'&&cur.ceph.meas)renderLive(null)}
 
 /* ---------- automatic landmarks ---------- */
 // Average adult skull (mm, facing right), tuned so its own values sit near the norms. Used by "Quick place".
@@ -752,7 +811,7 @@ function affine3(src,dst){// solve x' = a x + b y + c, y' = d x + e y + f from t
   const[[x1,y1],[x2,y2],[x3,y3]]=src,det=x1*(y2-y3)-y1*(x2-x3)+(x2*y3-x3*y2);if(Math.abs(det)<1e-9)return null;
   const solve=v=>[(v[0]*(y2-y3)-y1*(v[1]-v[2])+(v[1]*y3-v[2]*y2))/det,(x1*(v[1]-v[2])-v[0]*(x2-x3)+(x2*v[2]-x3*v[1]))/det,(x1*(y2*v[2]-y3*v[1])-y1*(x2*v[2]-x3*v[1])+v[0]*(x2*y3-x3*y2))/det];
   const X=solve(dst.map(p=>p[0])),Y=solve(dst.map(p=>p[1]));return p=>[X[0]*p[0]+X[1]*p[1]+X[2],Y[0]*p[0]+Y[1]*p[1]+Y[2]]}
-$('#cQ3').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');if(q3){q3=null}else{if(Object.keys(cur.ceph.pts).length&&!confirm('Quick place replaces the landmarks already placed. Continue?'))return;q3=[]}
+$('#cQ3').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');if(measMode)setMeasMode(measMode);if(q3){q3=null}else{if(Object.keys(cur.ceph.pts).length&&!confirm('Quick place replaces the landmarks already placed. Continue?'))return;q3=[]}
   calMode=false;$('#cCal').setAttribute('aria-pressed',false);e.target.setAttribute('aria-pressed',!!q3);renderLm();cephView.draw()};
 function q3Tap(q){q3.push(q);if(q3.length<3){renderLm();cephView.draw();return}
   const f=affine3(Q3.map(k=>TPL[k]),q3);q3=null;$('#cQ3').setAttribute('aria-pressed',false);if(!f){toast('Those three points are in a line — try again');renderLm();return}
@@ -1136,6 +1195,7 @@ $('#qOut').onclick=e=>{const i=e.target.dataset.save;if(i==null)return;const x=l
 $('#printBtn').onclick=async()=>{const a=analyze(cur),pt=cur.pt;let h=`<h1>Orthodontic assessment — ${esc(pt.name||'')}</h1><div>${esc([pt.file&&'File '+pt.file,a.A!=null&&a.A+' years',pt.sex&&(pt.sex==='F'?'Female':'Male'),pt.recDate&&'Records '+pt.recDate].filter(Boolean).join(' · '))}</div>`;
   if(pt.cc)h+=`<p><b>Chief complaint:</b> ${esc(pt.cc)}</p>`;h+=`<h2>Diagnosis</h2><p>${esc(a.summary)}</p><ul>${a.F.map(f=>`<li>${esc(f.a)}: ${esc(f.t)}</li>`).join('')}</ul><h2>Problem list</h2><ol>${a.P.map(p=>`<li>${esc(p)}</li>`).join('')}</ol>`;
   const M=a.M.filter(m=>m.v!=null);if(M.length)h+=`<h2>Cephalometric values</h2><table><tr><th>Measure</th><th>Value</th><th>Norm</th><th></th></tr>${M.map(m=>`<tr><td>${esc(m.name)}</td><td>${r1(m.v)} ${m.unit}</td><td>${m.norm} ± ${m.sd}</td><td>${esc(m.txt)}</td></tr>`).join('')}</table>`;
+  const RM=(cur.ceph.meas||[]).map(measLabel);if(RM.length)h+=`<h2>Measurements on the ceph</h2><ol>${RM.map(t=>`<li>${esc(t)}</li>`).join('')}</ol>`;
   if(cephView.img){try{h+=`<h2>Ceph tracing</h2><img src="${$('#cCv').toDataURL('image/jpeg',0.85)}">`}catch(e){}}
   const sel=a.O.filter(o=>cur.plan.sel.includes(o.id));h+=`<h2>Treatment plan</h2>`+(cur.plan.text?`<pre style="white-space:pre-wrap;font:inherit">${esc(cur.plan.text)}</pre>`:sel.map(o=>`<div class="opt"><b>${esc(o.title)}</b><ul>${o.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>`).join('')||'<p>Not yet chosen.</p>');
   if(cur.plan.refs.length)h+=`<h2>References</h2><ol>${cur.plan.refs.map(r=>`<li>${esc(r.t)} — ${esc(r.m)} ${esc(r.u)}</li>`).join('')}</ol>`;
