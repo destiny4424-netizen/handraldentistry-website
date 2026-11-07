@@ -489,7 +489,8 @@ CEPH_MODEL = os.environ.get("CLINIC_CEPH_MODEL", "claude-opus-5-5")
 CEPH_LANDMARKS = [
     ("S", "Sella: centre of the sella turcica"), ("N", "Nasion: most anterior point of the fronto-nasal suture"),
     ("Or", "Orbitale: lowest point on the inferior margin of the orbit"), ("Po", "Porion: top of the external auditory meatus"),
-    ("Co", "Condylion: most postero-superior point on the mandibular condyle"), ("ANS", "Tip of the anterior nasal spine"),
+    ("Co", "Condylion: most postero-superior point on the mandibular condyle"),
+    ("Ar", "Articulare: where the posterior border of the ramus crosses the inferior border of the cranial base"), ("ANS", "Tip of the anterior nasal spine"),
     ("PNS", "Tip of the posterior nasal spine"), ("A", "Point A: deepest point on the anterior concavity of the maxilla"),
     ("B", "Point B: deepest point on the anterior concavity of the mandibular symphysis"),
     ("Pog", "Pogonion: most anterior point of the bony chin"), ("Gn", "Gnathion: midway between pogonion and menton on the symphysis"),

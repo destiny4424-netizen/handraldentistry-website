@@ -11,7 +11,9 @@
 <title>Ortho Assess</title>
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--ink:#16202a;--mute:#5f6b78;--line:#dce1e6;--accent:#1d4ed8;--accent-ink:#fff;--soft:#1d4ed814;--ok:#15803d;--warn:#b45309;--bad:#b42318;--canvas:#0b0f14}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1318;--card:#161e25;--ink:#e6ecf1;--mute:#93a0ad;--line:#2a343d;--accent:#60a5fa;--accent-ink:#06162e;--soft:#60a5fa1f;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0e1318;--card:#161e25;--ink:#e6ecf1;--mute:#93a0ad;--line:#2a343d;--accent:#60a5fa;--accent-ink:#06162e;--soft:#60a5fa1f;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+:root[data-theme=dark]{--bg:#0e1318;--card:#161e25;--ink:#e6ecf1;--mute:#93a0ad;--line:#2a343d;--accent:#60a5fa;--accent-ink:#06162e;--soft:#60a5fa1f;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
@@ -150,7 +152,8 @@ dialog::backdrop{background:#000a}
     <select id="caseSel" class="btn" aria-label="Case"></select>
     <button class="btn primary" id="newCase">+ New case</button>
     <label class="btn" title="Photos, scans, X-rays — any format, several at once"><input type="file" id="addAny" multiple hidden>⬆ Add files</label>
-    <button class="btn" id="printBtn">Print report</button>
+    <button class="btn" id="printBtn" title="Save as PDF or print">⬇ Export PDF</button>
+    <button class="btn" id="themeBtn" title="Light / dark mode" aria-label="Light or dark mode">◐</button>
     <button class="btn" id="moreBtn" aria-label="More">⋯</button>
   </div>
   <nav id="tabs" role="tablist">
@@ -318,12 +321,15 @@ dialog::backdrop{background:#000a}
     <button class="btn sm primary" id="cAI" title="Find all landmarks with Claude AI">✨ Auto-detect</button>
     <button class="btn sm" id="cQ3" aria-pressed="false" title="Tap S, N and Me — the rest are placed from an average skull">Quick place (3 taps)</button>
     <button class="btn sm" id="cOK" hidden>✓ Accept all</button>
+    <label class="note" title="Run ✨ Auto-detect as soon as a ceph is uploaded"><input type="checkbox" id="cInst"> ⚡ Instant</label>
+    <select class="btn sm" id="cAnal" aria-label="Analysis"></select>
     <button class="btn sm" id="cCal" aria-pressed="false">Calibrate (ruler)</button>
     <label class="note">mm / pixel <input type="number" step="0.0001" data-k="ceph.mmpp" style="width:90px" class="btn sm"></label>
     <label class="note">☀︎ <input type="range" id="cBri" min="0.4" max="2" step="0.05" value="1"></label>
     <label class="note">◐ <input type="range" id="cCon" min="0.4" max="2.5" step="0.05" value="1"></label>
     <button class="btn sm" id="cInv" aria-pressed="false">Invert</button>
     <button class="btn sm" id="cTrace" aria-pressed="true">Tracing</button>
+    <button class="btn sm" id="cGrid" aria-pressed="false" title="10 mm grid (needs calibration)">Grid</button>
     <span class="muted">|</span>
     <button class="btn sm" id="cRul" aria-pressed="false" title="Tap two points — the distance is drawn on the X-ray">📏 Ruler</button>
     <button class="btn sm" id="cAng" aria-pressed="false" title="Tap three points: end, corner, end">∠ Angle</button>
@@ -346,8 +352,8 @@ dialog::backdrop{background:#000a}
       <option value="CS6">CS6 – C3 or C4 rectangular vertical; growth essentially complete</option>
     </select></label>
   </div>
-  <h2>Cephalometric analysis</h2>
-  <p class="note">Steiner, Downs, Tweed, McNamara, Jarabak, Ricketts E-line and Holdaway values. Millimetre values need calibration. Norms are for adult Caucasian samples — adjust for ethnicity and age.</p>
+  <h2 class="row" style="justify-content:space-between">Cephalometric analysis <select class="btn sm" id="cAnal2" aria-label="Analysis"></select></h2>
+  <p class="note" id="analNote">Millimetre values need calibration. Norms are for adult Caucasian samples — adjust for ethnicity and age.</p>
   <div class="card wrapx" id="cephTable"></div>
 </section>
 
@@ -443,6 +449,11 @@ dialog::backdrop{background:#000a}
 
 <script>
 'use strict';
+/* light / dark mode: Auto follows the device */
+const THEMES=['auto','light','dark'];
+function applyTheme(t){if(t==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t)}
+function getTheme(){let t=null;try{t=localStorage.getItem('oa-theme')}catch(e){}return THEMES.includes(t)?t:'auto'}
+applyTheme(getTheme());
 /* ---------- utilities ---------- */
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -668,13 +679,14 @@ function imgControls(view,p){$('#'+p+'Bri').oninput=e=>{view.bri=+e.target.value
 async function setXray(which,f,view){try{const d=await decodeImage(f);if(which==='ceph'&&Object.keys(cur.ceph.pts).length&&!confirm('Keep the landmarks already placed? (Cancel clears them)')){cur.ceph.pts={};cur.ceph.auto={}}await storeXray(which,d,view)}catch(e){toast(f.name+': '+e.message)}}
 async function storeXray(which,d,view){const old=cur[which].img;const k='b:'+uid();await DB.putBlob(k,d.blob);cur[which].img=k;
   if(which==='ceph'){if(d.mmpp&&!num(cur.ceph.mmpp)){cur.ceph.mmpp=d.mmpp;$('[data-k="ceph.mmpp"]').value=d.mmpp;toast('Calibration read from the DICOM file: '+d.mmpp+' mm/pixel — check it against the ruler')}lmIdx=nextMissing(0);renderLm();renderCephTable()}if(old){await DB.delBlob(old);if(urlCache.has(old)){URL.revokeObjectURL(urlCache.get(old));urlCache.delete(old)}}
-  saveNow();try{view.setImage(await loadImg(await blobURL(k)))}catch(e){toast(e.message)}updDots()}
+  saveNow();try{view.setImage(await loadImg(await blobURL(k)))}catch(e){toast(e.message)}updDots();
+  if(which==='ceph'&&view.img&&$('#cInst').checked&&!Object.keys(cur.ceph.pts).length)setTimeout(()=>$('#cAI').onclick(),50)}
 
 /* ---------- cephalometrics ---------- */
 const LMS=[
  ['S','Sella','Centre of the sella turcica'],['N','Nasion','Most anterior point of the fronto-nasal suture'],
  ['Or','Orbitale','Lowest point on the inferior orbital margin'],['Po','Porion','Top of the external auditory meatus'],
- ['Co','Condylion','Most postero-superior point on the condyle'],['ANS','ANS','Tip of the anterior nasal spine'],['PNS','PNS','Tip of the posterior nasal spine'],
+ ['Co','Condylion','Most postero-superior point on the condyle'],['Ar','Articulare','Where the back of the ramus crosses the base of the skull'],['ANS','ANS','Tip of the anterior nasal spine'],['PNS','PNS','Tip of the posterior nasal spine'],
  ['A','Point A','Deepest point on the anterior maxilla'],['B','Point B','Deepest point on the anterior mandible'],
  ['Pog','Pogonion','Most anterior point of the bony chin'],['Gn','Gnathion','Midway between pogonion and menton'],['Me','Menton','Lowest point of the symphysis'],
  ['Go','Gonion','Most outward point on the angle of the mandible'],
@@ -725,8 +737,41 @@ function cephMeasures(c){
   add('Soft tissue','LLE','Lower lip to E-line',['Li','Prn','PogS'],()=>perp(p.Li,p.Prn,p.PogS),'mm',-2,2,'Retrusive lower lip','Protrusive lower lip');
   add('Soft tissue','NLA','Nasolabial angle',['Cm','Sn','Ls'],()=>at('Cm','Sn','Ls'),'°',102,8,'Acute (protrusive)','Obtuse (retrusive)');
   add('Soft tissue','H','Holdaway H angle',['Ls','PogS','N','B'],()=>lineAng(sub(p.Ls,p.PogS),sub(p.N,p.B)),'°',10,3,'Flat / concave soft tissue','Convex soft tissue');
+  const OPd=()=>{let d=nrm(sub(mid(p.U1T,p.L1T),p.Mo));return dot(d,ant)<0?[-d[0],-d[1]]:d};
+  add('Skeletal – sagittal','NAPog','Angle of convexity (N-A-Pog)',['N','A','Pog'],()=>(180-at('N','A','Pog'))*(perp(p.A,p.N,p.Pog)>=0?1:-1),'°',0,5,'Concave (Class III) profile','Convex (Class II) profile');
+  add('Skeletal – sagittal','ABpl','A-B plane angle',['A','B','N','Pog'],()=>lineAng(sub(p.B,p.A),sub(p.Pog,p.N))*(perp(p.B,p.N,p.Pog)>=perp(p.A,p.N,p.Pog)?1:-1),'°',-4.6,3.7,'Class II tendency','Class III tendency');
+  add('Skeletal – sagittal','PogNB','Pog to NB (mm)',['Pog','N','B'],()=>perp(p.Pog,p.N,p.B),'mm',2,2,'Weak chin','Prominent chin');
+  add('Skeletal – vertical','SNPP','SN – maxillary plane',['S','N','ANS','PNS'],()=>lineAng(sub(p.N,p.S),sub(p.ANS,p.PNS)),'°',8,3,'Maxilla tipped up anteriorly','Maxilla tipped down anteriorly');
+  add('Skeletal – vertical','OPFH','Cant of occlusal plane (OP–FH)',['Mo','U1T','L1T','Po','Or'],()=>lineAng(OPd(),sub(p.Or,p.Po)),'°',9.3,3.8,'Flat occlusal plane','Steep occlusal plane');
+  add('Skeletal – vertical','Saddle','Saddle angle (N–S–Ar)',['N','S','Ar'],()=>at('N','S','Ar'),'°',123,5,'Forward-placed mandible','Backward-placed mandible');
+  add('Skeletal – vertical','Artic','Articular angle (S–Ar–Go)',['S','Ar','Go'],()=>at('S','Ar','Go'),'°',143,6,'Horizontal tendency','Vertical tendency');
+  add('Skeletal – vertical','Gon','Gonial angle (Ar–Go–Me)',['Ar','Go','Me'],()=>at('Ar','Go','Me'),'°',130,7,'Horizontal growth','Vertical growth');
+  add('Skeletal – vertical','Bjork','Björk sum (saddle + articular + gonial)',['N','S','Ar','Go','Me'],()=>at('N','S','Ar')+at('S','Ar','Go')+at('Ar','Go','Me'),'°',396,6,'Horizontal (counter-clockwise) grower','Vertical (clockwise) grower');
+  add('Skeletal – vertical','LAFHmm','Lower face height (ANS–Me)',['ANS','Me'],()=>len(sub(p.Me,p.ANS)),'mm',sex==='M'?74:67,4,'Short lower face','Long lower face');
+  add('Dental','U1PP','U1 – maxillary plane',['U1T','U1A','ANS','PNS'],()=>ang(sub(p.U1T,p.U1A),sub(p.PNS,p.ANS)),'°',109,6,'Retroclined upper incisors','Proclined upper incisors');
+  add('Dental','L1OP','L1 – occlusal plane',['L1T','L1A','Mo','U1T'],()=>90-ang(sub(p.L1T,p.L1A),OPd()),'°',14.5,3.5,'Retroclined to occlusal plane','Proclined to occlusal plane');
+  add('Dental','U1APog','U1 to A-Pog (mm)',['U1T','A','Pog'],()=>perp(p.U1T,p.A,p.Pog),'mm',2.7,1.8,'Retrusive upper incisor','Protrusive upper incisor');
+  add('Dental','L1APog','L1 to A-Pog (mm)',['L1T','A','Pog'],()=>perp(p.L1T,p.A,p.Pog),'mm',1,2,'Retrusive lower incisor','Protrusive lower incisor');
   for(const m of out)if(m.v!=null){const z=(m.v-m.norm)/m.sd;m.z=z;m.st=Math.abs(z)<=1?'ok':Math.abs(z)<=2?'warn':'bad';m.txt=Math.abs(z)<=1?'Within normal':z>0?m.hi:m.lo}
   return out}
+/* analysis presets: which measurements, in what order, with which norms */
+const ANALYSES={
+  all:{name:'All measurements',keys:null},
+  steiner:{name:'Steiner',keys:['SNA','SNB','ANB','SNMP','U1NAa','U1NAm','L1NBa','L1NBm','PogNB','II','OPFH']},
+  downs:{name:'Downs',keys:['FacAng','NAPog','ABpl','FMA','Yax','OPFH','II','L1OP','IMPA','U1APog'],norms:{IMPA:[91.4,3.8],II:[135.4,5.8]}},
+  tweed:{name:'Tweed',keys:['FMA','IMPA','FMIA']},
+  mcnamara:{name:'McNamara',keys:['ANp','PNp','CoA','CoGn','MxMd','LAFHmm','L1APog']},
+  eastman:{name:'Eastman',keys:['SNA','SNB','ANB','SNPP','PPMP','U1PP','IMPA','II','LAFH'],norms:{SNA:[81,3],SNB:[78,3],ANB:[3,2],PPMP:[27,4],IMPA:[93,6],II:[135,10]},names:{PPMP:'MMPA (maxillary–mandibular planes)'}},
+  jarabak:{name:'Jarabak / Björk',keys:['Saddle','Artic','Gon','Bjork','Jar','SNMP','FMA','Yax','LAFH','LAFHmm']},
+  ricketts:{name:'Ricketts (selected)',keys:['FacAng','NAPog','L1APog','ULE','LLE']},
+  soft:{name:'Soft tissue (Holdaway, E-line)',keys:['ULE','LLE','NLA','H']}};
+function curAnalysis(){let k=null;try{k=localStorage.getItem('oa-analysis')}catch(e){}return ANALYSES[k]?k:'all'}
+function analysisView(M,key=curAnalysis()){const A=ANALYSES[key];if(!A.keys)return M;const by=Object.fromEntries(M.map(m=>[m.key,m]));
+  return A.keys.map(k=>by[k]).filter(Boolean).map(m0=>{const m={...m0};const nn=A.norms&&A.norms[m.key];if(A.names&&A.names[m.key])m.name=A.names[m.key];
+    if(nn){m.norm=nn[0];m.sd=nn[1];if(m.v!=null){const z=(m.v-m.norm)/m.sd;m.z=z;m.st=Math.abs(z)<=1?'ok':Math.abs(z)<=2?'warn':'bad';m.txt=Math.abs(z)<=1?'Within normal':z>0?m.hi:m.lo}}return m})}
+function fillAnalysisSelects(){const k=curAnalysis(),o=Object.entries(ANALYSES).map(([v,a])=>`<option value="${v}" ${v===k?'selected':''}>${esc(a.name)}</option>`).join('');for(const id of['cAnal','cAnal2'])$('#'+id).innerHTML=o}
+function setAnalysis(k){try{localStorage.setItem('oa-analysis',k)}catch(e){}fillAnalysisSelects();renderCephTable();cephView.draw()}
+$('#cAnal').onchange=e=>setAnalysis(e.target.value);$('#cAnal2').onchange=e=>setAnalysis(e.target.value);
 let lmIdx=0,calMode=false,calPts=[];
 function nextMissing(from){for(let i=0;i<LMS.length;i++){const j=(from+i)%LMS.length;if(!cur.ceph.pts[LMS[j][0]])return j}return Math.min(from,LMS.length-1)}
 function renderLm(){$('#lmList').innerHTML=LMS.map(([k,n,d],i)=>`<div class="lm ${i===lmIdx?'cur':''}" data-i="${i}"><b>${k}</b><span class="d"><span style="color:var(--ink)">${esc(n)}</span><br>${esc(d)}</span>${cur.ceph.auto&&cur.ceph.auto[k]?`<span class="au ${cur.ceph.auto[k]==='low'?'low':''}">${cur.ceph.auto[k]==='tpl'?'draft':'auto'}</span>`:''}${cur.ceph.pts[k]?`<span class="ok">${cur.ceph.auto&&cur.ceph.auto[k]?'?':'✓'}</span><button class="btn sm" data-clr="${k}" title="Remove">×</button>`:''}</div>`).join('');
@@ -740,7 +785,7 @@ const cephView=new ImgView($('#cStage'),$('#cCv'),{empty:$('#cEmpty'),
       if(mm>0&&px>0){cur.ceph.mmpp=+(mm/px).toFixed(5);$('[data-k="ceph.mmpp"]').value=cur.ceph.mmpp;save();toast('Calibrated: '+cur.ceph.mmpp+' mm per pixel')}calMode=false;calPts=[];$('#cCal').setAttribute('aria-pressed',false);renderCephTable()}
       renderLm();cephView.draw();return}
     cur.ceph.pts[LMS[lmIdx][0]]=q.map(r1);delete cur.ceph.auto[LMS[lmIdx][0]];save();lmIdx=nextMissing(lmIdx+1);renderLm();renderCephTable();cephView.draw()},
-  overlay:(c,v)=>{const P=cur.ceph.pts,d=v.dpr;c.lineWidth=1.5*d;
+  overlay:(c,v)=>{const P=cur.ceph.pts,d=v.dpr;if(v.grid)drawGrid(c,v);c.lineWidth=1.5*d;
     if(cephView.trace!==false){c.strokeStyle='#38bdf8cc';for(const[a,b]of LINES)if(P[a]&&P[b]){const A=v.toScr(P[a]),B=v.toScr(P[b]);c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke()}
       if(P.U1T&&P.L1T&&P.Mo){c.strokeStyle='#a78bfacc';const A=v.toScr(P.Mo),B=v.toScr(mid(P.U1T,P.L1T));c.beginPath();c.moveTo(A[0],A[1]);c.lineTo(B[0],B[1]);c.stroke()}}
     c.font=`${11*d}px sans-serif`;for(const k in P){const[x,y]=v.toScr(P[k]);const on=LMS[lmIdx]&&LMS[lmIdx][0]===k,au=cur.ceph.auto[k];c.fillStyle=on?'#facc15':au==='low'?'#f97316':au?'#22d3ee':'#f43f5e';c.beginPath();c.arc(x,y,(on?5:4)*d,0,7);c.fill();c.fillStyle='#fff';c.strokeStyle='#000';c.lineWidth=3*d;c.strokeText(k,x+6*d,y-6*d);c.fillText(k,x+6*d,y-6*d);c.lineWidth=1.5*d}
@@ -748,6 +793,15 @@ const cephView=new ImgView($('#cStage'),$('#cCv'),{empty:$('#cEmpty'),
     for(const q of calPts){const[x,y]=v.toScr(q);c.strokeStyle='#22c55e';c.beginPath();c.arc(x,y,7*d,0,7);c.stroke()}
     drawMeasures(c,v);drawDragValues(c,v);drawLoupe(c,v)}});
 imgControls(cephView,'c');
+$('#themeBtn').onclick=()=>{const t=THEMES[(THEMES.indexOf(getTheme())+1)%3];try{localStorage.setItem('oa-theme',t)}catch(e){}applyTheme(t);$('#themeBtn').textContent=t==='light'?'☀︎':t==='dark'?'☾':'◐';toast(t==='auto'?'Theme: follows the device':t==='light'?'Light mode':'Dark mode')};
+$('#themeBtn').textContent={light:'☀︎',dark:'☾',auto:'◐'}[getTheme()];
+function drawGrid(c,v){const mm=num(cur.ceph.mmpp),step=mm?10/mm:100,d=v.dpr,W=v.img.width,H=v.img.height;c.save();c.lineWidth=1*d;c.strokeStyle='#38bdf855';c.beginPath();
+  for(let x=0;x<=W;x+=step){const[a,b]=v.toScr([x,0]),[,e]=v.toScr([x,H]);c.moveTo(a,b);c.lineTo(a,e)}for(let y=0;y<=H;y+=step){const[a,b]=v.toScr([0,y]),[f]=v.toScr([W,y]);c.moveTo(a,b);c.lineTo(f,b)}c.stroke();
+  c.fillStyle='#38bdf8';c.font=`${10*d}px sans-serif`;const[gx,gy]=v.toScr([0,0]);c.fillText(mm?'grid 10 mm':'grid 100 px — calibrate for mm',gx+4*d,gy+12*d);c.restore()}
+$('#cGrid').onclick=e=>{cephView.grid=!cephView.grid;e.target.setAttribute('aria-pressed',cephView.grid);if(cephView.grid&&!num(cur.ceph.mmpp))toast('Calibrate first for a 10 mm grid');cephView.draw()};
+try{$('#cInst').checked=localStorage.getItem('oa-instant')==='1'}catch(e){}
+$('#cInst').onchange=e=>{try{localStorage.setItem('oa-instant',e.target.checked?'1':'0')}catch(err){}if(e.target.checked)toast('⚡ Instant on: ✨ Auto-detect will run as soon as a ceph is uploaded')};
+fillAnalysisSelects();
 /* ---------- ceph measuring: ruler, angle, live values, magnifier ---------- */
 let measMode=null,measPts=[],liveRaf=0,liveKey=null,liveM=[];
 const KEY_VALUES=['SNA','SNB','ANB','Wits','FMA','SNMP','U1SN','IMPA','II','ULE','LLE','NLA'];
@@ -785,8 +839,8 @@ function drawLoupe(c,v){if(v.mag===false||!v.cursor||!v.img||(v.moved&&!v.drag))
   c.strokeStyle='#facc15';c.lineWidth=1*d;c.beginPath();c.moveTo(cx-R,cy);c.lineTo(cx-5*d,cy);c.moveTo(cx+5*d,cy);c.lineTo(cx+R,cy);c.moveTo(cx,cy-R);c.lineTo(cx,cy-5*d);c.moveTo(cx,cy+5*d);c.lineTo(cx,cy+R);c.stroke();
   c.restore();c.strokeStyle='#fff';c.lineWidth=2*d;c.beginPath();c.arc(cx,cy,R,0,7);c.stroke()}
 function liveSoon(k){liveKey=k;liveM=cephMeasures(cur);if(liveRaf)return;liveRaf=requestAnimationFrame(()=>{liveRaf=0;renderLive(liveKey)})}
-function renderLive(k){if(!cur)return;if(!k)liveM=cephMeasures(cur);const by=Object.fromEntries(liveM.map(m=>[m.key,m]));
-  const dep=k?liveM.filter(m=>m.ks.includes(k)):[],keys=[...new Set([...dep.map(m=>m.key),...KEY_VALUES])];
+function renderLive(k){if(!cur)return;if(!k)liveM=cephMeasures(cur);const by=Object.fromEntries(analysisView(liveM,'all').map(m=>[m.key,m]));for(const m of analysisView(liveM))by[m.key]=m;
+  const dep=k?liveM.filter(m=>m.ks.includes(k)):[],keys=[...new Set([...dep.map(m=>m.key),...(ANALYSES[curAnalysis()].keys||KEY_VALUES)])];
   const row=m=>`<div class="lv ${k&&m.ks.includes(k)?'hot':''}"><span class="d" style="background:${m.v==null?'var(--line)':m.st==='ok'?'var(--ok)':m.st==='warn'?'var(--warn)':'var(--bad)'}"></span><span class="n">${esc(m.name)}</span><span class="v">${m.v==null?'—':r1(m.v)+(m.unit==='°'?'°':' '+m.unit)}</span></div>`;
   let h=`<h4><span>${k?'Changing with '+esc(k):'Live values'}</span></h4>`+keys.map(x=>by[x]).filter(Boolean).map(row).join('');
   const ms=cur.ceph.meas||[];h+=`<h4 style="margin-top:8px"><span>Ruler & angles</span></h4>`+(ms.length?ms.map((m,i)=>`<div class="lv"><span class="n">${m.t==='d'?'📏 Distance':'∠ Angle'} ${i+1}</span><span class="v">${esc(measLabel(m))}</span><button data-dm="${i}" title="Delete">×</button></div>`).join(''):'<div class="note">Press 📏 Ruler or ∠ Angle and tap on the X-ray.</div>');
@@ -797,15 +851,15 @@ $('#cTrace').onclick=e=>{cephView.trace=cephView.trace===false;e.target.setAttri
 $('#cCal').onclick=e=>{if(!cephView.img)return toast('Upload the ceph first');if(measMode)setMeasMode(measMode);q3=null;$('#cQ3').setAttribute('aria-pressed',false);calMode=!calMode;calPts=[];e.target.setAttribute('aria-pressed',calMode);renderLm();cephView.draw()};
 $('#upCeph').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)await setXray('ceph',f,cephView)};
 function tagFor(m){return m.v==null?`<span class="tag t-mute">${esc(m.why)}</span>`:`<span class="tag t-${m.st}">${esc(m.txt)}</span>`}
-function renderCephTable(){if(!cur)return;const M=cephMeasures(cur);let g='',h='<table><tr><th>Measurement</th><th style="text-align:right">Value</th><th style="text-align:right">Norm</th><th>Interpretation</th></tr>';
+function renderCephTable(){if(!cur)return;const M=analysisView(cephMeasures(cur));const an=ANALYSES[curAnalysis()];$('#analNote').textContent=(an.keys?an.name+' analysis. ':'')+'Millimetre values need calibration. Norms are for adult Caucasian samples — adjust for ethnicity and age.';let g='',h='<table><tr><th>Measurement</th><th style="text-align:right">Value</th><th style="text-align:right">Norm</th><th>Interpretation</th></tr>';
   for(const m of M){if(m.g!==g){g=m.g;h+=`<tr><td colspan="4" style="font-weight:700;padding-top:12px">${esc(g)}</td></tr>`}
     h+=`<tr><td>${esc(m.name)}</td><td class="n">${m.v==null?'—':r1(m.v)+' '+m.unit}</td><td class="n muted">${m.norm} ± ${m.sd}</td><td>${tagFor(m)}</td></tr>`}
   $('#cephTable').innerHTML=h+'</table>';if(typeof renderLive==='function'&&cur.ceph.meas)renderLive(null)}
 
 /* ---------- automatic landmarks ---------- */
 // Average adult skull (mm, facing right), tuned so its own values sit near the norms. Used by "Quick place".
-const TPL={S:[0,0],N:[69,-9],Or:[58,20],Po:[-12,20],Co:[-10,14],ANS:[73,44],PNS:[22,46],A:[69,52],B:[65,90],Pog:[67,102],Gn:[64,107],Me:[58,111],Go:[-8,80],
-  U1T:[73,75],U1A:[64,51],L1T:[70,73],L1A:[60,94],Mo:[38,74],Prn:[98,32],Cm:[91,43],Sn:[84,47],Ls:[86,62],Li:[84,78],PogS:[79,105]};
+const TPL={S:[0,0],N:[69,-9],Or:[58,20],Po:[-12,20],Co:[-10,14],Ar:[-15,32],ANS:[73,44],PNS:[22,46],A:[69,52],B:[65,90],Pog:[67,102],Gn:[64,107],Me:[58,111],Go:[-8,80],
+  U1T:[73,75],U1A:[64,51],L1T:[70,73],L1A:[60,94],Mo:[38,69],Prn:[98,32],Cm:[91,43],Sn:[84,47],Ls:[86,62],Li:[84,78],PogS:[79,105]};
 const Q3=['S','N','Me'];let q3=null;
 function affine3(src,dst){// solve x' = a x + b y + c, y' = d x + e y + f from three point pairs
   const[[x1,y1],[x2,y2],[x3,y3]]=src,det=x1*(y2-y3)-y1*(x2-x3)+(x2*y3-x3*y2);if(Math.abs(det)<1e-9)return null;
@@ -1194,7 +1248,7 @@ $('#qOut').onclick=e=>{const i=e.target.dataset.save;if(i==null)return;const x=l
 /* ---------- printable report ---------- */
 $('#printBtn').onclick=async()=>{const a=analyze(cur),pt=cur.pt;let h=`<h1>Orthodontic assessment — ${esc(pt.name||'')}</h1><div>${esc([pt.file&&'File '+pt.file,a.A!=null&&a.A+' years',pt.sex&&(pt.sex==='F'?'Female':'Male'),pt.recDate&&'Records '+pt.recDate].filter(Boolean).join(' · '))}</div>`;
   if(pt.cc)h+=`<p><b>Chief complaint:</b> ${esc(pt.cc)}</p>`;h+=`<h2>Diagnosis</h2><p>${esc(a.summary)}</p><ul>${a.F.map(f=>`<li>${esc(f.a)}: ${esc(f.t)}</li>`).join('')}</ul><h2>Problem list</h2><ol>${a.P.map(p=>`<li>${esc(p)}</li>`).join('')}</ol>`;
-  const M=a.M.filter(m=>m.v!=null);if(M.length)h+=`<h2>Cephalometric values</h2><table><tr><th>Measure</th><th>Value</th><th>Norm</th><th></th></tr>${M.map(m=>`<tr><td>${esc(m.name)}</td><td>${r1(m.v)} ${m.unit}</td><td>${m.norm} ± ${m.sd}</td><td>${esc(m.txt)}</td></tr>`).join('')}</table>`;
+  const M=analysisView(a.M).filter(m=>m.v!=null);if(M.length)h+=`<h2>Cephalometric values — ${esc(ANALYSES[curAnalysis()].name)}</h2><table><tr><th>Measure</th><th>Value</th><th>Norm</th><th></th></tr>${M.map(m=>`<tr><td>${esc(m.name)}</td><td>${r1(m.v)} ${m.unit}</td><td>${m.norm} ± ${m.sd}</td><td>${esc(m.txt)}</td></tr>`).join('')}</table>`;
   const RM=(cur.ceph.meas||[]).map(measLabel);if(RM.length)h+=`<h2>Measurements on the ceph</h2><ol>${RM.map(t=>`<li>${esc(t)}</li>`).join('')}</ol>`;
   if(cephView.img){try{h+=`<h2>Ceph tracing</h2><img src="${$('#cCv').toDataURL('image/jpeg',0.85)}">`}catch(e){}}
   const sel=a.O.filter(o=>cur.plan.sel.includes(o.id));h+=`<h2>Treatment plan</h2>`+(cur.plan.text?`<pre style="white-space:pre-wrap;font:inherit">${esc(cur.plan.text)}</pre>`:sel.map(o=>`<div class="opt"><b>${esc(o.title)}</b><ul>${o.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>`).join('')||'<p>Not yet chosen.</p>');

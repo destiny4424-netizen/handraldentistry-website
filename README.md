@@ -8,7 +8,7 @@
 - `ortho/` — Ortho Assess: orthodontic case assessment (handraldentistry.com/ortho). Tabs to add patient
   photographs, upper/lower 3D scans, lateral ceph and OPG — or drop a mixed batch on ⬆ Add files and it sorts
   them. Opens JPEG, HEIC (iPhone), PNG, TIFF, BMP, WebP, PDF and DICOM pictures, and STL/OBJ/PLY scans or a ZIP of
-  them. Ceph landmarks: ✨ Auto-detect finds all 24 with Claude AI through the clinic server (uses the key saved in
+  them. Ceph landmarks: ✨ Auto-detect finds all 25 with Claude AI through the clinic server (uses the key saved in
   the clinic app; sign in with a clinic login), or Quick place puts them from an average skull after 3 taps
   (S, N, Me); drag each point to correct it. Landmarks give Steiner,
   Downs, Tweed, McNamara, Jarabak, E-line and Holdaway values; measure tooth widths on the 3D scans for Bolton and
