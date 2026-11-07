@@ -5,7 +5,9 @@
 - `clinic/` — Staff clinic management app (handraldentistry.com/clinic). Records are kept in the cloud
   on the droplet (see "Handral Clinic cloud" below), so every tablet, phone and laptop that signs in
   sees the same patients, appointments and bills. Booking requests from the website appear on its Today page.
-- `ortho/` — Ortho Assess: orthodontic case assessment (handraldentistry.com/ortho). Tabs to add patient
+- `ortho/` — **moved** to its own repository, destiny4424-netizen/ortho-assess
+  (https://destiny4424-netizen.github.io/ortho-assess/). The old page here shows a notice with an
+  Export all cases button and will be removed. Previously: Ortho Assess, orthodontic case assessment (handraldentistry.com/ortho). Tabs to add patient
   photographs, upper/lower 3D scans, lateral ceph and OPG — or drop a mixed batch on ⬆ Add files and it sorts
   them. Opens JPEG, HEIC (iPhone), PNG, TIFF, BMP, WebP, PDF and DICOM pictures, and STL/OBJ/PLY scans or a ZIP of
   them. Ceph landmarks: ✨ Auto-detect finds all 25 with Claude AI using your own Claude key, saved only in that browser
