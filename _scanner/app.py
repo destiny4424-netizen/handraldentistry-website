@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "12 Nov · Phone alerts for intraday, swing and Bank Nifty option trades"
+VERSION = "12 Nov · Minimum score for intraday picks (Settings)"
 
 
 def load_env():
@@ -1478,6 +1478,9 @@ def scan_once():
     rcfg = risk.config(SETTINGS)
     TRADES.update(candles_by, book_now)                # up-to-date results before the risk check
     blocked = []
+    min_score = float(SETTINGS.get("intra_min_score") or 0)   # your minimum score (Settings); 0 = all
+    below = [c for c in top["picks"] if c["score"] < min_score]
+    top["picks"] = [c for c in top["picks"] if c["score"] >= min_score]
     for c in top["picks"]:
         add_event_info(c, ev, demo)
         key = (day_s, c["symbol"], c["side"])
@@ -1510,6 +1513,8 @@ def scan_once():
     fresh = {c["symbol"] for c in top["picks"]}
     top["picks"] = intraday_list(fresh)
     top["list"] = True
+    top["min_score"] = min_score
+    top["below"] = [{"symbol": c["symbol"], "side": c["side"], "score": c["score"]} for c in below]
     for c in top["picks"]:
         if c["symbol"] in candles_by:
             c["spark"] = [round(k["c"], 2) for k in candles_by[c["symbol"]][-60:]]
@@ -2028,6 +2033,7 @@ class Handler(BaseHTTPRequestHandler):
                             "has_pin": bool(SETTINGS.get("pin_hash")), "listening": HOST == "0.0.0.0",
                             "cloud": CLOUD, "public_url": PUBLIC_URL,
                             "picks_from": SETTINGS.get("intraday_from") or INTRADAY_FROM,
+                            "intra_min_score": int(SETTINGS.get("intra_min_score") or 0),
                             "risk": risk.config(SETTINGS),
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
@@ -2161,6 +2167,15 @@ class Handler(BaseHTTPRequestHandler):
                 if v is None or not lo <= v <= hi:
                     return self.send(400, {"error": f"Risk setting {k.replace('_', ' ')} must be between {lo:g} and {hi:g}."})
                 liq["risk_" + k] = int(v) if k in ("capital", "max_open", "max_trades", "btst_max") else v
+            ms = body.get("intra_min_score")
+            if ms not in (None, ""):
+                try:
+                    ms = float(ms)
+                except (TypeError, ValueError):
+                    ms = -1
+                if not 0 <= ms <= 100:
+                    return self.send(400, {"error": "The minimum intraday score must be between 0 and 100."})
+                liq["intra_min_score"] = int(ms)
             save_settings(intraday_from=t, **liq)
             WAKE.set()                                  # rescan so the change shows now
             return self.send(200, {"ok": True})
