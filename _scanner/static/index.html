@@ -519,10 +519,14 @@
       <div class="err" id="prefErr"></div>
     </div>
     <div class="sect">
-      <b style="font-size:14px">Phone alerts · Bank Nifty options</b>
-      <div class="hint">A notification when a Bank Nifty option setup is confirmed at 3 PM, when its entry triggers,
-      and at T1, T2, the stop or the time exit.</div>
+      <b style="font-size:14px">Phone alerts</b>
+      <div class="hint">A notification for every new pick, when its entry triggers, and at T1, T2, the stop or the exit.
+      Entries and exits are sent as urgent.</div>
       <label class="switch"><input type="checkbox" id="alOn"> Send me alerts</label>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin:4px 0 2px">
+        <label class="switch"><input type="checkbox" class="alKind" value="intra"> Intraday</label>
+        <label class="switch"><input type="checkbox" class="alKind" value="swing"> Swing (stocks)</label>
+        <label class="switch"><input type="checkbox" class="alKind" value="bnf"> Bank Nifty options</label></div>
       <label for="alVia">Send them by</label>
       <select id="alVia"><option value="ntfy">ntfy app (free, instant push notifications)</option><option value="whatsapp">WhatsApp via CallMeBot</option></select>
       <div id="alNtfy">
@@ -2356,6 +2360,7 @@ $("prefSave").onclick = async () => {
 function showAlerts(a) {
   if (!a) return;
   $("alOn").checked = a.on; $("alVia").value = a.via || "ntfy"; $("alTopic").value = a.topic || "";
+  document.querySelectorAll(".alKind").forEach(k => k.checked = (a.kinds || ["bnf", "swing", "intra"]).includes(k.value));
   $("waPhone").value = a.phone || "";
   $("waKey").value = ""; $("waKey").placeholder = a.has_key ? "Saved (leave empty to keep it)" : "The number CallMeBot sent you";
   $("alLog").innerHTML = (a.last || []).length ? "Last sent: " + a.last.map(x => `${esc(x.at)} ${x.ok ? "✓" : "✗"} ${esc(x.text)}`).join(" · ") : "";
@@ -2368,7 +2373,7 @@ $("alCopy").onclick = async () => { try { await navigator.clipboard.writeText($(
 $("alSave").onclick = async () => {
   $("alErr").style.color = ""; $("alErr").textContent = "";
   try {
-    await post("/api/alerts", { on: $("alOn").checked, via: $("alVia").value, topic: $("alTopic").value, phone: $("waPhone").value, key: $("waKey").value });
+    await post("/api/alerts", { on: $("alOn").checked, kinds: [...document.querySelectorAll(".alKind:checked")].map(k => k.value), via: $("alVia").value, topic: $("alTopic").value, phone: $("waPhone").value, key: $("waKey").value });
     await loadSettings();
     $("alErr").style.color = "var(--bull)"; $("alErr").textContent = $("alOn").checked ? "Saved. Alerts are on: tap Send test message to check." : "Saved. Alerts are off.";
   } catch (err) { $("alErr").textContent = err.message; }

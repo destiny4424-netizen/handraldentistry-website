@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "12 Nov · Phone alerts by ntfy (or WhatsApp) for Bank Nifty option trades"
+VERSION = "12 Nov · Phone alerts for intraday, swing and Bank Nifty option trades"
 
 
 def load_env():
@@ -462,18 +462,34 @@ def ntfy_topic():
     return SETTINGS["ntfy_topic"]
 
 
-def bnf_notify():
-    """WhatsApp: every new stage of a Bank Nifty trade (live data only)."""
+ALERT_KINDS = ("bnf", "swing", "intra")
+
+
+def alert_on(kind):
+    """Alerts switched on, and for this kind of trade (Bank Nifty options, swing, intraday)."""
+    return bool(alert_config()) and kind in SETTINGS.get("alert_kinds", ALERT_KINDS)
+
+
+def alert(kind, text):
+    if not DEMO and alert_on(kind):
+        notify.send(text, notify.priority_of(text))
+
+
+def book_notify(book, kind):
+    """Phone alert for every new stage of the trades in a book (live data only)."""
     if DEMO:
         return
     msgs = []
-    for r in BNFS.rows:
-        msgs += notify.bnf_alerts(r)
+    for r in book.rows:
+        msgs += notify.trade_alerts(r, kind)
     if msgs:
-        BNFS.save()
-        if alert_config():
-            for m in msgs:
-                notify.send(m, notify.priority_of(m))
+        book.save()
+        for m in msgs:
+            alert(kind, m)
+
+
+def bnf_notify():
+    book_notify(BNFS, "bnf")
 BNF_BT = {}                                            # "day" -> date, "cmp" -> rule variants on Bank Nifty history
 BTST_PICKS = {}                                        # symbol -> (swing pick, daily candles) for the chart
 FUT_DAILY = {}                                         # futures id -> (IST day, daily candles with OI)
@@ -1218,8 +1234,7 @@ def bank_nifty(demo, idx, swing_daily, ev, now_ts, open_, session_time):
                         BNFS.rows[-1].update(option=o["label"], opt_entry=o["entry"], opt_sl=o["sl"], opt_t1=o["t1"])
                     BNFS.rows[-1]["wa"] = []
                     BNFS.save()
-                    if alert_config():
-                        notify.send(notify.bnf_new(BNFS.rows[-1], pick), 4)
+                    alert("bnf", notify.bnf_new(BNFS.rows[-1], pick))
         state.update(res)
     BNFS.update({"BANKNIFTY": d}, now_ts)
     bnf_notify()
@@ -1438,8 +1453,12 @@ def scan_once():
     if not demo and market_open() and session_time >= "15:00":   # lock in the 3 PM swing list
         for c in btst_picks:
             if c.get("take"):
-                SWINGS.record(c, btst_now)
+                if SWINGS.record(c, btst_now):
+                    SWINGS.rows[-1]["wa"] = []
+                    SWINGS.save()
+                    alert("swing", notify.swing_new(c))
     SWINGS.update(swing_daily, btst_now)
+    book_notify(SWINGS, "swing")
     btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": SWINGS.view(),
                   "skipped": skipped, "caution": btst_caution, "kind": "swing"}
     bnf_daily = None
@@ -1474,7 +1493,11 @@ def scan_once():
             blocked.append({"symbol": c["symbol"], "side": c["side"], "why": st["blocked"]})
             continue
         c["locked_new"] = TRADES.record(c, book_now)
+        if c["locked_new"] and not demo:
+            TRADES.rows[-1]["wa"] = []
+            alert("intra", notify.intra_new(c))
     TRADES.update(candles_by, book_now)
+    book_notify(TRADES, "intra")
     risk_state = dict(rcfg, **risk.day_status(TRADES.rows, rcfg), skipped=blocked)
     day = datetime.now(IST).date()
     for c in top["picks"]:
@@ -1566,6 +1589,7 @@ def track_once():
                 raise
         time.sleep(0.25)
     TRADES.update(candles_by, now)
+    book_notify(TRADES, "intra")
     if BNFS.open_rows():
         try:
             c5 = dhan_candles(INDEXES["BANKNIFTY"], "5", "IDX_I", "INDEX")
@@ -1578,6 +1602,7 @@ def track_once():
                 raise
     SWINGS.update({s_: with_today((DAILY.get(STOCK_IDS.get(s_)) or (None, []))[1], cs) for s_, cs in candles_by.items()
                    if s_ in open_btst}, now)
+    book_notify(SWINGS, "swing")
     with LOCK:
         for sym, cs in candles_by.items():
             if sym in PICKS:
@@ -2007,6 +2032,7 @@ class Handler(BaseHTTPRequestHandler):
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
                             "alerts": {"on": bool(SETTINGS.get("alerts_on")), "via": SETTINGS.get("alert_via") or "ntfy",
+                                   "kinds": list(SETTINGS.get("alert_kinds", ALERT_KINDS)),
                                    "topic": ntfy_topic(), "server": SETTINGS.get("ntfy_server") or notify.NTFY,
                                    "phone": SETTINGS.get("wa_phone") or "", "has_key": bool(SETTINGS.get("wa_key")),
                                    "last": [{"at": datetime.fromtimestamp(t, IST).strftime("%d %b %H:%M"), "ok": ok, "text": x}
@@ -2140,7 +2166,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"ok": True})
         if path == "/api/alerts":
             via = body.get("via") if body.get("via") in ("ntfy", "whatsapp") else "ntfy"
-            ch = {"alerts_on": bool(body.get("on")), "alert_via": via}
+            kinds = [k for k in (body.get("kinds") if isinstance(body.get("kinds"), list) else ALERT_KINDS) if k in ALERT_KINDS]
+            ch = {"alerts_on": bool(body.get("on")), "alert_via": via, "alert_kinds": kinds}
             if via == "ntfy":
                 topic = notify.clean_topic(body.get("topic")) if body.get("topic") else ntfy_topic()
                 if not topic:
@@ -2165,7 +2192,7 @@ class Handler(BaseHTTPRequestHandler):
             cfg = alert_config(force=True)
             if not cfg:
                 return self.send(400, {"error": "Save the alert settings first."})
-            ok, detail = notify.send_now(cfg, "✅ OrderBlock Scanner alerts are working\nYou'll get Bank Nifty option setups, "
+            ok, detail = notify.send_now(cfg, "✅ OrderBlock Scanner alerts are working\nYou'll get new picks, "
                                               "entries and exits here.", 4)
             notify.LOG.append((time.time(), ok, "test message" if ok else detail))
             return self.send(200 if ok else 400, {"ok": ok, "error": None if ok else detail})

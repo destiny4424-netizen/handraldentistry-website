@@ -113,11 +113,6 @@ def send(text, priority=4):
     _Q.put((text, priority))
 
 
-def priority_of(text):
-    """Entries and exits are urgent (they ring through); the rest are high."""
-    return 5 if text[:1] in ("🟢", "🔴", "🎯", "✅") else 4
-
-
 # ── Bank Nifty option trades → messages ───────────────────────────────────────────────────
 def _n(v):
     return f"{v:,.0f}" if v is not None else "—"
@@ -136,34 +131,92 @@ def bnf_new(row, pick):
 
 
 def stages(row):
-    """Which stages a trade has reached: trig, t1, end."""
-    return [k for k, v in (("trig", row.get("triggered_at")), ("t1", row.get("t1_at")), ("end", row.get("exit_at"))) if v]
+    """Which stages a trade has reached: trig, t1, rev (intraday target cut), end."""
+    return [k for k, v in (("trig", row.get("triggered_at")), ("t1", row.get("t1_at")),
+                           ("rev", row.get("revised") and not row.get("exit_at")), ("end", row.get("exit_at"))) if v]
 
 
-def bnf_alerts(row):
-    """Messages for the stages this Bank Nifty trade reached since the last alert (marks them sent)."""
-    sent, out = row.setdefault("wa", []), []
+def _p(v):
+    return f"{v:,.2f}" if v is not None else "—"
+
+
+def _name(row, kind):
+    if kind == "bnf":
+        return "BANK NIFTY " + (row.get("option") or ("CE" if row["side"] == "bull" else "PE")), _n
+    word = "BUY" if row["side"] == "bull" else "SELL"
+    return f"{'SWING' if kind == 'swing' else 'INTRADAY'} {word} {row['symbol']}", _p
+
+
+def trade_alerts(row, kind):
+    """Messages for the stages this trade reached since the last alert (marks them sent).
+    kind: "bnf" (Bank Nifty option), "swing" (equity swing) or "intra" (intraday).
+    A trade from before alerts existed is marked as already sent."""
+    if "wa" not in row:
+        row["wa"] = stages(row)
+        return []
+    sent, out = row["wa"], []
     st = row.get("status") or ""
-    opt = row.get("option") or ("CE" if row["side"] == "bull" else "PE")
+    name, f = _name(row, kind)
     res = row.get("result_r")
     tail = f" · result {res:+.2f}R" if res is not None else ""
+    lvl = "BNF" if kind == "bnf" else "price"
     for k in stages(row):
         if k in sent:
             continue
         sent.append(k)
         if k == "trig":
-            out.append(f"🟢 BANK NIFTY entry triggered: BUY {opt}. BNF crossed {_n(row['entry'])}. "
-                       f"SL {_n(row['sl'])} · T1 {_n(row['t1'])} · T2 {_n(row['t2'])}")
+            what = f"BUY {row.get('option')}" if kind == "bnf" and row.get("option") else name
+            out.append(f"🟢 Entry triggered · {what}\n{lvl} crossed {f(row['entry'])} · SL {f(row['sl'])} · "
+                       f"T1 {f(row['t1'])} · T2 {f(row['t2'])}")
         elif k == "t1":
-            out.append(f"🎯 BANK NIFTY {opt}: T1 {_n(row['t1'])} hit. Book half, move the stop to cost ({_n(row['entry'])}).")
-        elif st.startswith("T2 hit"):
-            out.append(f"✅ BANK NIFTY {opt}: T2 {_n(row['t2'])} hit. Exit the rest{tail}")
+            out.append(f"🎯 T1 hit · {name}\nT1 {f(row['t1'])} reached: book half, move the stop to cost ({f(row['entry'])}).")
+        elif k == "rev":
+            out.append(f"⚠ Momentum slowing · {name}\n{row['revised']}")
+        elif st.startswith(("T2 hit", "Target hit")):
+            out.append(f"✅ Target hit · {name}\nT2 {f(row['t2'])} reached: exit the rest{tail}")
         elif st.startswith("Stopped at cost"):
-            out.append(f"⚪ BANK NIFTY {opt}: back to cost after T1. Exit the rest{tail}")
+            out.append(f"⚪ Back to cost · {name}\nStopped at cost after T1: exit the rest{tail}")
         elif st.startswith("SL hit"):
-            out.append(f"🔴 BANK NIFTY {opt}: stop {_n(row['sl'])} hit. Exit{tail}")
+            out.append(f"🔴 Stop hit · {name}\nStop {f(row['sl'])} hit: exit{tail}")
+        elif st.startswith(("Exited", "Booked rest")):
+            out.append(f"🟠 Exit now · {name}\n{row.get('revised') or st}{tail}")
+        elif st.startswith("Closed at 3:15"):
+            out.append(f"⏱ Square off · {name}\n3:15 PM: close the trade{tail}")
         elif st.startswith("Time stop"):
-            out.append(f"⏱ BANK NIFTY {opt}: 6 sessions are up. Exit at market{tail}")
-        elif st.startswith("Not triggered"):
-            out.append(f"➖ BANK NIFTY {opt}: entry {_n(row['entry'])} didn't trigger in 2 sessions. Setup cancelled.")
+            out.append(f"⏱ Time exit · {name}\n{st}: exit at market{tail}")
+        elif st.startswith("Cancelled"):
+            out.append(f"➖ Cancelled · {name}\nThe stop broke before the entry: don't take it.")
+        elif st.startswith("Not triggered") and kind != "intra":
+            out.append(f"➖ Not triggered · {name}\nEntry {f(row['entry'])} didn't trigger in time: setup cancelled.")
     return out
+
+
+def bnf_alerts(row):
+    return trade_alerts(row, "bnf")
+
+
+def intra_new(pick):
+    """A new intraday pick, locked into today's trades."""
+    p, z, o = pick["plan"], pick.get("size") or {}, pick.get("option") or {}
+    bull = pick["side"] == "bull"
+    return (f"📈 Intraday {'BUY' if bull else 'SELL'} · {pick['symbol']}"
+            f"\n{'Buy above' if bull else 'Sell below'} {_p(p['entry'])} · SL {_p(p['sl'])} · T1 {_p(p['t1'])} · T2 {_p(p['t2'])}"
+            f"\n{p.get('basis') or ''}"
+            + (f" · {z['qty']} shares, risk ₹{z['risk']:,}" if z.get("qty") else "")
+            + (f"\nOption: {o['label']} ~{o['entry']:.2f} · SL {o['sl']:.2f}" if o.get("label") else ""))
+
+
+def swing_new(pick):
+    """The 3 PM swing pick, locked in."""
+    p, z = pick["plan"], pick.get("size") or {}
+    bull = pick["side"] == "bull"
+    return (f"🌙 Swing {'BUY' if bull else 'SELL'} · {pick['symbol']} (score {pick['score']:.0f})"
+            f"\n{'Buy above' if bull else 'Sell below'} {_p(p['entry'])} within 3 sessions · SL {_p(p['sl'])} · "
+            f"T1 {_p(p['t1'])} · T2 {_p(p['t2'])}"
+            f"\n{pick.get('zone_text') or ''} · {pick.get('signal') or ''}"
+            + (f"\n{z['qty']} shares, risk ₹{z['risk']:,}" if z.get("qty") else ""))
+
+
+def priority_of(text):
+    """Entries and exits are urgent (they ring through); the rest are high."""
+    return 5 if text[:1] in ("🟢", "🔴", "🎯", "✅", "🟠", "⏱") else 4

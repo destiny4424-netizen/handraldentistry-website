@@ -347,14 +347,28 @@ only buys when a move is likely soon and options are not expensive:
   estimated from index R minus time decay and costs.
 - The ⭐ variant (best total, both halves positive, 10+ trades) is used live. Without one, the card says "paper first".
 
-## Phone alerts (Bank Nifty options)
-`notify.py` sends alerts at these points:
+## Phone alerts (intraday, swing, Bank Nifty options)
+`notify.py` sends alerts for intraday picks, swing stock picks and Bank Nifty option trades. Each kind can be
+switched on or off in Settings. For Bank Nifty, it sends alerts at these points:
 - the 3 PM Bank Nifty setup, with the option, its levels and the risk of a lot
 - the entry triggering (urgent)
 - T1, T2 or the stop (urgent)
 - the time exit, or "not triggered"
 
 Each stage is sent once.
+
+**Intraday:**
+- the new pick, with its size
+- entry, T1, target, stop
+- "momentum slowing" (target cut to T1) and momentum exits
+- the 3:15 square-off
+- "cancelled" when the stop breaks before the entry
+
+**Swing (stocks):**
+- the 3 PM pick, with its zone and size
+- entry, T1, T2, stop, the 10-session time exit, or not triggered
+
+Entries and exits are sent as urgent notifications.
 
 **Recommended: ntfy** (free push notifications, no account):
 1. Install the ntfy app.
