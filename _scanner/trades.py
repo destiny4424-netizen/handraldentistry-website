@@ -229,9 +229,10 @@ class SwingBook:
     TRIGGER_DAYS sessions, then followed day by day on daily candles: T1 (half booked, stop to cost),
     T2, the stop, or a time stop after HOLD_DAYS sessions."""
     TRIGGER_DAYS, HOLD_DAYS = 3, 10
+    FILE, KIND = "swing.json", "swing"
 
-    def __init__(self, folder):
-        self.path = folder / "swing.json" if folder else None
+    def __init__(self, folder=None):
+        self.path = folder / self.FILE if folder else None
         try:
             self.rows = json.loads(self.path.read_text(encoding="utf-8")) if self.path else []
         except (OSError, ValueError):
@@ -258,7 +259,7 @@ class SwingBook:
         if any(r["symbol"] == pick["symbol"] and (r["day"] == day or r.get("exit_at") is None) for r in self.rows):
             return False                               # one live swing trade per stock
         p = pick["plan"]
-        self.rows.append({"symbol": pick["symbol"], "side": pick["side"], "day": day, "picked_at": now_ts, "kind": "swing",
+        self.rows.append({"symbol": pick["symbol"], "side": pick["side"], "day": day, "picked_at": now_ts, "kind": self.KIND,
                           "basis": p.get("basis"), "entry": round(p["entry"], 2), "sl": round(p["sl"], 2),
                           "t1": round(p["t1"], 2), "t2": round(p["t2"], 2), "status": "Waiting for trigger",
                           "triggered_at": None, "t1_at": None, "exit_at": None, "exit": None, "result_r": None,
@@ -338,6 +339,12 @@ class SwingBook:
                             "losses": sum(1 for r in done if r["result_r"] < 0),
                             "total_r": round(sum(r["result_r"] for r in done), 2),
                             "win_rate": round(100 * len(wins) / len(done)) if done else None}}
+
+
+class BnfBook(SwingBook):
+    """Bank Nifty option swing trades (levels on Bank Nifty): trigger within 2 sessions, out after 6."""
+    TRIGGER_DAYS, HOLD_DAYS = 2, 6
+    FILE, KIND = "bnf.json", "bnf"
 
 
 def _stats(rows):

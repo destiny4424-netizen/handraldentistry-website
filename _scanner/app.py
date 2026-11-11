@@ -34,6 +34,7 @@ import analysis
 import backtest
 import breakout
 import bullion
+import bnf
 import swing
 import events
 import gex
@@ -50,7 +51,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "11 Nov · Swing (FVG + price action + OI) replaces BTST"
+VERSION = "11 Nov · Bank Nifty option swing (monthly expiry) in the Swing tab"
 
 
 def load_env():
@@ -243,6 +244,20 @@ def fno_stocks():
             key = sym.upper().replace(" ", "")
             if key in ("NIFTY", "NIFTY50", "BANKNIFTY", "NIFTYBANK", "INDIAVIX"):
                 INDEXES[{"NIFTY50": "NIFTY", "NIFTYBANK": "BANKNIFTY"}.get(key, key)] = row["SEM_SMST_SECURITY_ID"]
+        elif inst == "OPTIDX" and sym.split("-")[0] == "BANKNIFTY":   # Bank Nifty options (monthly)
+            expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
+            kind = row.get("SEM_OPTION_TYPE")
+            if expiry >= today and kind in ("CE", "PE"):
+                try:
+                    strike = float(row.get("SEM_STRIKE_PRICE") or 0)
+                    lots["BANKNIFTY"] = int(float(row.get("SEM_LOT_UNITS") or 0)) or lots.get("BANKNIFTY")
+                except ValueError:
+                    continue
+                opts.setdefault("BANKNIFTY", {}).setdefault(expiry, {})[(strike, kind)] = row["SEM_SMST_SECURITY_ID"]
+        elif inst == "FUTIDX" and sym.split("-")[0] == "BANKNIFTY":
+            expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
+            if expiry >= today and (not BNF_FUT or expiry < BNF_FUT[0]):
+                BNF_FUT[:] = [expiry, row["SEM_SMST_SECURITY_ID"]]
         elif row.get("SEM_INSTRUMENT_NAME") == "OPTIDX" and sym.split("-")[0] == "NIFTY":
             expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
             if expiry >= today and (not EXPIRY.get("nifty") or expiry < EXPIRY["nifty"]):
@@ -264,6 +279,7 @@ def fno_stocks():
 
 
 FUTURES = {}                                           # symbol -> current-month futures security id
+BNF_FUT = []                                           # [expiry, security id] of the current Bank Nifty future
 # Dhan security ids of the indices (IDX_I); read from the scrip master, these are fallbacks.
 INDEXES = {"NIFTY": "13", "BANKNIFTY": "25", "INDIAVIX": "21"}
 EXPIRY = {}                                            # "nifty" -> nearest NIFTY option expiry, YYYY-MM-DD
@@ -421,6 +437,8 @@ def reset_performance():
 reset_performance()
 TRADES = trades.TradeBook(SETTINGS_DIR)                # today's locked-in picks, followed to the end
 SWINGS = trades.SwingBook(SETTINGS_DIR)                # swing trades, followed for up to 10 sessions
+BNFS = trades.BnfBook(SETTINGS_DIR)                    # Bank Nifty option swing trades, up to 6 sessions
+BNF_BT = {}                                            # "day" -> date, "cmp" -> rule variants on Bank Nifty history
 BTST_PICKS = {}                                        # symbol -> (swing pick, daily candles) for the chart
 FUT_DAILY = {}                                         # futures id -> (IST day, daily candles with OI)
 PICK_SINCE = {}                                        # (day, symbol, side) -> first time it was picked
@@ -1061,12 +1079,12 @@ def nifty_daily(demo, idx):
     return with_today(DAILY["IDXN"][1], idx.get("NIFTY", ([], None))[0])
 
 
-def swing_oi(sym, pct, demo):
+def swing_oi(sym, pct, demo, fid=None, inst="FUTSTK"):
     """Futures OI build-up over the last 5 sessions (current-month contract), cached for the day."""
     if demo:
         o = demo_oi(sym, pct)
         return {"kind": o["kind"], "oi_pct": o["oi_pct"], "price_pct": o["price_pct"], "days": 5}
-    fid = FUTURES.get(sym)
+    fid = fid or FUTURES.get(sym)
     if not fid:
         return None
     today = datetime.now(IST).date()
@@ -1074,7 +1092,7 @@ def swing_oi(sym, pct, demo):
     if not hit or hit[0] != today:
         try:
             now = datetime.now(IST)
-            body = {"securityId": str(fid), "exchangeSegment": "NSE_FNO", "instrument": "FUTSTK", "expiryCode": 0,
+            body = {"securityId": str(fid), "exchangeSegment": "NSE_FNO", "instrument": inst, "expiryCode": 0,
                     "oi": True, "fromDate": (now - timedelta(days=30)).strftime("%Y-%m-%d"),
                     "toDate": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
             FUT_DAILY[fid] = (today, _rows(dhan_post("/charts/historical", body)))
@@ -1085,6 +1103,87 @@ def swing_oi(sym, pct, demo):
             warn(f"{sym} futures OI", e)
             return None
     return swing.futures_oi(FUT_DAILY[fid][1])
+
+
+def last_tuesdays(today, n=3):
+    out, d0 = [], today.replace(day=1)
+    for m in range(n):
+        first = (d0 + timedelta(days=32 * m)).replace(day=1)
+        last = (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        out.append((last - timedelta(days=(last.weekday() - 1) % 7)).isoformat())
+    return out
+
+
+def index_daily(key, sid, demo, c5, days=800):
+    """Long daily history of an index (Bank Nifty / India VIX), fetched once a day, with today's candle."""
+    if demo:
+        return demo_daily(key, c5) if c5 else []
+    today = datetime.now(IST).date()
+    hit = DAILY.get("LONG" + key)
+    if not hit or hit[0] != today:
+        DAILY["LONG" + key] = (today, dhan_daily(sid, "IDX_I", "INDEX", days=days))
+        time.sleep(0.25)
+    return with_today(DAILY["LONG" + key][1], c5)
+
+
+def bank_nifty(demo, idx, swing_daily, ev, now_ts, open_, session_time):
+    """Bank Nifty option buying (monthly expiry): today's view, the trade, the book and the backtest."""
+    c5 = (idx.get("BANKNIFTY") or ([], None))[0]
+    if demo and c5:                                    # make the demo Bank Nifty look like Bank Nifty
+        f = 57000 / c5[0]["o"]
+        c5 = [dict(x, o=x["o"] * f, h=x["h"] * f, l=x["l"] * f, c=x["c"] * f) for x in c5]
+    vc5 = (idx.get("INDIAVIX") or ([], None))[0]
+    d = index_daily("BANKNIFTY", INDEXES["BANKNIFTY"], demo, c5)
+    vix_d = index_daily("INDIAVIX", INDEXES["INDIAVIX"], demo, vc5) if not demo else (idx.get("INDIAVIX") or ([], []))[1]
+    today = datetime.now(IST).date()
+    # The backtest of the rule variants, once a day; the ⭐ variant is used live (you asked Claude to decide).
+    if BNF_BT.get("day") != today and len(d) > 120:
+        BNF_BT.update(day=today, cmp=bnf.compare(d[:-1], vix_d, trades.BnfBook), sessions=len(d) - 1 - 70,
+                      since=datetime.fromtimestamp(d[70]["t"], IST).strftime("%d %b %Y"))
+    star = next((v for v in BNF_BT.get("cmp") or [] if v.get("pick")), None)
+    rules = star["rules"] if star else {}
+    state = {"open": open_, "rules": star["name"] if star else "Current rules", "edge": bool(star),
+             "bt": {k: BNF_BT.get(k) for k in ("cmp", "sessions", "since")}}
+    if open_ and len(d) >= 70:
+        if demo:
+            exps = last_tuesdays(today)
+            lot = 30
+        else:
+            exps, lot = sorted((OPTIONS.get("BANKNIFTY") or {}).keys()), LOTS.get("BANKNIFTY")
+        expiry, rolled = options.choose_expiry(exps, today, bnf.MIN_DAYS_LEFT)
+        days_left = (datetime.fromisoformat(expiry).date() - today).days if expiry else None
+        spot = d[-1]["c"]
+        chain = None
+        if expiry:
+            chain = bnf.demo_chain(spot, days_left) if demo else option_chain(INDEXES["BANKNIFTY"], expiry, ("IDX_I",))
+        strikes = sorted(float(k) for k in ((chain or {}).get("oc") or {}))
+        pct = (d[-1]["c"] - d[-2]["c"]) / d[-2]["c"] * 100
+        fo = swing_oi("BANKNIFTY", pct, demo, BNF_FUT[1] if BNF_FUT else None, "FUTIDX") if demo or BNF_FUT else None
+        heavy = {s: swing_daily[s] for s in bnf.HEAVY if s in swing_daily}
+        res = bnf.analyse(d, vix_d, heavy, fo, chain, expiry, rolled, strikes, lot, rules, days_left)
+        rcfg = risk.config(SETTINGS)
+        pick = res.get("pick")
+        if pick:
+            o = pick.get("option")
+            pick["opt_size"] = risk.size_option(o, rcfg)
+            if o and o.get("risk_lot"):
+                o["risk_lot_pct"] = round(o["risk_lot"] / rcfg["capital"] * 100, 1)
+                if o.get("spread") and o["spread"].get("risk_lot"):
+                    o["spread"]["risk_lot_pct"] = round(o["spread"]["risk_lot"] / rcfg["capital"] * 100, 1)
+            # Events: RBI policy / budget inside the holding window can crush option IV.
+            big = [e for e in ev.get("calendar") or [] if e.get("name", "").startswith(("RBI", "Union Budget", "FOMC"))
+                   and e.get("date", "") >= today.isoformat()]
+            if big:
+                pick["caution"] = "Big event soon: " + ", ".join(f'{e["name"]} ({e.get("label", "")})' for e in big) + \
+                    ". Option IV usually drops after it: enter after the event, or with smaller size."
+            if not demo and market_open() and session_time >= "15:00":
+                if BNFS.record(pick, now_ts) and o:
+                    BNFS.rows[-1].update(option=o["label"], opt_entry=o["entry"], opt_sl=o["sl"], opt_t1=o["t1"])
+                    BNFS.save()
+        state.update(res)
+    BNFS.update({"BANKNIFTY": d}, now_ts)
+    state["book"] = BNFS.view()
+    return state, d
 
 
 def scan_once():
@@ -1302,6 +1401,16 @@ def scan_once():
     SWINGS.update(swing_daily, btst_now)
     btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": SWINGS.view(),
                   "skipped": skipped, "caution": btst_caution, "kind": "swing"}
+    bnf_daily = None
+    try:
+        bnf_state, bnf_daily = bank_nifty(demo, idx, swing_daily, ev, btst_now, btst_open, session_time)
+        btst_state["bnf"] = bnf_state
+    except DhanError as e:
+        if e.fatal:
+            raise
+        warn("Bank Nifty options", e)
+    except Exception as e:                             # extra: never stop the scan
+        warn("Bank Nifty options", e)
 
     # Lock every new pick into today's trades and follow them all through the day's candles.
     book_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
@@ -1364,6 +1473,9 @@ def scan_once():
         PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"] if c["symbol"] in candles_by})
         BTST_PICKS.clear()
         BTST_PICKS.update({c["symbol"]: (c, swing_daily[c["symbol"]]) for c in btst_picks})
+        bp = (btst_state.get("bnf") or {}).get("pick")
+        if bp and bnf_daily:
+            BTST_PICKS["BANKNIFTY"] = (bp, bnf_daily)
         STATE.update(status="live", message="", scores=scores,
                      events={k: ev[k] for k in ("calendar", "crude", "usdinr", "news", "risk")}, risk=risk_state,
                      universe={"total": len(stocks), "liquid": len(stocks) - len(thin), "skipped": len(thin),
@@ -1413,6 +1525,15 @@ def track_once():
                 raise
         time.sleep(0.25)
     TRADES.update(candles_by, now)
+    if BNFS.open_rows():
+        try:
+            c5 = dhan_candles(INDEXES["BANKNIFTY"], "5", "IDX_I", "INDEX")
+            hit = DAILY.get("LONGBANKNIFTY")
+            if hit:
+                BNFS.update({"BANKNIFTY": with_today(hit[1], c5)}, now)
+        except DhanError as e:
+            if e.fatal:
+                raise
     SWINGS.update({s_: with_today((DAILY.get(STOCK_IDS.get(s_)) or (None, []))[1], cs) for s_, cs in candles_by.items()
                    if s_ in open_btst}, now)
     with LOCK:
@@ -1432,6 +1553,8 @@ def track_once():
         STATE["risk"] = dict(rcfg, **risk.day_status(TRADES.rows, rcfg), skipped=(STATE.get("risk") or {}).get("skipped", []))
         if STATE.get("btst"):
             STATE["btst"]["book"] = SWINGS.view()
+            if STATE["btst"].get("bnf"):
+                STATE["btst"]["bnf"]["book"] = BNFS.view()
         STATE["last_track"] = datetime.now(IST).strftime("%H:%M")
 
 

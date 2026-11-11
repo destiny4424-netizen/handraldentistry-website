@@ -207,6 +207,18 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
     last week's high/low and swing highs/lows. Closing above one is a buy, closing below one is a sell.
     Scans every 15 minutes from 9:30 to 14:00. Every breakout goes into **Today's breakouts**,
     each stock once, newest first, and is followed until 3:15. Order blocks stay on their own tab.
+  - **Bank Nifty options (monthly expiry):** top of the Swing tab. The trigger is one of:
+    - a daily FVG pullback with a price-action candle
+    - a squeeze (inside day / NR7, tight bands)
+
+    It also needs:
+    - the trend agreeing
+    - India VIX at 22 or lower
+    - an option chain that leaves room to the target (PCR, call/put walls, OI change)
+    - 5-day futures OI and the big banks agreeing
+
+    It buys the monthly option with more than 15 days left, delta near 0.6. The trade is held up to 6 sessions,
+    with a debit-spread alternative. The rule variants are backtested daily.
   - **Swing (replaced BTST):** daily chart, held for up to 10 sessions. A stock qualifies when:
     - it is trending (HH/HL or a fresh BOS/CHoCH, above the 50-day EMA)
     - it has come back into a Fair Value Gap zone (FVG, inverse FVG, BPR or price gap) and closed back above its middle

@@ -307,6 +307,46 @@ Order blocks have their own tab and are not mixed in. Scans run every 15 minutes
 - **Watchlist:** stocks within 0.5% of yesterday's high/low on good volume, and breakouts that are extended
   or not yet backed by VWAP/Supertrend.
 
+## Bank Nifty options (monthly expiry) — top of the Swing tab
+`bnf.py`. Bank Nifty has one expiry a month, so a swing trade can use an option with 3+ weeks to go.
+Option buyers lose to time decay and to paying too much for volatility, and win on quick moves. So the setup
+only buys when a move is likely soon and options are not expensive:
+
+1. **Direction (daily):**
+   - the trend is up: HH/HL or a fresh BOS/CHoCH
+   - the 20-day EMA is above the 50-day EMA, and price is above the 50-day EMA
+
+   Mirror image for puts.
+2. **Trigger, one of two:**
+   - **FVG pullback:** back into a FVG / IFVG / BPR / gap, with a hammer, engulfing or strong-close candle
+   - **Squeeze:** an inside day or NR7, with the Bollinger bands at their tightest 25% of the last 120 days
+3. **Volatility:**
+   - India VIX must be 22 or lower
+   - extra points when VIX is low for its last 4 months, and when the ATM IV isn't above Bank Nifty's 20-day HV
+4. **Option chain:**
+   - PCR and today's OI change (who is writing)
+   - the call wall (most call OI above) must be more than 1R away; T1 moves to just before it when it is closer
+   - put wall for puts; max pain is shown
+5. **Futures OI over 5 sessions:** short build-up rules calls out (long build-up rules puts out).
+6. **Big banks:** HDFC Bank and ICICI Bank (counted 3×), SBI, Kotak and Axis. At least 40% of that weight
+   must be on the trade's side of the 20-day EMA.
+
+**The option:**
+- the monthly expiry with more than 15 days left (else next month's)
+- the strike with delta nearest 0.6 (ATM or one ITM)
+
+**Plan:**
+- Bank Nifty levels: entry above the trigger day's high within 2 sessions, then stop, T1 (book half, stop to cost) and T2.
+- Exit after 6 sessions.
+- No trade if the stop would cost more than 40% of the premium.
+- The card also shows time decay a day, the risk of one lot as % of capital, and a debit-spread alternative.
+
+**Tracking and backtest:**
+- The 3 PM pick is locked into `bnf.json`.
+- Once a day the rule variants are backtested on ~2 years of Bank Nifty and VIX daily data. Option R is
+  estimated from index R minus time decay and costs.
+- The ⭐ variant (best total, both halves positive, 10+ trades) is used live. Without one, the card says "paper first".
+
 ## How Swing trades are chosen (replaced BTST)
 Swing setups come from the daily chart (`swing.py`) and are held for up to 10 sessions. They are worked out in
 every scan from 11:00 on today's forming daily candle, and the 3:00 PM list is locked in. Shown for a buy; a
