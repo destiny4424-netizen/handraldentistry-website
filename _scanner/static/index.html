@@ -266,6 +266,10 @@
   .trow.head { font: 700 10px system-ui; color: var(--muted); letter-spacing: .05em; cursor: default; background: none; }
   .trow .tm { font: 12px var(--mono); color: var(--muted); }
   .trow .sym { font-weight: 800; } .trow .num { font: 600 12px var(--mono); }
+  button.took { font: 700 10px system-ui; padding: 2px 7px; margin-left: 6px; border-radius: 6px; background: transparent;
+    border: 1px solid var(--line, #2a3140); color: var(--muted); cursor: pointer; vertical-align: middle; }
+  button.took.on { border-color: var(--bull); color: var(--bull); }
+  .optlive { display: block; font: 11px var(--mono); color: var(--muted); }
   .trow .r { font: 800 13px var(--mono); text-align: right; }
   .tst { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 5px; text-transform: uppercase; background: #262d38; color: var(--muted); white-space: nowrap; }
   .tst.live { background: rgba(139,124,246,.25); color: #c4b9ff; } .tst.win { background: rgba(34,211,138,.18); color: var(--bull); }
@@ -468,6 +472,20 @@
     </div>
   </form>
 </dialog>
+<dialog id="tookDlg">
+  <form method="dialog" id="tookForm">
+    <h3 id="tookTitle">I took this trade</h3>
+    <p class="hint" id="tookHint">Enter your real prices. Performance then shows your results next to the scanner's.</p>
+    <label for="tkEntry">My entry price</label><input id="tkEntry" type="number" inputmode="decimal" step="any" required>
+    <label for="tkExit">My exit price <span style="font-weight:400;color:var(--muted)">(leave empty while the trade is open)</span></label>
+    <input id="tkExit" type="number" inputmode="decimal" step="any">
+    <label for="tkQty">Quantity <span style="font-weight:400;color:var(--muted)">(shares, or lots × lot size; for ₹ results)</span></label>
+    <input id="tkQty" type="number" inputmode="numeric" step="1" min="1">
+    <div class="err" id="tkErr"></div>
+    <div class="actions" style="justify-content:space-between"><button type="button" class="link" id="tkClear">Not taken</button>
+      <span><button type="button" class="ghost" id="tkCancel">Cancel</button> <button type="submit" id="tkSave">Save</button></span></div>
+  </form>
+</dialog>
 <dialog id="health">
   <form method="dialog">
     <h3>Scanner health</h3>
@@ -635,6 +653,7 @@
       <label>Risk per trade ₹ <input id="perfRisk" type="number" min="0" step="100" placeholder="e.g. 1000"></label>
       <small style="color:var(--muted)">Every pick the scanner gives is recorded and scored here. R = multiples of the risk; enter your ₹ risk per trade to see rupees.</small></div>
     <div class="perfgrid"><div class="perfsec" id="perfIntra"></div><div class="perfsec" id="perfBtst"></div></div>
+    <div class="perfsec" id="perfMine" style="margin-top:14px"></div>
     <div class="perfbar" style="margin-top:22px"><h2>Backtest</h2><button id="btRun">Run backtest · last 60 sessions</button>
       <small id="btStatus" style="color:var(--muted)"></small></div>
     <div class="hint" id="btNote" style="margin:4px 0 10px"></div>
@@ -1183,10 +1202,35 @@ function lwcShow(d) {
 // ---------- Performance ----------
 let perfData = null, perfMonth = null;
 try { $("perfRisk").value = localStorage.getItem("perfRisk") || ""; } catch {}
+let mineData = null;
 async function loadPerf() {
   const m = perfMonth || "";
   try { const r = await fetch(`/api/performance?month=${m}`, { cache: "no-store" }); if (r.ok) perfData = await r.json(); } catch {}
+  try { const r = await fetch(`/api/mine?month=${(perfData && perfData.month) || m}`, { cache: "no-store" }); if (r.ok) mineData = await r.json(); } catch {}
   renderPerf();
+  renderMine();
+}
+function renderMine() {
+  const el = $("perfMine"), d = mineData;
+  if (!el || !d) return;
+  const sm = d.summary, col = v => v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
+  const R = v => v == null ? "—" : (v >= 0 ? "+" : "") + v + "R", inr = v => v == null ? "" : (v >= 0 ? "+₹" : "−₹") + Math.abs(v).toLocaleString("en-IN");
+  const kn = { intra: "Intraday", swing: "Swing", bnf: "Bank Nifty" };
+  el.innerHTML = `<h3>Your trades <small style="color:var(--muted);font-weight:400">· the ones you marked "Took it", with your real prices</small></h3>` +
+    (d.trades.length ? `<div class="kpis">
+      <div class="kpi">Taken<b>${sm.taken}</b></div>
+      <div class="kpi">Your result<b style="color:${col(sm.real_r)}">${R(sm.real_r)}</b></div>
+      <div class="kpi">Your ₹<b style="color:${col(sm.real_rs)}">${sm.real_rs ? inr(sm.real_rs) : "—"}</b></div>
+      <div class="kpi">Scanner on the same trades<b style="color:${col(sm.paper_r)}">${R(sm.paper_r)}</b></div>
+      <div class="kpi">Won<b>${sm.wins} / ${sm.closed}</b></div>
+      <div class="kpi">Not taken (triggered)<b>${sm.missed} · <span style="color:${col(sm.missed_r)}">${R(sm.missed_r)}</span></b></div></div>
+      <div class="hint">"Scanner on the same trades" vs "Your result" shows the cost of your entries and exits. "Not taken" is what the triggered trades you skipped made on paper.</div>
+      <table class="ptable"><tr><th class="l">Day</th><th class="l">Trade</th><th>Your entry → exit</th><th>You</th><th>Scanner</th></tr>
+      ${d.trades.map(t => `<tr><td class="l">${fmtDay(t.day)}</td><td class="l">${kn[t.kind]} · ${esc(t.kind === "bnf" && t.option ? t.option : (t.side === "bull" ? "BUY " : "SELL ") + t.symbol)}</td>
+        <td>${fmt(t.mine.entry)} → ${t.mine.exit != null ? fmt(t.mine.exit) : "open"}</td>
+        <td style="color:${col(t.real_r)}">${R(t.real_r)}${t.open ? "*" : ""}${t.real_rs != null ? ` <small>${inr(t.real_rs)}</small>` : ""}</td>
+        <td style="color:${col(t.paper_r)}">${R(t.paper_r)}</td></tr>`).join("")}</table>`
+     : `<div class="empty">No trades marked yet. Tap <b>TOOK IT?</b> on a trade (Today's trades, Swing trades or Bank Nifty trades) and enter your prices.</div>`);
 }
 function renderPerf() {
   renderBacktest();
@@ -1389,7 +1433,7 @@ function renderBtst() {
         <span><span class="badge" style="font-size:10px;padding:1px 6px;background:${r.side === "bull" ? css("--bull") : css("--bear")};color:#fff">${r.side === "bull" ? "BUY" : "SELL"}</span> <span class="sym">${r.symbol}</span></span>
         <span class="num hide-s">${fmt(r.entry)}</span><span class="num hide-s" style="color:#ff8193">${fmt(r.sl)}</span>
         <span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t1)}</span><span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t2)}</span>
-        <span class="st"><span class="tst ${cls}">${r.status}</span>${r.gap_pct != null ? ` <span class="tm">gap ${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</span>` : ""}</span>
+        <span class="st"><span class="tst ${cls}">${r.status}</span>${r.gap_pct != null ? ` <span class="tm">gap ${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</span>` : ""}${tookBtn("swing", r)}</span>
         <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}${r.result_r == null && res != null ? "*" : ""}</span></div>`;
     }).join("") : `<div class="empty">The 3:00 PM swing list is locked in here and followed for up to 10 sessions.</div>`;
 }
@@ -1451,7 +1495,7 @@ function renderBnf(x) {
   const bookHtml = bk.rows.length ? `<details class="more"><summary>Bank Nifty trades · ${sm.count} · won ${sm.wins} / lost ${sm.losses} · ${sm.total_r >= 0 ? "+" : ""}${sm.total_r}R</summary>
     ${bk.rows.slice(0, 12).map(r => { const res = r.result_r != null ? r.result_r : r.running_r;
       return `<div class="trow"><span class="tm">${istDay(r.picked_at)}</span><span><b>${esc(r.option || (r.side === "bull" ? "CE" : "PE"))}</b></span>
-        <span class="num hide-s">${n0(r.entry)}</span><span class="st"><span class="tst">${esc(r.status)}</span></span>
+        <span class="num hide-s">${n0(r.entry)}</span><span class="st"><span class="tst">${esc(r.status)}</span>${tookBtn("bnf", r)}${optLive(r)}</span>
         <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}</span></div>`; }).join("")}</details>` : "";
   const wasOpen = [...el.querySelectorAll("details")].map(d => d.open);
   el.innerHTML = `<div class="pick ${bull ? "bull" : "bear"}${selected && selected[0] === "BANKNIFTY" ? " sel" : ""}" id="bnfCard" data-sym="BANKNIFTY" data-side="${bull ? "bull" : "bear"}" style="margin-bottom:14px">
@@ -1464,6 +1508,44 @@ function renderBnf(x) {
   if (card && c) card.onclick = ev => { if (ev.target.closest("a, details")) return; selected = ["BANKNIFTY", c.side];
     document.querySelectorAll("#btstList .pick").forEach(q => q.classList.remove("sel")); card.classList.add("sel"); loadChart(); };
 }
+
+// Live option price of a Bank Nifty trade (from the option chain, checked every 5 minutes).
+function optLive(r) {
+  if (r.opt_ltp == null) return "";
+  const inr = v => (v >= 0 ? "+₹" : "−₹") + Math.abs(Math.round(v)).toLocaleString("en-IN");
+  if (!r.triggered_at) return `<span class="optlive">option now ${fmt(r.opt_ltp)} (plan ~${fmt(r.opt_entry)})</span>`;
+  const px = r.opt_exit != null ? r.opt_exit : r.opt_ltp;
+  return `<span class="optlive">option ${fmt(r.opt_fill)} → ${fmt(px)}${r.opt_exit != null ? " (exit)" : " now"}${r.opt_pnl_lot != null ? ` · <b style="color:${r.opt_pnl_lot >= 0 ? css("--bull") : css("--bear")}">${inr(r.opt_pnl_lot)}/lot</b>` : ""}${r.opt_r != null ? ` · ${r.opt_r >= 0 ? "+" : ""}${r.opt_r}R` : ""}</span>`;
+}
+// "I took this trade": your real prices, for Performance → Your trades.
+const TOOK = {};
+function tookBtn(kind, r) {
+  const key = `${kind}|${r.picked_at}|${r.symbol}`; TOOK[key] = [kind, r];
+  const m = r.mine;
+  return `<button type="button" class="took${m ? " on" : ""}" data-took="${esc(key)}">${m ? `✓ TOOK ${fmt(m.entry)}${m.exit != null ? "→" + fmt(m.exit) : ""}` : "TOOK IT?"}</button>`;
+}
+let tookKey = null;
+document.addEventListener("click", ev => {
+  const b = ev.target.closest("button.took"); if (!b) return;
+  ev.stopPropagation(); ev.preventDefault();
+  tookKey = b.dataset.took; const [kind, r] = TOOK[tookKey] || []; if (!r) return;
+  const m = r.mine || {}, opt = kind === "bnf";
+  $("tookTitle").textContent = `I took this: ${r.side === "bull" ? (opt ? "" : "BUY ") : (opt ? "" : "SELL ")}${opt ? (r.option || "Bank Nifty option") : r.symbol}`;
+  $("tookHint").textContent = opt ? "Enter the option prices you bought and sold at (premium), and quantity = lots × lot size. Performance shows your result next to the scanner's."
+    : `Enter your real prices. The plan was ${r.side === "bull" ? "buy above" : "sell below"} ${fmt(r.entry)}, stop ${fmt(r.sl)}.`;
+  $("tkEntry").value = m.entry ?? (opt ? (r.opt_fill ?? r.opt_entry ?? "") : r.entry);
+  $("tkExit").value = m.exit ?? ""; $("tkQty").value = m.qty ?? ""; $("tkErr").textContent = "";
+  $("tkClear").hidden = !r.mine;
+  $("tookDlg").showModal();
+}, true);
+async function tookSend(body) {
+  const [kind, r] = TOOK[tookKey];
+  try { await post("/api/took", Object.assign({ kind, picked_at: r.picked_at, symbol: r.symbol }, body)); $("tookDlg").close(); refresh(); if (mode === "perf") loadPerf(); }
+  catch (err) { $("tkErr").textContent = err.message; }
+}
+$("tookForm").onsubmit = e => { e.preventDefault(); tookSend({ entry: $("tkEntry").value, exit: $("tkExit").value, qty: $("tkQty").value }); };
+$("tkClear").onclick = () => tookSend({ clear: true });
+$("tkCancel").onclick = () => $("tookDlg").close();
 
 // Phone: the stock list comes first; tapping a stock scrolls down to its chart.
 document.addEventListener("click", ev => {
@@ -1814,7 +1896,7 @@ function renderTrades(tv) {
         <span><span class="badge" style="font-size:10px;padding:1px 6px;background:${r.side === "bull" ? css("--bull") : css("--bear")};color:${r.side === "bull" ? "#04140c" : "#fff"}">${r.side === "bull" ? "BUY" : "SELL"}</span> <span class="sym">${r.symbol}</span></span>
         <span class="num hide-s">${fmt(r.entry)}</span><span class="num hide-s" style="color:#ff8193">${fmt(r.sl)}</span>
         <span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t1)}</span><span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t2)}</span>
-        <span class="st"><span class="tst ${cls(r)}">${r.status}${when ? " " + when : ""}</span>${r.last != null ? ` <span class="tm">now ${fmt(r.last)}</span>` : ""}${r.revised ? `<span class="revised">↻ ${r.revised}</span>` : ""}</span>
+        <span class="st"><span class="tst ${cls(r)}">${r.status}${when ? " " + when : ""}</span>${r.last != null ? ` <span class="tm">now ${fmt(r.last)}</span>` : ""}${tookBtn("intra", r)}${r.revised ? `<span class="revised">↻ ${r.revised}</span>` : ""}</span>
         <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}${live ? "*" : ""}</span>
       </div>`;
     }).join("") + `<div class="hint" style="margin-top:8px;font-size:11px;color:var(--muted)">R = multiples of the risk (entry to stop). Half is booked at T1 and the stop moves to cost; the rest rides to T2. * = still open. Untriggered picks expire at 3:00 PM; open trades close at 3:15 PM.</div>`;

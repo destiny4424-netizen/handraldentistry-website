@@ -25,7 +25,9 @@ to come soon and options are not expensive:
 
 The option: the monthly expiry with more than 15 days left (otherwise next month's), at the money or one
 strike in the money (delta near 0.6). Entry when Bank Nifty breaks the trigger day's high (low for puts)
-within 2 sessions; stop, T1 and T2 are Bank Nifty levels; half is booked at T1 and the stop moves to cost;
+within 2 sessions, not before the 9:30 candle closes (the first 15 minutes have the widest option spreads);
+if Bank Nifty opens more than half the stop distance past the entry, the trade is skipped (the reward-to-risk
+is gone); stop, T1 and T2 are Bank Nifty levels; half is booked at T1 and the stop moves to cost;
 anything still open after 6 sessions is closed, because time decay grows. If the stop would cost more than
 40% of the premium, the option is too far from a sensible stop: no trade.
 """
@@ -185,7 +187,8 @@ def candidates(d, vix_d=None, rules=None):
                                  "entry": round(f["entry"], 1), "sl": round(f["sl"], 1), "t1": round(t1, 1), "t2": round(t2, 1),
                                  "rr": round(abs(t1 - f["entry"]) / risk, 2), "rr2": round(abs(t2 - f["entry"]) / risk, 2),
                                  "risk_pts": round(risk, 1), "risk_pct": round(risk / f["entry"] * 100, 2),
-                                 "action": f"{word} {f['entry']:.0f} (Bank Nifty) within {TRIGGER_DAYS} sessions · "
+                                 "action": f"{word} {f['entry']:.0f} (Bank Nifty) within {TRIGGER_DAYS} sessions, after the 9:30 "
+                                           f"candle (skip if it opens {0.5 * risk:.0f}+ pts past the entry) · "
                                            f"stop {f['sl']:.0f} · T1 {t1:.0f} (book half, stop to cost) · T2 {t2:.0f} · "
                                            f"exit after {HOLD_DAYS} sessions"}})
     return out

@@ -230,6 +230,7 @@ class SwingBook:
     T2, the stop, or a time stop after HOLD_DAYS sessions."""
     TRIGGER_DAYS, HOLD_DAYS = 3, 10
     FILE, KIND = "swing.json", "swing"
+    GAP_SKIP = None                                    # skip the trade if a day opens this many R past the entry
 
     def __init__(self, folder=None):
         self.path = folder / self.FILE if folder else None
@@ -293,6 +294,9 @@ class SwingBook:
                 if i >= self.TRIGGER_DAYS:
                     st.update(status=f"Not triggered in {self.TRIGGER_DAYS} sessions", exit_at=c["t"])
                     break
+                if self.GAP_SKIP and ((c["o"] - entry) if bull else (entry - c["o"])) > self.GAP_SKIP * risk:
+                    st.update(status=f"Skipped: opened past the entry {day}", exit_at=c["t"])
+                    break
                 if (c["h"] >= entry) if bull else (c["l"] <= entry):
                     st.update(status="Triggered", triggered_at=c["t"])
                     slip = max(0.0, ((c["o"] - entry) if bull else (entry - c["o"])) / risk)
@@ -345,6 +349,7 @@ class BnfBook(SwingBook):
     """Bank Nifty option swing trades (levels on Bank Nifty): trigger within 2 sessions, out after 6."""
     TRIGGER_DAYS, HOLD_DAYS = 2, 6
     FILE, KIND = "bnf.json", "bnf"
+    GAP_SKIP = 0.5
 
 
 def _stats(rows):
@@ -396,3 +401,98 @@ def month_report(folder, month, btst_rows):
                  "days": [dict(_stats(v), day=d) for d, v in sorted(btst_days.items())],
                  "trades": [{k: r.get(k) for k in keep} for r in sorted(btst, key=lambda r: -r["picked_at"])]},
     }
+
+
+# ── Live option prices for open Bank Nifty trades ──────────────────────────────────────────
+def option_marks(row, ltp):
+    """Record the option's real price at each stage (approximate: within the 5-minute check) and its
+    result: per lot in ₹ and in R of the planned option risk (half booked at T1, like the plan)."""
+    if ltp is None:
+        return
+    row["opt_ltp"] = round(ltp, 2)
+    if not row.get("triggered_at"):
+        return
+    if row.get("opt_fill") is None:
+        row["opt_fill"] = round(ltp, 2)
+    if row.get("t1_at") and row.get("opt_t1_px") is None:
+        row["opt_t1_px"] = round(ltp, 2)
+    if row.get("exit_at") and row.get("result_r") is not None and row.get("opt_exit") is None:
+        row["opt_exit"] = round(ltp, 2)
+    fill, t1px = row["opt_fill"], row.get("opt_t1_px")
+    px = row.get("opt_exit") if row.get("opt_exit") is not None else ltp
+    pts = ((t1px - fill) + (px - fill)) / 2 if t1px is not None else px - fill
+    row["opt_pnl_lot"] = round(pts * (row.get("opt_lot") or 1))
+    risk = (row.get("opt_entry") or 0) - (row.get("opt_sl") or 0)
+    row["opt_r"] = round(pts / risk, 2) if risk > 0 else None
+
+
+# ── Trades you took yourself ───────────────────────────────────────────────────────────────
+def mine_result(row, kind):
+    """Your real result for a trade you marked as taken: R against the planned risk, and ₹.
+    Bank Nifty: prices under 10,000 are option prices (risk = the option's planned entry - SL)."""
+    m = row.get("mine")
+    if not m:
+        return None
+    entry, ex = m["entry"], m.get("exit")
+    opt = kind == "bnf" and entry < 10000
+    sign = 1 if (opt or row["side"] == "bull") else -1
+    if ex is None:                                     # not closed by you yet: the trade's own exit / price now
+        if opt:
+            ex = row.get("opt_exit") if row.get("opt_exit") is not None else row.get("opt_ltp")
+        else:
+            ex = row.get("exit") if row.get("exit") is not None else row.get("last")
+        open_ = m.get("exit") is None and row.get("exit_at") is None
+    else:
+        open_ = False
+    risk = ((row.get("opt_entry") or 0) - (row.get("opt_sl") or 0)) if opt else abs(row["entry"] - row["sl"])
+    if ex is None or not risk or risk <= 0:
+        return {"r": None, "rs": None, "open": True}
+    pts = (ex - entry) * sign
+    qty = m.get("qty")
+    return {"r": round(pts / risk, 2), "rs": round(pts * qty) if qty else None, "open": open_, "exit": ex}
+
+
+def mine_report(folder, month, swing_rows, bnf_rows):
+    """Every trade you marked as taken this month, with your result next to the scanner's (paper) result,
+    and what the triggered trades you didn't take made on paper."""
+    rows = []
+    for f in sorted(folder.glob(f"trades-{month}-*.json")):
+        try:
+            for r in json.loads(f.read_text(encoding="utf-8")):
+                rows.append(("intra", r))
+        except (OSError, ValueError):
+            continue
+    rows += [("swing", r) for r in swing_rows if r.get("day", "").startswith(month)]
+    rows += [("bnf", r) for r in bnf_rows if r.get("day", "").startswith(month)]
+    taken, missed = [], []
+    for kind, r in rows:
+        day = datetime.fromtimestamp(r["picked_at"], IST).strftime("%Y-%m-%d")
+        if r.get("mine"):
+            res = mine_result(r, kind) or {}
+            taken.append({"kind": kind, "day": day, "symbol": r["symbol"], "side": r["side"], "option": r.get("option"),
+                          "picked_at": r["picked_at"], "mine": r["mine"], "real_r": res.get("r"), "real_rs": res.get("rs"),
+                          "open": res.get("open"), "paper_r": r.get("opt_r") if kind == "bnf" and r["mine"]["entry"] < 10000
+                          and r.get("opt_r") is not None else r.get("result_r"), "status": r.get("status")})
+        elif r.get("triggered_at") and r.get("result_r") is not None:
+            missed.append(r["result_r"])
+    done = [t for t in taken if t["real_r"] is not None and not t["open"]]
+    paper = [t["paper_r"] for t in done if t["paper_r"] is not None]
+    return {"trades": sorted(taken, key=lambda t: -t["picked_at"]),
+            "summary": {"taken": len(taken), "closed": len(done),
+                        "wins": sum(1 for t in done if t["real_r"] > 0),
+                        "real_r": round(sum(t["real_r"] for t in done), 2),
+                        "real_rs": sum(t["real_rs"] for t in done if t["real_rs"] is not None),
+                        "paper_r": round(sum(paper), 2) if paper else None,
+                        "missed": len(missed), "missed_r": round(sum(missed), 2)}}
+
+
+def set_mine(rows, picked_at, symbol, data):
+    """Mark a trade as taken (data = {entry, exit, qty}) or unmark it (data = None). True if found."""
+    for r in rows:
+        if abs(r["picked_at"] - picked_at) < 1 and r["symbol"] == symbol:
+            if data:
+                r["mine"] = data
+            else:
+                r.pop("mine", None)
+            return True
+    return False

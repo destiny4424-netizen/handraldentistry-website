@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "12 Nov · Minimum score for intraday picks (Settings)"
+VERSION = "12 Nov · Problem alerts, Bank Nifty 9:30/gap rules, Took-it button, live option prices"
 
 
 def load_env():
@@ -486,6 +486,29 @@ def book_notify(book, kind):
         book.save()
         for m in msgs:
             alert(kind, m)
+
+
+def bnf_option_marks(chains=None):
+    """The real price of each open (or just closed) Bank Nifty trade's option, from Dhan's option chain."""
+    today = datetime.now(IST).date()
+    rows = [r for r in BNFS.rows if r.get("opt_strike") and r.get("opt_expiry") >= today.isoformat()
+            and (r.get("exit_at") is None or (r.get("triggered_at") and r.get("opt_exit") is None
+                                              and datetime.fromtimestamp(r["exit_at"], IST).date() >= today - timedelta(days=1)))]
+    if not rows:
+        return
+    chains = dict(chains or {})
+    for r in rows:
+        exp = r["opt_expiry"]
+        if exp not in chains:
+            try:
+                chains[exp] = option_chain(INDEXES["BANKNIFTY"], exp, ("IDX_I",))
+            except DhanError as e:
+                if e.fatal:
+                    raise
+                chains[exp] = None
+        o = options.from_chain(chains[exp], r["opt_kind"], r["opt_strike"]) if chains[exp] else None
+        trades.option_marks(r, o["ltp"] if o else None)
+    BNFS.save()
 
 
 def bnf_notify():
@@ -1098,11 +1121,17 @@ def backtest_job(compare=False):
         BACKTEST.update(status="error", message=f"Backtest failed: {e}")
 
 
-def with_today(daily, c5):
-    """Daily candles with today's (forming) candle built from the 5-minute ones."""
+def with_today(daily, c5, from_hm=None):
+    """Daily candles with today's (forming) candle built from the 5-minute ones.
+    from_hm="09:30": today's candle starts at 9:30 (no entry in the first 15 minutes; its open is the 9:30 price)."""
     if not c5:
         return daily
     today, _ = market.session(c5)
+    if today and from_hm:
+        dn0 = analysis._day(today[0]["t"])
+        today = [c for c in today if datetime.fromtimestamp(c["t"], IST).strftime("%H:%M") >= from_hm]
+        if not today:
+            return [d for d in daily if analysis._day(d["t"]) < dn0]
     if not today:
         return daily
     dn = analysis._day(today[0]["t"])
@@ -1231,12 +1260,16 @@ def bank_nifty(demo, idx, swing_daily, ev, now_ts, open_, session_time):
             if not demo and market_open() and session_time >= "15:00":
                 if BNFS.record(pick, now_ts):
                     if o:
-                        BNFS.rows[-1].update(option=o["label"], opt_entry=o["entry"], opt_sl=o["sl"], opt_t1=o["t1"])
+                        BNFS.rows[-1].update(option=o["label"], opt_entry=o["entry"], opt_sl=o["sl"], opt_t1=o["t1"],
+                                             opt_t2=o["t2"], opt_kind=o["kind"], opt_strike=o["strike"],
+                                             opt_expiry=o["expiry"], opt_lot=o.get("lot"))
                     BNFS.rows[-1]["wa"] = []
                     BNFS.save()
                     alert("bnf", notify.bnf_new(BNFS.rows[-1], pick))
         state.update(res)
-    BNFS.update({"BANKNIFTY": d}, now_ts)
+    BNFS.update({"BANKNIFTY": with_today(d, c5, "09:30") if c5 else d}, now_ts)
+    if not demo:
+        bnf_option_marks({expiry: chain} if open_ and len(d) >= 70 and expiry and chain else {})
     bnf_notify()
     state["book"] = BNFS.view()
     return state, d
@@ -1600,7 +1633,8 @@ def track_once():
             c5 = dhan_candles(INDEXES["BANKNIFTY"], "5", "IDX_I", "INDEX")
             hit = DAILY.get("LONGBANKNIFTY")
             if hit:
-                BNFS.update({"BANKNIFTY": with_today(hit[1], c5)}, now)
+                BNFS.update({"BANKNIFTY": with_today(hit[1], c5, "09:30")}, now)
+                bnf_option_marks()
                 bnf_notify()
         except DhanError as e:
             if e.fatal:
@@ -1786,6 +1820,52 @@ def token_keeper():
         except Exception as e:                         # never let the keeper die
             TOKEN_STATUS["note"] = f"Renewal check failed: {e}"
         time.sleep(15 * 60)
+
+
+PROBLEMS = {}                                          # problem key -> its text, while it lasts
+
+
+def problems_now(now=None):
+    """What is wrong right now: the Dhan token, a failing scan, or no scan for 30 minutes in market hours."""
+    now = now or datetime.now(IST)
+    out = {}
+    if DEMO:
+        return out
+    exp = token_expiry(TOKEN) if TOKEN else None
+    if exp and exp < time.time():
+        out["token"] = "The Dhan token has expired: scans have stopped. Paste a new token in Settings."
+    elif exp and exp - time.time() < 2 * 3600 and TOKEN_STATUS.get("note"):
+        out["token"] = (f"The Dhan token expires at {datetime.fromtimestamp(exp, IST).strftime('%H:%M')} and renewing "
+                        f"failed ({TOKEN_STATUS['note']}). Paste a new token in Settings.")
+    if STATE.get("status") == "error":
+        out["scan"] = "The scan is failing: " + str(STATE.get("message") or "see Scanner health")[:200]
+    last = (HEALTH.get("scan") or {}).get("ts")
+    if market_open(now) and now.strftime("%H:%M") >= "09:50" and now.strftime("%H:%M") <= "15:30":
+        mins = (time.time() - last) / 60 if last else None
+        if mins is None or mins > 30:
+            out["stale"] = (f"No scan for {int(mins)} minutes during market hours." if mins else
+                            "No scan has finished today during market hours.") + " Open Scanner health."
+    return out
+
+
+def watchdog():
+    """Every 5 minutes: alert once when something goes wrong, and once when it is fixed."""
+    while True:
+        time.sleep(5 * 60)                             # first check 5 minutes after start (the first scan runs)
+        try:
+            now = problems_now()
+            for k, text in now.items():
+                if k not in PROBLEMS and alert_config():
+                    notify.send("🚨 Scanner problem\n" + text, 5)
+            for k in [k for k in PROBLEMS if k not in now]:
+                if alert_config():
+                    notify.send("✅ Scanner back to normal\n" + {"token": "The Dhan token is working again.",
+                                                                  "scan": "Scans are working again.",
+                                                                  "stale": "Scans are running again."}[k], 3)
+            PROBLEMS.clear()
+            PROBLEMS.update(now)
+        except Exception as e:                         # never let the watchdog die
+            warn("watchdog", e)
 
 
 def token_info():
@@ -2078,6 +2158,11 @@ class Handler(BaseHTTPRequestHandler):
             if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
                 return self.send(400, {"error": "month must be YYYY-MM"})
             self.send(200, trades.month_report(SETTINGS_DIR, month, SWINGS.rows))
+        elif url.path == "/api/mine":
+            month = (q.get("month", [""])[0] or datetime.now(IST).strftime("%Y-%m"))[:7]
+            if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
+                return self.send(400, {"error": "month must be YYYY-MM"})
+            self.send(200, trades.mine_report(SETTINGS_DIR, month, SWINGS.rows, BNFS.rows))
         elif url.path == "/api/btst":
             p = pick_payload(q.get("symbol", [""])[0].upper(), BTST_PICKS)
             self.send(200 if p else 404, p or {"error": "not found"})
@@ -2178,6 +2263,49 @@ class Handler(BaseHTTPRequestHandler):
                 liq["intra_min_score"] = int(ms)
             save_settings(intraday_from=t, **liq)
             WAKE.set()                                  # rescan so the change shows now
+            return self.send(200, {"ok": True})
+        if path == "/api/took":
+            kind = body.get("kind")
+            try:
+                picked_at, sym = float(body.get("picked_at")), str(body.get("symbol") or "")
+                data = None
+                if not body.get("clear"):
+                    entry = float(body.get("entry"))
+                    ex = float(body["exit"]) if body.get("exit") not in (None, "") else None
+                    qty = int(float(body["qty"])) if body.get("qty") not in (None, "") else None
+                    if entry <= 0 or (ex is not None and ex <= 0) or (qty is not None and qty <= 0):
+                        raise ValueError
+                    data = {"entry": entry, "exit": ex, "qty": qty, "at": time.time()}
+            except (TypeError, ValueError):
+                return self.send(400, {"error": "Enter your entry price (and exit price / quantity if you have them) as numbers."})
+            if kind == "intra":
+                day = datetime.fromtimestamp(picked_at, IST).strftime("%Y-%m-%d")
+                if day == TRADES.day:
+                    ok = trades.set_mine(TRADES.rows, picked_at, sym, data)
+                    TRADES.save()
+                else:
+                    f = SETTINGS_DIR / f"trades-{day}.json"
+                    try:
+                        rows = json.loads(f.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        rows = []
+                    ok = trades.set_mine(rows, picked_at, sym, data)
+                    if ok:
+                        f.write_text(json.dumps(rows), encoding="utf-8")
+            elif kind in ("swing", "bnf"):
+                book = SWINGS if kind == "swing" else BNFS
+                ok = trades.set_mine(book.rows, picked_at, sym, data)
+                book.save()
+            else:
+                ok = False
+            if not ok:
+                return self.send(404, {"error": "That trade wasn't found."})
+            with LOCK:
+                STATE["trades"] = TRADES.view()
+                if STATE.get("btst"):
+                    STATE["btst"]["book"] = SWINGS.view()
+                    if STATE["btst"].get("bnf"):
+                        STATE["btst"]["bnf"]["book"] = BNFS.view()
             return self.send(200, {"ok": True})
         if path == "/api/alerts":
             via = body.get("via") if body.get("via") in ("ntfy", "whatsapp") else "ntfy"
@@ -2289,6 +2417,7 @@ def main():
     threading.Thread(target=token_keeper, daemon=True).start()
     threading.Thread(target=bullion_loop, daemon=True).start()
     notify.start(alert_config)
+    threading.Thread(target=watchdog, daemon=True).start()
     try:
         server = ThreadingHTTPServer((HOST, PORT), Handler)
     except OSError:
