@@ -1,0 +1,16 @@
+{
+  "name": "pine-delta-auto-trading",
+  "version": "1.0.0",
+  "description": "Webhook bridge that turns TradingView Pine Script alerts into automated orders on Delta Exchange.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
