@@ -347,6 +347,11 @@ only buys when a move is likely soon and options are not expensive:
   estimated from index R minus time decay and costs.
 - The ⭐ variant (best total, both halves positive, 10+ trades) is used live. Without one, the card says "paper first".
 
+## Minimum intraday score
+Settings → Intraday → **Minimum score for intraday picks** (a slider, 0–90; 0 = all). Breakouts scoring below
+it are not shown, not tracked in Performance and not alerted. The Intraday tab lists the ones left out.
+It applies from the next scan; picks already given today stay.
+
 ## Phone alerts (intraday, swing, Bank Nifty options)
 `notify.py` sends alerts for intraday picks, swing stock picks and Bank Nifty option trades. Each kind can be
 switched on or off in Settings. For Bank Nifty, it sends alerts at these points:

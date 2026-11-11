@@ -496,6 +496,10 @@
       <b style="font-size:14px">Intraday</b>
       <label for="pickFrom">First intraday scan that gives picks (IST)</label>
       <select id="pickFrom"><option>09:30</option><option>09:45</option><option>10:00</option><option>10:15</option></select>
+      <label for="minScore">Minimum score for intraday picks: <b id="minScoreVal">0</b> <span style="font-weight:400;color:var(--muted)">(0 = show all)</span></label>
+      <input id="minScore" type="range" min="0" max="90" step="5" value="0" style="width:100%">
+      <div class="hint">Breakouts scoring below this are not shown, not tracked and not alerted. Score is out of 100: volume 25,
+      candle 20, structure 15, trend 25, participation 15. Check Stats → Learning journal → Score to see which scores have worked.</div>
       <div class="hint">Intraday = 15-minute breakouts of key levels (yesterday's high/low, last week's high/low, swing levels) on volume. Scans every 15 minutes from this
       time to 14:00. Every breakout goes into one list (each stock once) to trade when its entry breaks.</div>
       <b style="font-size:14px;display:block;margin-top:14px">Liquid stocks only</b>
@@ -672,6 +676,7 @@
   <section class="panel" id="picksPanel" hidden>
     <div class="ptitle"><h2 id="pickTitle">Intraday picks</h2><small id="pickNote"></small></div>
     <div class="riskbar" id="riskBar" hidden></div>
+    <div class="hint" id="belowNote" hidden style="margin-bottom:8px"></div>
     <div id="pickList"></div>
     <div class="ptitle" id="watchTitle" style="margin-top:18px"><h2>Watchlist</h2><small>within 0.5% of a key level, or broke out but not clean yet — not trades until a 15m close beyond the level on volume</small></div>
     <div id="watchList"></div>
@@ -1843,6 +1848,10 @@ function renderPicks() {
       <span class="badge" style="font-size:11px;padding:2px 7px">${w.side === "bull" ? "BULL" : "BEAR"}</span>
       <span><span class="nm">${w.symbol}</span> <span style="font-family:var(--mono)">${fmt(w.price)}</span> · ${w.basis} · <span class="stx ${w.status.split(" ")[0]}">${w.status}</span></span>
       <span class="why">${w.action}</span></div>`).join("") || `<div class="empty">Nothing waiting right now.</div>`;
+  const bl = pk.below || [];
+  $("belowNote").hidden = !pk.min_score;
+  $("belowNote").innerHTML = pk.min_score ? `Showing breakouts scoring <b>${pk.min_score}+</b> (Settings).` +
+    (bl.length ? ` Left out now: ${bl.map(b => `${esc(b.symbol)} <small>(${Math.round(b.score)})</small>`).join(", ")}` : "") : "";
   const list = $("pickList"), sig = pk.picks.map(c => c.symbol + c.side).join();
   const changed = list.dataset.sig !== sig; list.dataset.sig = sig;
   if (!pk.picks.length) {
@@ -2300,6 +2309,7 @@ async function loadSettings() {
       (tk.note ? `<br><span style="color:#ffb3bf">${tk.note}</span>` : "");
   if (st.cloud) $("savedWhere").textContent = "Everything here is saved on the server, so it stays across updates and restarts.";
   $("pickFrom").value = st.picks_from || "09:30";
+  $("minScore").value = st.intra_min_score || 0; $("minScoreVal").textContent = $("minScore").value;
   $("thinList").innerHTML = (state.universe && state.universe.skipped_list || []).length
     ? `Not scanned today (too thin, ${state.universe.skipped_list.length}): ${state.universe.skipped_list.map(esc).join(", ")}` : "";
   const rk = st.risk || {};
@@ -2350,7 +2360,7 @@ $("forget").onclick = async () => {
 $("prefSave").onclick = async () => {
   $("prefErr").style.color = ""; $("prefErr").textContent = "";
   try {
-    await post("/api/prefs", { picks_from: $("pickFrom").value, min_turnover_cr: $("minTurn").value, min_volume_lakh: $("minVol").value,
+    await post("/api/prefs", { picks_from: $("pickFrom").value, intra_min_score: $("minScore").value, min_turnover_cr: $("minTurn").value, min_volume_lakh: $("minVol").value,
       risk_capital: $("rkCap").value, risk_risk_pct: $("rkPct").value, risk_daily_loss_pct: $("rkDay").value,
       risk_max_open: $("rkOpen").value, risk_max_trades: $("rkMax").value, risk_btst_max: $("rkBtst").value });
     $("prefErr").style.color = "var(--bull)"; $("prefErr").textContent = `Saved. Intraday picks from the ${$("pickFrom").value} scan; stocks under ₹${$("minTurn").value} cr or ${$("minVol").value} lakh shares a day are skipped. Rescanning…`;
@@ -2384,6 +2394,7 @@ $("alTest").onclick = async () => {
   catch (err) { $("alErr").textContent = err.message; }
   try { await loadSettings(); } catch {}
 };
+$("minScore").oninput = () => $("minScoreVal").textContent = $("minScore").value;
 $("logout").onclick = async () => { await post("/api/logout", {}).catch(() => {}); location.reload(); };
 $("phoneSave").onclick = async () => {
   $("phoneErr").textContent = "";
