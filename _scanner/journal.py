@@ -36,14 +36,17 @@ INTRADAY_GROUPS = [
     ("Sector", lambda f: f.get("sector")),
     ("NIFTY gamma (GEX)", lambda f: {"pos": "Positive gamma (range day)", "neg": "Negative gamma (trend day)"}.get(f.get("gex"))),
 ]
-BTST_GROUPS = [
-    ("Side", lambda f: {"bull": "BTST (buy)", "bear": "STBT (sell)"}.get(f.get("side"))),
-    ("20-day breakout", lambda f: "At a 20-day high/low" if f.get("at20") else "Not at 20-day extreme"),
-    ("Day's move", lambda f: None if f.get("pct") is None else "1.5–3%" if abs(f["pct"]) < 3 else "3–5%" if abs(f["pct"]) < 5 else "5% and more"),
-    ("Volume", lambda f: None if f.get("rvol") is None else "1.5–2.5×" if f["rvol"] < 2.5 else "2.5× and more"),
+BTST_GROUPS = [                                        # the swing setup (it took over the BTST slot)
+    ("Side", lambda f: {"bull": "Swing buys", "bear": "Swing sells"}.get(f.get("side"))),
+    ("Zone type", lambda f: {"FVG": "Fair value gap", "IFVG": "Inverse FVG", "BPR": "Balanced price range",
+                             "Gap": "Price gap"}.get(f.get("zone_type"))),
+    ("Zone state", lambda f: {"fresh": "Untouched zone", "partial": "Partly filled zone", "inverted": "Inverted zone"}.get(f.get("zone_state"))),
+    ("Structure", lambda f: "After a BOS / CHoCH" if f.get("event") else "Trend only"),
+    ("Candle", lambda f: f.get("signal")),
+    ("Discount / premium", lambda f: None if f.get("discount") is None else "In discount (premium for sells)" if f["discount"] else "Other half"),
+    ("Futures OI", lambda f: (f.get("oi_kind") or "No OI data").title()),
     ("Score", _bucket_score),
     ("Sector", lambda f: f.get("sector")),
-    ("NIFTY gamma (GEX)", lambda f: {"pos": "Positive gamma (range day)", "neg": "Negative gamma (trend day)"}.get(f.get("gex"))),
 ]
 
 

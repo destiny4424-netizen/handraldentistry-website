@@ -34,7 +34,7 @@ import analysis
 import backtest
 import breakout
 import bullion
-import btst
+import swing
 import events
 import gex
 import intraday
@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "3 Nov · ORB choice cleared"
+VERSION = "11 Nov · Swing (FVG + price action + OI) replaces BTST"
 
 
 def load_env():
@@ -389,7 +389,7 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
          "version": VERSION, "market": None, "trades": {"rows": [], "summary": {}},
          "btst": {"open": False, "from": "12:00", "picks": [], "book": {"rows": [], "summary": {}}},
-         "schedule": "Breakout scans every 15 min 9:30–2:00 · BTST from 11:00, final at 3:00",
+         "schedule": "Breakout scans every 15 min 9:30–2:00 · Swing from 11:00, final list at 3:00",
          "bullion": None, "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
          "picks": {"funnel": [], "flow": [], "sectors": [], "picks": [], "watch": []}}
@@ -420,8 +420,9 @@ def reset_performance():
 
 reset_performance()
 TRADES = trades.TradeBook(SETTINGS_DIR)                # today's locked-in picks, followed to the end
-BTSTS = trades.BtstBook(SETTINGS_DIR)                  # BTST/STBT picks, followed into the next session
-BTST_PICKS = {}                                        # symbol -> (BTST pick, 5m candles) for the chart
+SWINGS = trades.SwingBook(SETTINGS_DIR)                # swing trades, followed for up to 10 sessions
+BTST_PICKS = {}                                        # symbol -> (swing pick, daily candles) for the chart
+FUT_DAILY = {}                                         # futures id -> (IST day, daily candles with OI)
 PICK_SINCE = {}                                        # (day, symbol, side) -> first time it was picked
 OPTION_PLANS = {}                                      # (day, symbol, side) -> option plan, made when first picked
 STOCK_IDS = {}                                         # symbol -> NSE equity security id (last scan)
@@ -917,7 +918,7 @@ def orb_picks(setup, results, candles_by, daily_by, demo):
 
 def apply_best(cmp):
     """You asked Claude to decide: switch to the ⭐ variants from a comparison, unless you picked one yourself.
-    No BTST variant with a tested edge -> BTST is marked paper only."""
+    No swing variant with a tested edge -> Swing is marked paper only."""
     rules, names = dict(SETTINGS.get("rules") or {}), dict(SETTINGS.get("rules_names") or {})
     manual = SETTINGS.get("rules_manual") or {}
     btst_edge = True
@@ -965,7 +966,7 @@ def health_report():
             f"{sc['analysed']} of {sc['liquid']} liquid F&O stocks analysed ({sc['stocks']} F&O in all)" +
             (f" · {sc['failed']} could not be fetched: {', '.join(sc['failed_list'])}" if sc["failed"] else " · none failed"))
         add("Picks", "ok", f"Setup in use: {(SETTINGS.get('rules_names') or {}).get('intraday') or 'Current rules'} · "
-            f"{sc['picks']} intraday picks today, {sc['btst']} BTST on the last scan · option plans for {sc['options']}")
+            f"{sc['picks']} intraday picks today, {sc['btst']} swing setups on the last scan · option plans for {sc['options']}")
     lt = STATE.get("last_track")
     if lt:
         add("Trade tracking", "ok", f"Today's trades last updated {lt}")
@@ -1027,6 +1028,65 @@ def backtest_job(compare=False):
         BACKTEST.update(status="error", message=f"Backtest failed: {e}")
 
 
+def with_today(daily, c5):
+    """Daily candles with today's (forming) candle built from the 5-minute ones."""
+    if not c5:
+        return daily
+    today, _ = market.session(c5)
+    if not today:
+        return daily
+    dn = analysis._day(today[0]["t"])
+    t0 = dn * 86400 - 19800
+    bar = {"t": t0, "o": today[0]["o"], "h": max(c["h"] for c in today), "l": min(c["l"] for c in today),
+           "c": today[-1]["c"], "v": sum(c["v"] for c in today)}
+    return [d for d in daily if analysis._day(d["t"]) < dn] + [bar]
+
+
+def nifty_daily(demo, idx):
+    """NIFTY daily candles (for strength vs NIFTY), fetched once a day."""
+    if demo:
+        c = idx.get("NIFTY", ([], None))[0]
+        return demo_daily("NIFTY", c) if c else []
+    today = datetime.now(IST).date()
+    hit = DAILY.get("IDXN")
+    if not hit or hit[0] != today:
+        try:
+            DAILY["IDXN"] = (today, dhan_daily(INDEXES["NIFTY"], "IDX_I", "INDEX"))
+            time.sleep(0.25)
+        except DhanError as e:
+            if e.fatal:
+                raise
+            warn("NIFTY daily", e)
+            return []
+    return with_today(DAILY["IDXN"][1], idx.get("NIFTY", ([], None))[0])
+
+
+def swing_oi(sym, pct, demo):
+    """Futures OI build-up over the last 5 sessions (current-month contract), cached for the day."""
+    if demo:
+        o = demo_oi(sym, pct)
+        return {"kind": o["kind"], "oi_pct": o["oi_pct"], "price_pct": o["price_pct"], "days": 5}
+    fid = FUTURES.get(sym)
+    if not fid:
+        return None
+    today = datetime.now(IST).date()
+    hit = FUT_DAILY.get(fid)
+    if not hit or hit[0] != today:
+        try:
+            now = datetime.now(IST)
+            body = {"securityId": str(fid), "exchangeSegment": "NSE_FNO", "instrument": "FUTSTK", "expiryCode": 0,
+                    "oi": True, "fromDate": (now - timedelta(days=30)).strftime("%Y-%m-%d"),
+                    "toDate": (now + timedelta(days=1)).strftime("%Y-%m-%d")}
+            FUT_DAILY[fid] = (today, _rows(dhan_post("/charts/historical", body)))
+            time.sleep(0.25)
+        except DhanError as e:
+            if e.fatal:
+                raise
+            warn(f"{sym} futures OI", e)
+            return None
+    return swing.futures_oi(FUT_DAILY[fid][1])
+
+
 def scan_once():
     demo = DEMO                                      # keys can be added mid-scan
     stocks = {s: s for s in DEMO_SYMBOLS} if demo else fno_stocks()
@@ -1038,7 +1098,7 @@ def scan_once():
     thin, liq_of, failed = [], {}, []
     t_start = time.time()
     # Stocks with a trade still being followed are always fetched, liquid or not.
-    keep = {r["symbol"] for r in TRADES.rows} | {r["symbol"] for r in BTSTS.rows if r.get("result_r") is None}
+    keep = {r["symbol"] for r in TRADES.rows} | {r["symbol"] for r in SWINGS.open_rows()}
     idx = fetch_market(demo)
     for n, (sym, sid) in enumerate(stocks.items(), 1):
         try:
@@ -1179,52 +1239,51 @@ def scan_once():
             c["market"] = ("with" if nifty["trend"] == ("Bullish" if is_bull else "Bearish")
                            else "neutral" if nifty["trend"] == "Sideways" else "against")
             c["rs"] = round(r.get("pct", 0) - nifty["pct"], 2)   # strength vs NIFTY today
-    # BTST / STBT from 12:00: strong closers, checked against futures OI, followed into tomorrow.
+    # Swing (daily chart): FVG / IFVG / BPR / gap zones + price action + 5-day futures OI. Worked out from
+    # 11:00 on today's forming daily candle; the 3 PM list is locked in and followed for up to 10 sessions.
     btst_from = "11:00"
     btst_open = demo or session_time >= btst_from
     btst_picks, skipped, btst_caution = [], [], ""
+    swing_daily = {s: with_today(daily_by[s], candles_by[s]) for s in results if s in daily_by}
     if btst_open:
-        sec_pct = {s: next((x["pct"] for x in top["sectors"] if x["name"] == picks.sector_of(s)), 0) for s in results}
-        bc = btst.candidates(results, candles_by, daily_by, {s: d["levels"] for s, d in funnel_in.items()},
-                             sec_pct, nifty["trend"] if nifty else "Sideways",
-                             time.time() if not demo else max(cs[-1]["t"] + 300 for cs in candles_by.values()),
-                             live_rules().get("btst"))
-        boi = {}
-        for c in bc[:15]:
-            sym = c["symbol"]
-            if sym in oi:
-                boi[sym] = oi[sym]
-            elif demo:
-                boi[sym] = demo_oi(sym, c["pct"])
-            elif FUTURES.get(sym):
-                try:
-                    boi[sym] = picks.oi_build(dhan_futures_oi(FUTURES[sym]))
-                    time.sleep(0.25)
-                except DhanError as e:
-                    if e.fatal:
-                        raise
-        btst_picks = btst.finish(bc[:15], boi, 8, live_rules().get("btst"))
-        # Events: no BTST into a company's results; fewer, stronger BTSTs before a big overnight event.
-        nxt = events._next_session(datetime.now(IST).date()).isoformat()
-        skipped = []
+        nifty_d = nifty_daily(demo, idx)
+        srules = live_rules().get("btst")
+        cands = []
+        for s_, d_ in swing_daily.items():
+            if picks.sector_of(s_) in swing.rules_of(srules)["skip_sectors"]:
+                continue
+            c = swing.analyse(s_, d_, nifty_d, None, srules, picks.sector_of(s_))
+            if c:
+                cands.append(c)
+        # Futures OI over 5 sessions, only for the shortlist; then score again with it.
+        cands = swing.rank(cands, 15)
+        final = []
+        for c in cands:
+            fo = swing_oi(c["symbol"], c["pct"] if "pct" in c else 0, demo)
+            c2 = swing.analyse(c["symbol"], swing_daily[c["symbol"]], nifty_d, fo, srules, c.get("sector"))
+            if c2:
+                c2["pct"] = results[c["symbol"]]["pct"]
+                final.append(c2)
+        btst_picks = swing.rank(final, 8)
+        # Events: no new swing trade into the company's results within the holding window.
+        horizon = (datetime.now(IST).date() + timedelta(days=7)).isoformat()
         for c in btst_picks:
             add_event_info(c, ev, demo, news=False)
             r_on = ev["results"].get(c["symbol"])
-            if r_on and r_on <= nxt:
-                skipped.append({"symbol": c["symbol"], "why": f"results on {r_on}: overnight gap risk"})
+            if r_on and r_on <= horizon:
+                skipped.append({"symbol": c["symbol"], "why": f"results on {r_on}, inside the holding period"})
         btst_picks = [c for c in btst_picks if c["symbol"] not in {x["symbol"] for x in skipped}]
         overnight = [e for e in ev["calendar"] if e["overnight"]]
-        keep_n = 3 if overnight or ev["risk"]["level"] == "High" else 5
-        btst_caution = (("Big event before tomorrow's open: " + ", ".join(e["name"] for e in overnight) + ". ")
-                        if overnight else "") + \
-                       ("Risk is high today. " if ev["risk"]["level"] == "High" else "")
-        if btst_caution:
-            btst_caution += f"Showing only the strongest {keep_n}; use smaller size."
+        if overnight or ev["risk"]["level"] == "High":
+            btst_caution = (("Big event before tomorrow's open: " + ", ".join(e["name"] for e in overnight) + ". ")
+                            if overnight else "") + ("Risk is high today. " if ev["risk"]["level"] == "High" else "") + \
+                           "Wait for the entry to trigger; use smaller size."
         if SETTINGS.get("btst_edge") is False:
-            btst_caution = ("Paper only: no BTST rule has made money after costs in the backtest yet. "
-                            "Follow these on paper; don't trade them with real money. ") + btst_caution
-        btst_picks = btst_picks[:keep_n]
+            btst_caution = ("Paper only: no swing rule has made money after costs in the backtest yet. "
+                            "Follow these on paper first. ") + btst_caution
+        btst_picks = btst_picks[:5]
         rcfg = risk.config(SETTINGS)
+        free = max(0, rcfg["btst_max"] - len(SWINGS.open_rows()))
         for i, c in enumerate(btst_picks):
             if gx:
                 c["gex"] = gx["regime"]
@@ -1233,15 +1292,16 @@ def scan_once():
             c["option"] = option_plan(c["symbol"], STOCK_IDS.get(c["symbol"]), c["side"], c["plan"], c["price"], demo)
             c["size"] = risk.size_stock(c["plan"], rcfg, btst=True)
             c["opt_size"] = risk.size_option(c["option"], rcfg)
-            c["take"] = i < rcfg["btst_max"]               # the risk engine takes only the best few overnight
-    btst_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
-    if not demo and market_open() and session_time >= "15:00":   # lock in the 3 PM list as today's BTST trades
+            c["take"] = i < free                       # the risk engine caps open swing trades
+            c["spark"] = [round(x["c"], 2) for x in swing_daily[c["symbol"]][-60:]]
+    btst_now = time.time() if not demo else max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time())
+    if not demo and market_open() and session_time >= "15:00":   # lock in the 3 PM swing list
         for c in btst_picks:
             if c.get("take"):
-                BTSTS.record(c, btst_now)
-    BTSTS.update(candles_by, btst_now)
-    btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": BTSTS.view(),
-                  "skipped": skipped, "caution": btst_caution}
+                SWINGS.record(c, btst_now)
+    SWINGS.update(swing_daily, btst_now)
+    btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": SWINGS.view(),
+                  "skipped": skipped, "caution": btst_caution, "kind": "swing"}
 
     # Lock every new pick into today's trades and follow them all through the day's candles.
     book_now = max((cs[-1]["t"] + 300 for cs in candles_by.values()), default=time.time()) if demo else time.time()
@@ -1303,7 +1363,7 @@ def scan_once():
         PICKS.clear()
         PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in top["picks"] if c["symbol"] in candles_by})
         BTST_PICKS.clear()
-        BTST_PICKS.update({c["symbol"]: (c, candles_by[c["symbol"]]) for c in btst_picks})
+        BTST_PICKS.update({c["symbol"]: (c, swing_daily[c["symbol"]]) for c in btst_picks})
         STATE.update(status="live", message="", scores=scores,
                      events={k: ev[k] for k in ("calendar", "crude", "usdinr", "news", "risk")}, risk=risk_state,
                      universe={"total": len(stocks), "liquid": len(stocks) - len(thin), "skipped": len(thin),
@@ -1327,7 +1387,7 @@ def scan_once():
 
 INTRADAY_FROM, INTRADAY_UNTIL = "09:30", intraday.LAST_ENTRY
 # Every 15 minutes from 9:30 to 14:00 (right after each 15-min candle closes) for breakouts;
-# then 14:30 and 15:00 for BTST. BTST is also worked out in every scan from 11:00.
+# then 14:30 and 15:00 for the Swing list (also worked out in every scan from 11:00).
 INTRADAY_SCANS = [(9 + (30 + 15 * i) // 60, (30 + 15 * i) % 60) for i in range(19)]   # 9:30 ... 14:00
 BTST_SCANS = [(14, 30), (15, 0)]
 SCHEDULE = INTRADAY_SCANS + BTST_SCANS
@@ -1340,7 +1400,7 @@ def track_once():
         return
     now = time.time()
     open_intra = {r["symbol"] for r in TRADES.rows if r.get("exit_at") is None}
-    open_btst = {r["symbol"] for r in BTSTS.rows if r.get("result_r") is None}
+    open_btst = {r["symbol"] for r in SWINGS.open_rows()}
     candles_by = {}
     for sym in sorted(open_intra | open_btst):
         sid = STOCK_IDS.get(sym)
@@ -1353,7 +1413,8 @@ def track_once():
                 raise
         time.sleep(0.25)
     TRADES.update(candles_by, now)
-    BTSTS.update(candles_by, now)
+    SWINGS.update({s_: with_today((DAILY.get(STOCK_IDS.get(s_)) or (None, []))[1], cs) for s_, cs in candles_by.items()
+                   if s_ in open_btst}, now)
     with LOCK:
         for sym, cs in candles_by.items():
             if sym in PICKS:
@@ -1370,7 +1431,7 @@ def track_once():
         rcfg = risk.config(SETTINGS)
         STATE["risk"] = dict(rcfg, **risk.day_status(TRADES.rows, rcfg), skipped=(STATE.get("risk") or {}).get("skipped", []))
         if STATE.get("btst"):
-            STATE["btst"]["book"] = BTSTS.view()
+            STATE["btst"]["book"] = SWINGS.view()
         STATE["last_track"] = datetime.now(IST).strftime("%H:%M")
 
 
@@ -1795,7 +1856,7 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 bt = None
             self.send(200, {
-                "live": {"intraday": journal.analyse(live), "btst": journal.analyse(BTSTS.rows, "btst")},
+                "live": {"intraday": journal.analyse(live), "btst": journal.analyse(SWINGS.rows, "btst")},
                 "backtest": {"intraday": journal.analyse(bt["intraday"]["trades"]),
                              "btst": journal.analyse(bt["btst"]["trades"], "btst"), "ran_at": bt.get("ran_at")} if bt else None})
         elif url.path == "/api/backtest":
@@ -1814,7 +1875,7 @@ class Handler(BaseHTTPRequestHandler):
             month = (q.get("month", [""])[0] or datetime.now(IST).strftime("%Y-%m"))[:7]
             if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
                 return self.send(400, {"error": "month must be YYYY-MM"})
-            self.send(200, trades.month_report(SETTINGS_DIR, month, BTSTS.rows))
+            self.send(200, trades.month_report(SETTINGS_DIR, month, SWINGS.rows))
         elif url.path == "/api/btst":
             p = pick_payload(q.get("symbol", [""])[0].upper(), BTST_PICKS)
             self.send(200 if p else 404, p or {"error": "not found"})
@@ -1869,7 +1930,7 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 WAKE.set()
                 return self.send(200, {"ok": True})
-            variants = dict(backtest.INTRADAY_VARIANTS if kind == "intraday" else backtest.BTST_VARIANTS if kind == "btst" else [])
+            variants = dict(backtest.INTRADAY_VARIANTS if kind == "intraday" else backtest.SWING_VARIANTS if kind == "btst" else [])
             if name not in variants:
                 return self.send(400, {"error": "Unknown rule variant."})
             rules, names = dict(SETTINGS.get("rules") or {}), dict(SETTINGS.get("rules_names") or {})

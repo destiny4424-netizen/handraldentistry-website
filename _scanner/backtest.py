@@ -1,9 +1,11 @@
-"""Backtest: replay the live intraday and BTST setups over past sessions.
+"""Backtest: replay the live intraday and Swing setups over past sessions.
 
 For every past trading day it rebuilds what the scanner would have seen at each 15-minute scan
 (9:30 ... 14:00, only candles that had closed by then), runs the same intraday.build() and records
 the picks exactly like the live Today's trades, then follows them through that day's 5-minute candles
-(entry trigger, T1/T2, stop, momentum review, 3:15 close). BTST is picked at 15:00 with btst.candidates()
+(entry trigger, T1/T2, stop, momentum review, 3:15 close). Swing is picked at 15:20 with swing.analyse() on
+the daily chart (today's candle so far) and followed day by day (trigger within 3 sessions, T1/T2, stop, 10-session
+time stop). Futures OI history is not available, so the swing replay scores OI as "no data".
 and followed into the next session (target, stop or 11:00).
 
 Not replayed (no history for them): futures OI, news/events, option prices. The liquid-stock list is
@@ -13,7 +15,7 @@ import random
 from array import array
 from datetime import datetime, timedelta, timezone
 
-import btst
+import swing
 import intraday
 import market
 import orb
@@ -39,12 +41,9 @@ class _DayBook(trades.TradeBook):
         pass
 
 
-class _BtstBook(trades.BtstBook):
+class _SwingBook(trades.SwingBook):
     def __init__(self):
-        self.rows = []
-
-    def save(self):
-        pass
+        super().__init__(None)                         # in memory
 
 
 def _ts(day_num, minutes):
@@ -61,7 +60,7 @@ def _max_drawdown(results):
 
 
 # Round-trip costs as a share of the position value: brokerage, STT, exchange fees, GST, stamp duty and
-# slippage. Intraday (MIS) is cheap; BTST in cash is delivery: STT 0.1% on both the buy and the sell.
+# slippage. Intraday (MIS) is cheap; a swing trade in cash is delivery: STT 0.1% on both the buy and the sell.
 COST = {"intraday": 0.0006, "btst": 0.0025}
 
 
@@ -144,7 +143,7 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None, rules=No
     for c in nifty5:
         nifty_per.setdefault(_day(c["t"]), []).append(c)
 
-    intra_rows, bbook = [], _BtstBook()
+    intra_rows, bbook = [], _SwingBook()
     for k, day in enumerate(test_days):
         say(f"Backtesting {datetime.fromtimestamp(_ts(day, 600), IST):%d %b} ({k + 1}/{len(test_days)})…")
         win = [d for d in days if d <= day][-5:]       # the live scanner looks at ~5 sessions
@@ -163,8 +162,13 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None, rules=No
                         "today15": [c for c in c15w if _day(c["t"]) == day], "daily": before,
                         "pdh": before[-1]["h"], "pdl": before[-1]["l"], "pdc": before[-1]["c"],
                         "levels": htf_levels(s["daily"], day)}
-        # Yesterday's BTST trades: follow them through this session.
-        bbook.update({sym: x["c5w"] for sym, x in ctx.items()}, _ts(day, 15 * 60 + 30))
+        # Open swing trades: follow them through this session (daily candles up to today).
+        def bar(c5):
+            return {"t": _ts(day, 0), "o": c5[0]["o"], "h": max(c["h"] for c in c5), "l": min(c["l"] for c in c5),
+                    "c": c5[-1]["c"], "v": sum(c["v"] for c in c5)}
+        open_syms = {r["symbol"] for r in bbook.open_rows()}
+        bbook.update({sym: x["daily"] + [bar(x["today5"])] for sym, x in ctx.items() if sym in open_syms},
+                     _ts(day, 15 * 60 + 30))
         nday = nifty_per.get(day, [])
         nwin = [c for d in win for c in nifty_per.get(d, [])]
         book = _DayBook(None)
@@ -232,25 +236,23 @@ def run(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None, rules=No
             r.pop("option", None)
         intra_rows += book.rows
 
-        # BTST at 15:00, followed into the next session.
-        now = _ts(day, BTST_AT)
-        snap = snapshot(now)
-        if snap:
-            results = {s: v["res"] for s, v in snap.items()}
-            sectors = {r["name"]: r["pct"] for r in sector_table({s: v["pct"] for s, v in results.items()})}
-            cands = btst.candidates(results, {s: v["upto"] for s, v in snap.items()},
-                                    {s: ctx[s]["daily"] for s in snap}, {s: ctx[s]["levels"] for s in snap},
-                                    {s: sectors.get(sector_of(s), 0) for s in snap}, nifty_trend(now) or "Sideways", now,
-                                    (rules or {}).get("btst"))
-            for c in btst.finish(cands[:15], {}, 5, (rules or {}).get("btst"))[:rcfg["btst_max"]]:
-                if bbook.record(c, now):
-                    # Bought near the close (3:15-3:25), not at 3:00: use the 3:20 candle's close.
-                    late = [x for x in ctx[c["symbol"]]["today5"] if x["t"] <= _ts(day, 15 * 60 + 20)]
-                    row = bbook.rows[-1]
-                    px = late[-1]["c"] if late else row["entry"]
-                    if (px - row["sl"]) * (1 if c["side"] == "bull" else -1) > 0:
-                        row["entry"] = round(px, 2)
-    btst_rows = [dict(r, kind="btst") for r in bbook.rows if r.get("result_r") is not None]
+        # Swing at 15:20 on the daily chart (today's candle so far).
+        now = _ts(day, 15 * 60 + 20)
+        srules = (rules or {}).get("btst")
+        nd = [{"t": _ts(dn, 0), "o": cs[0]["o"], "h": max(c["h"] for c in cs), "l": min(c["l"] for c in cs),
+               "c": cs[-1]["c"], "v": 1} for dn, cs in sorted(nifty_per.items()) if dn <= day and cs]
+        cands = []
+        for sym, x in ctx.items():
+            upto = [c for c in x["today5"] if c["t"] + 300 <= now]
+            if len(upto) < 60 or sector_of(sym) in swing.rules_of(srules)["skip_sectors"]:
+                continue
+            c = swing.analyse(sym, x["daily"] + [bar(upto)], nd, None, srules, sector_of(sym))
+            if c:
+                cands.append(c)
+        free = max(0, rcfg["btst_max"] - len(bbook.open_rows()))
+        for c in swing.rank(cands, free):
+            bbook.record(c, now)
+    btst_rows = [dict(r, kind="btst", day=r["day"]) for r in bbook.rows if r.get("result_r") is not None]
     first = datetime.fromtimestamp(_ts(test_days[0], 600), IST).strftime("%Y-%m-%d") if test_days else None
     last = datetime.fromtimestamp(_ts(test_days[-1], 600), IST).strftime("%Y-%m-%d") if test_days else None
     _add_pnl(intra_rows, rcfg, "intraday")
@@ -277,13 +279,15 @@ INTRADAY_VARIANTS = [
     ("No new entries after 12:00", {"last_entry": "12:00"}),
     ("NIFTY trending + volume 2×", {"nifty": "trending", "vol_x": 2.0}),
 ]
-BTST_VARIANTS = [
+SWING_VARIANTS = [
     ("Current rules", {}),
-    ("BTST buys only (no STBT)", {"sides": "bull"}),
-    ("Day's move 1.5–3% only", {"pct_max": 3.0}),
-    ("Only at a 20-day high/low", {"need_at20": True}),
-    ("Score 70+", {"score_min": 70}),
-    ("Buys only, move 1.5–3%", {"sides": "bull", "pct_max": 3.0}),
+    ("Longs only", {"sides": "bull"}),
+    ("Fresh zones only (untouched FVG/gap)", {"zones": "fresh"}),
+    ("Needs a BOS / CHoCH", {"need_bos": True}),
+    ("Trigger-day volume 1.2×+", {"vol_min": 1.2}),
+    ("Discount (premium) zones only", {"discount_only": True}),
+    ("Targets 2R / 4R", {"t1_r": 2.0}),
+    ("Score 65+", {"score_min": 65}),
 ]
 
 
@@ -297,13 +301,13 @@ def _brief(rep):
 
 
 def compare(data, nifty5, n_picks=6, sessions=60, progress=None, rcfg=None):
-    """Run every rule variant on the same history. Intraday and BTST variants are paired up run by run."""
+    """Run every rule variant on the same history. Intraday and Swing variants are paired up run by run."""
     say = progress or (lambda m: None)
-    n = max(len(INTRADAY_VARIANTS), len(BTST_VARIANTS))
+    n = max(len(INTRADAY_VARIANTS), len(SWING_VARIANTS))
     rows = {"intraday": [], "btst": []}
     for i in range(n):
         iv = INTRADAY_VARIANTS[i] if i < len(INTRADAY_VARIANTS) else None
-        bv = BTST_VARIANTS[i] if i < len(BTST_VARIANTS) else None
+        bv = SWING_VARIANTS[i] if i < len(SWING_VARIANTS) else None
         rules = {"intraday": iv[1] if iv else {}, "btst": bv[1] if bv else {}}
         rep = run(data, nifty5, n_picks, sessions, lambda m, i=i: say(f"Variant {i + 1}/{n}: {m}"), rcfg, rules)
         b = _brief(rep)
