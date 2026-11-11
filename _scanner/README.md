@@ -1,4 +1,4 @@
-# OrderBlock Scanner
+# Meridian · Market Desk (formerly OrderBlock Scanner)
 
 **Running it in the cloud (recommended):** see "OrderBlock Scanner" in the repository's main
 README. One command on the droplet, then it runs 24/7 and you open it from your iPhone anywhere.

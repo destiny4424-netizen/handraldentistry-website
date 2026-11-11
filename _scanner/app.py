@@ -1,4 +1,4 @@
-"""OrderBlock Scanner: scans NSE F&O stocks with the Dhan API, finds order
+"""Meridian (formerly OrderBlock Scanner): scans NSE F&O stocks with the Dhan API, finds order
 blocks and liquidity, and serves a live ranked dashboard.
 
 Run:  python app.py        (needs Python 3.9+, no extra packages)
@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "12 Nov · Problem alerts, Bank Nifty 9:30/gap rules, Took-it button, live option prices"
+VERSION = "12 Nov · Meridian: new name and look"
 
 
 def load_env():
@@ -1946,32 +1946,49 @@ def _png(size, pixel):
 
 
 def _icon_pixel(x, y):
-    """Home-screen icon: the three-bar logo on the dark background."""
-    bars = [(52, 70, 128, (34, 211, 138)), (82, 100, 104, (34, 211, 138)), (112, 130, 128, (240, 67, 93))]
-    for top, bottom, width, rgb in bars:
-        if top <= y < bottom and 40 <= x < 40 + width:
-            return rgb
-    return (11, 14, 19)
+    """Home-screen icon: the Meridian mark (a gold globe with its meridian) on ink."""
+    import math
+    cx = cy = 90
+    dx, dy = x + .5 - cx, y + .5 - cy
+    r = math.hypot(dx, dy)
+    gold, ink = (201, 164, 92), (13, 16, 21)
+
+    def mix(a):                                        # a: 0..1 coverage of gold
+        a = max(0.0, min(1.0, a))
+        return tuple(round(i + (g - i) * a) for i, g in zip(ink, gold))
+    ring = 1 - abs(r - 62) / 3.2                       # outer circle
+    mer = (1 - abs(dx) / 2.6) if abs(dy) <= 62 else 0  # the meridian
+    e = math.hypot(dx / 26, dy / 62)                   # inner ellipse
+    ell = (1 - abs(e - 1) * 62 / 2.2) * .55 if r < 64 else 0
+    dot = 1 - (r - 9) / 1.5 if r < 10.5 else 0
+    return mix(max(ring, mer, ell, dot))
 
 
 ICON = _png(180, _icon_pixel)
-MANIFEST = json.dumps({"name": "OrderBlock Scanner", "short_name": "OrderBlock", "start_url": "/",
-                       "display": "standalone", "background_color": "#0b0e13", "theme_color": "#0b0e13",
+MANIFEST = json.dumps({"name": "Meridian · Market Desk", "short_name": "Meridian", "start_url": "/",
+                       "display": "standalone", "background_color": "#0d1015", "theme_color": "#0d1015",
                        "icons": [{"src": "/icon.png", "sizes": "180x180", "type": "image/png"}]}).encode()
 
 PAGE_STYLE = """<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#0b0e13">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#0d1015">
 <link rel="apple-touch-icon" href="/icon.png"><link rel="manifest" href="/manifest.webmanifest">
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0e13;color:#e8edf3;
-font:16px system-ui,-apple-system,sans-serif;padding:16px;box-sizing:border-box}
-.box{width:min(340px,100%);box-sizing:border-box;background:#11151c;border:1px solid #232a35;border-radius:18px;padding:24px;text-align:center}
-h1{font-size:20px;margin:0 0 6px}p{color:#8a94a3;font-size:14px;margin:0 0 16px}
-input{width:100%;box-sizing:border-box;padding:14px;border-radius:12px;border:1px solid #343c49;background:#161b23;
-color:#e8edf3;font:600 24px ui-monospace,monospace;text-align:center;letter-spacing:.3em}
-button{margin-top:14px;width:100%;padding:13px;border:0;border-radius:12px;font:600 16px system-ui;color:#fff;
-background:linear-gradient(135deg,#7b6cf6,#a08bff)}.err{color:#ffb3bf;font-size:14px;min-height:20px;margin-top:10px}</style>"""
-LOGIN_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>OrderBlock Scanner</title>{PAGE_STYLE}</head>
-<body><form class="box" id="f"><h1>OrderBlock Scanner</h1><p>{"Enter your scanner password." if CLOUD else "Enter the phone PIN you set on your PC."}</p>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;color:#e7e2d6;
+background:radial-gradient(800px 420px at 80% -10%,rgba(201,164,92,.10),transparent 60%),#0d1015;
+font:16px Inter,system-ui,-apple-system,sans-serif;padding:16px;box-sizing:border-box}
+.box{width:min(340px,100%);box-sizing:border-box;background:linear-gradient(180deg,#171b23,#12161c);border:1px solid rgba(201,164,92,.22);
+border-radius:18px;padding:28px 24px;text-align:center;box-shadow:0 30px 80px -20px rgba(0,0,0,.8)}
+.mk{color:#c9a45c;font-size:30px;line-height:1}
+h1{font:600 34px/1.1 "Cormorant Garamond",Georgia,serif;letter-spacing:.03em;margin:6px 0 2px;color:#efe7d4}
+.tag{font:600 9px Inter,sans-serif;letter-spacing:.34em;text-transform:uppercase;color:#c9a45c;margin-bottom:16px}
+p{color:#8d8a83;font-size:14px;margin:0 0 16px}
+input{width:100%;box-sizing:border-box;padding:14px;border-radius:12px;border:1px solid #2c3340;background:#161a21;
+color:#e7e2d6;font:600 24px Inter,monospace;text-align:center;letter-spacing:.3em}input:focus{outline:1px solid #c9a45c}
+button{margin-top:14px;width:100%;padding:13px;border:0;border-radius:12px;font:600 16px Inter,system-ui;color:#17130b;
+background:linear-gradient(180deg,#dcbd7d,#b38c4b);box-shadow:inset 0 1px 0 rgba(255,255,255,.28)}
+.err{color:#f0b4b2;font-size:14px;min-height:20px;margin-top:10px}</style>"""
+LOGIN_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>Meridian · Market Desk</title>{PAGE_STYLE}</head>
+<body><form class="box" id="f"><svg class="mk" viewBox="0 0 32 32" width="38" height="38"><circle cx="16" cy="16" r="14.5" fill="none" stroke="#c9a45c" stroke-width="1.3"/><ellipse cx="16" cy="16" rx="6" ry="14.5" fill="none" stroke="#c9a45c" stroke-width="1" opacity=".55"/><path d="M16 1.5v29" stroke="#c9a45c" stroke-width="1.3"/><circle cx="16" cy="16" r="2.2" fill="#c9a45c"/></svg><h1>Meridian</h1><div class="tag">Market Desk</div><p>{"Enter your scanner password." if CLOUD else "Enter the phone PIN you set on your PC."}</p>
 <input id="pin" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" {'autocomplete="current-password" style="font-size:18px;letter-spacing:.05em"' if CLOUD else 'inputmode="numeric" autocomplete="current-password" maxlength="8"'} autofocus>
 <label style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;font-size:14px;color:#8a94a3">
 <input type="checkbox" onchange="pin.type=this.checked?'text':'password'" style="width:18px;height:18px">Show password</label>
@@ -1980,7 +1997,7 @@ LOGIN_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>OrderBl
 headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{pin:pin.value}})}});
 if(r.ok)location.reload();else{{e=await r.json();document.getElementById('e').textContent=e.error;pin.value=''}}}}</script>
 </body></html>""".encode()
-OFF_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>OrderBlock Scanner</title>{PAGE_STYLE}</head>
+OFF_PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><title>Meridian · Market Desk</title>{PAGE_STYLE}</head>
 <body><div class="box"><h1>Phone access is off</h1><p>On your PC, open the scanner, click <b>Settings</b>
 and turn on <b>Phone access</b> with a PIN. Then reload this page.</p></div></body></html>""".encode()
 
@@ -2335,7 +2352,7 @@ class Handler(BaseHTTPRequestHandler):
             cfg = alert_config(force=True)
             if not cfg:
                 return self.send(400, {"error": "Save the alert settings first."})
-            ok, detail = notify.send_now(cfg, "✅ OrderBlock Scanner alerts are working\nYou'll get new picks, "
+            ok, detail = notify.send_now(cfg, "✅ Meridian alerts are working\nYou'll get new picks, "
                                               "entries and exits here.", 4)
             notify.LOG.append((time.time(), ok, "test message" if ok else detail))
             return self.send(200 if ok else 400, {"ok": ok, "error": None if ok else detail})
@@ -2427,7 +2444,7 @@ def main():
             webbrowser.open(f"http://localhost:{PORT}")
         sys.exit(1)
     url = f"http://{'localhost' if HOST in ('127.0.0.1', '0.0.0.0') else HOST}:{PORT}"
-    print(f"OrderBlock Scanner running at {url}" + ("   (DEMO data - click Connect Dhan on the dashboard)" if DEMO else ""))
+    print(f"Meridian (scanner) running at {url}" + ("   (DEMO data - click Connect Dhan on the dashboard)" if DEMO else ""))
     print(f"  Keys and phone PIN are saved in {SETTINGS_FILE}")
     if CLOUD:
         print(f"  Cloud mode: {PUBLIC_URL or 'behind Caddy'}; everyone signs in with the password.")
