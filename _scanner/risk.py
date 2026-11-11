@@ -5,13 +5,13 @@ Defaults for a ₹1,50,000 account (all changeable in Settings):
     - intraday position value at most 2× capital (intraday margin); BTST at most 1× (it is held overnight)
     - stop taking new intraday trades for the day at −3R (−3% of capital, ₹4,500)
     - at most 3 intraday trades open at the same time, and at most 5 new intraday trades a day
-    - at most 2 BTST/STBT trades a night
+    - at most 3 swing trades open at a time (delivery, so sized at most 1× capital)
 Blocked picks are still shown (marked), but they are not taken into Today's trades or Performance.
 """
 import math
 
 DEFAULTS = {"capital": 150000, "risk_pct": 1.0, "daily_loss_pct": 3.0,
-            "max_open": 3, "max_trades": 5, "btst_max": 2}
+            "max_open": 3, "max_trades": 5, "btst_max": 3}      # btst_max = most swing trades open
 LIMITS = {"capital": (10000, 1e9), "risk_pct": (0.1, 5), "daily_loss_pct": (0.5, 20),
           "max_open": (1, 20), "max_trades": (1, 50), "btst_max": (0, 10)}
 INTRADAY_LEVERAGE = 2.0

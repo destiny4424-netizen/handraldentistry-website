@@ -432,7 +432,7 @@
   <div class="logo"><i><b></b><b></b><b></b></i><span class="lname">OrderBlock</span></div>
   <nav class="tabs">
     <button class="tab" data-mode="pk">Intraday<span class="count" id="cntPk">0</span></button>
-    <button class="tab" data-mode="btst">BTST<span class="count" id="cntBt">0</span></button>
+    <button class="tab" data-mode="btst">Swing<span class="count" id="cntBt">0</span></button>
     <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
     <button class="tab" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
     <button class="tab" data-mode="mcx">Gold &amp; Silver<span class="count" id="cntMcx">0</span></button>
@@ -514,7 +514,7 @@
       <label for="rkDay">Daily loss limit (% of capital)</label><input id="rkDay" type="number" inputmode="decimal" min="0.5" max="20" step="0.5">
       <label for="rkOpen">Most intraday trades open at once</label><input id="rkOpen" type="number" inputmode="numeric" min="1" max="20">
       <label for="rkMax">Most new intraday trades a day</label><input id="rkMax" type="number" inputmode="numeric" min="1" max="50">
-      <label for="rkBtst">Most BTST trades a night</label><input id="rkBtst" type="number" inputmode="numeric" min="0" max="10">
+      <label for="rkBtst">Most swing trades open at once</label><input id="rkBtst" type="number" inputmode="numeric" min="0" max="10">
       <div class="actions" style="margin-top:10px"><button type="button" id="prefSave">Save</button></div>
       <div class="err" id="prefErr"></div>
     </div>
@@ -611,7 +611,7 @@
     <div class="perfgrid"><div class="perfsec" id="jrIntra"></div><div class="perfsec" id="jrBtst"></div></div>
   </section>
   <section class="panel full" id="btstBookPanel" hidden>
-    <div class="ptitle"><h2>BTST trades</h2><small>the 3 PM list is locked in and followed into the next morning: exit at target, stop, or 11:00</small></div>
+    <div class="ptitle"><h2>Swing trades</h2><small>the 3 PM list is locked in: entry if price breaks the trigger within 3 sessions, then T1 (half, stop to cost), T2, the stop, or a 10-session time stop</small></div>
     <div class="tsum" id="bSum"></div>
     <div id="bRows"></div>
   </section>
@@ -645,7 +645,7 @@
     <div id="watchList"></div>
   </section>
   <section class="panel" id="btstPanel" hidden>
-    <div class="ptitle"><h2>BTST / STBT</h2><small id="btstNote"></small></div>
+    <div class="ptitle"><h2>Swing setups</h2><small id="btstNote"></small></div>
     <div class="caution" id="btstCaution" hidden></div>
     <div id="btstList"></div>
     <div class="hint" id="btstSkipped" style="margin-top:10px"></div>
@@ -666,7 +666,7 @@
 </main>
 <nav class="bnav" id="bnav">
   <button data-go="pk:picksPanel"><span>◎</span>Intraday</button>
-  <button data-go="btst:btstPanel"><span>☾</span>BTST</button>
+  <button data-go="btst:btstPanel"><span>☾</span>Swing</button>
   <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
   <button data-go="pk:marketPanel"><span>▲</span>Market</button>
   <button data-go="perf:perfPanel"><span>%</span>Stats</button>
@@ -1121,6 +1121,11 @@ function lwcShow(d) {
     line(p.entry, "#d1d4dc", bull ? "Buy above" : "Sell below", 0, 2);
     line(p.sl, "#f23645", "SL"); line(p.t1, "#089981", "T1"); line(p.t2, "#089981", "T2");
     if (d.pick.level) line(d.pick.level, bull ? "#22d38a" : "#ff5d73", d.pick.level_name || (bull ? "PDH" : "PDL"), 0, 2);
+    const zz = d.pick.zone;
+    if (zz && zz.top != null) {                        // swing: the FVG / IFVG / BPR / gap zone and its middle (CE)
+      line(zz.top, "rgba(139,124,246,.9)", `${zz.type} top`, 0, 1); line(zz.bottom, "rgba(139,124,246,.9)", `${zz.type} bottom`, 0, 1);
+      line(zz.ce, "rgba(139,124,246,.6)", "CE", 2, 1);
+    }
     const brk = /breakout/i.test(p.basis || "");
     if (p.held_at && at(p.held_at)) marks.push({ time: at(p.held_at), position: bull ? "belowBar" : "aboveBar", color: col, shape: bull ? "arrowUp" : "arrowDown", text: brk ? (d.pick.retest ? "RETEST" : "BREAKOUT") : "HELD" });
   } else if (d.levels) {
@@ -1151,7 +1156,7 @@ function renderPerf() {
   perfMonth = d.month;
   $("perfMonth").innerHTML = d.months.map(m => `<option value="${m}"${m === d.month ? " selected" : ""}>${new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</option>`).join("");
   perfSec($("perfIntra"), "Intraday", d.intraday, "intra");
-  perfSec($("perfBtst"), "BTST / STBT", d.btst, "btst");
+  perfSec($("perfBtst"), "Swing", d.btst, "btst");
 }
 function perfSec(el, title, part, kind) {
   const risk = +$("perfRisk").value || 0;
@@ -1211,7 +1216,7 @@ function renderJournal() {
   const pick = k => src === "backtest" ? d.backtest[k] : d.live[k];
   const lbl = src === "backtest" ? `from the backtest (${d.backtest.ran_at})` : "from live paper trades";
   $("jrIntra").innerHTML = jrPart(`Intraday · ${lbl}`, pick("intraday"));
-  $("jrBtst").innerHTML = jrPart(`BTST · ${lbl}`, pick("btst"));
+  $("jrBtst").innerHTML = jrPart(`Swing · ${lbl}`, pick("btst"));
 }
 
 // ---------- Backtest ----------
@@ -1234,9 +1239,9 @@ function renderBacktest() {
     : rep ? `Last run ${rep.ran_at}${rep.demo ? " (demo data)" : ""} · ${rep.sessions} sessions ${rep.from} → ${rep.to} · ${rep.stocks} liquid F&O stocks` : "Not run yet. Takes about 10 minutes (downloads ~3 months of 5-minute candles).";
   if (!rep) { $("btNote").textContent = ""; $("btIntra").innerHTML = $("btBtst").innerHTML = ""; return; }
   const dd = s => s.max_drawdown != null ? ` · worst drawdown ${s.max_drawdown}R` : "";
-  $("btNote").textContent = rep.notes + ` Intraday: ${rep.intraday.summary.closed} trades${dd(rep.intraday.summary)}. BTST: ${rep.btst.summary.closed} trades${dd(rep.btst.summary)}.`;
+  $("btNote").textContent = rep.notes + ` Intraday: ${rep.intraday.summary.closed} trades${dd(rep.intraday.summary)}. Swing: ${rep.btst.summary.closed} trades${dd(rep.btst.summary)}.`;
   perfSec($("btIntra"), "Backtest · Intraday breakouts", rep.intraday, "intra");
-  perfSec($("btBtst"), "Backtest · BTST / STBT", rep.btst, "btst");
+  perfSec($("btBtst"), "Backtest · Swing", rep.btst, "btst");
 }
 function renderCompare(d) {
   const c0 = d.compare, inUse = d.rules || {}, manual = d.manual || {};
@@ -1247,7 +1252,7 @@ function renderCompare(d) {
   const col = v => v == null ? "" : v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
   const f = v => v == null ? "—" : (v > 0 ? "+" : "") + v;
   const inr = v => v == null ? "—" : (v < 0 ? "−₹" : "₹") + Math.abs(Math.round(v)).toLocaleString("en-IN");
-  const table = (kind, rows) => !rows ? "" : `<h3>${kind === "intraday" ? "Intraday" : "BTST / STBT"}: rule variants</h3>
+  const table = (kind, rows) => !rows ? "" : `<h3>${kind === "intraday" ? "Intraday" : "Swing"}: rule variants</h3>
     <div class="hint">In use: <b>${esc(inUse[kind] || "Current rules")}</b> ${manual[kind] ? `(chosen by you) <button class="ghost" data-use="${kind}|auto">Let Claude pick</button>` : "(picked automatically: the ⭐ of the last comparison)"}</div>
     <div style="overflow-x:auto"><table class="ptable"><tr><th>Variant</th><th>Trades</th><th>Won</th><th>Avg R</th><th>PF</th><th>Worst DD</th><th>₹ total</th><th>₹/day earlier</th><th>₹/day later</th><th></th></tr>
     ${rows.map(r => `<tr><td class="l">${r.pick ? "⭐ " : ""}${esc(r.name)}${(inUse[kind] || "Current rules") === r.name ? ` <small style="color:${css("--bull")}">in use</small>` : ""}</td>
@@ -1256,8 +1261,8 @@ function renderCompare(d) {
       <td style="color:${col((r.early || {}).pnl_day)}">${inr((r.early || {}).pnl_day)}</td><td style="color:${col((r.late || {}).pnl_day)}">${inr((r.late || {}).pnl_day)}</td>
       <td>${(inUse[kind] || "Current rules") === r.name ? "" : `<button class="ghost" data-use="${kind}|${esc(r.name)}">Use</button>`}</td></tr>`).join("")}</table></div>
     <div class="hint">⭐ = most ₹ a day on the earlier days, still making money on the later (unseen) days, with enough trades. It is switched on automatically.
-    ₹ = sized for your capital and risk, after brokerage, STT and slippage (intraday 0.06%, BTST delivery 0.25% of the position). PF = profit factor; DD = worst drawdown in R.
-    ${kind === "btst" && d.btst_edge === false ? `<br><b style="color:#ffcf70">No BTST variant made money after costs: BTST stays paper only.</b>` : ""}</div>`;
+    ₹ = sized for your capital and risk, after brokerage, STT and slippage (intraday 0.06%, swing delivery 0.25% of the position). PF = profit factor; DD = worst drawdown in R.
+    ${kind === "btst" && d.btst_edge === false ? `<br><b style="color:#ffcf70">No swing variant made money after costs: Swing stays paper only.</b>` : ""}</div>`;
   const cards = (kind, rows) => !rows ? "" : `<div class="vcards">${rows.map(r => {
     const used = (inUse[kind] || "Current rules") === r.name;
     return `<div class="vcard"><div class="vh"><span>${r.pick ? "⭐ " : ""}${esc(r.name)}${used ? ` <small style="color:${css("--bull")}">in use</small>` : ""}</span>
@@ -1273,7 +1278,7 @@ function renderCompare(d) {
   document.querySelectorAll("[data-use]").forEach(b => b.onclick = async () => {
     const [kind, name] = b.dataset.use.split("|");
     if (!confirm(name === "auto" ? "Let Claude pick the best-tested rules automatically again?"
-                 : `Use "${name}" for ${kind === "intraday" ? "intraday" : "BTST"} from the next scan?`)) return;
+                 : `Use "${name}" for ${kind === "intraday" ? "intraday" : "swing"} from the next scan?`)) return;
     try { await post("/api/rules", { kind, name }); loadBacktest(); } catch (err) { alert(err.message); }
   });
 }
@@ -1290,40 +1295,48 @@ $("btRun").onclick = async () => {
 $("perfMonth").onchange = () => { perfMonth = $("perfMonth").value; loadPerf(); };
 $("perfRisk").oninput = () => { try { localStorage.setItem("perfRisk", $("perfRisk").value); } catch {} renderPerf(); };
 
-// ---------- BTST ----------
+// ---------- Swing (in the old BTST slot) ----------
 function renderBtst() {
   const b = state.btst || { open: false, from: "12:00", picks: [], book: { rows: [], summary: {} } };
-  $("btstNote").textContent = b.open ? "closing at the day's high/low above yesterday's high (below its low) on 1.5×+ volume, best at a 20-day breakout, with OI build-up · enter 3:15–3:25 PM · exit next morning"
-                                     : `opens at ${b.from} · final list at 3:00 PM`;
+  $("btstNote").textContent = b.open ? "daily chart · price back in a Fair Value Gap (FVG, inverse FVG, BPR or gap) with the trend, a price-action candle at the zone, and 5-day futures OI · buy/sell on the trigger, hold up to 10 sessions"
+                                     : `forming from ${b.from} · final list at 3:00 PM`;
   $("btstCaution").hidden = !b.caution; $("btstCaution").textContent = b.caution ? "⚠ " + b.caution : "";
   $("btstSkipped").innerHTML = (b.skipped || []).length ? "Left out: " + b.skipped.map(x => `<b>${esc(x.symbol)}</b> (${esc(x.why)})`).join(", ") : "";
   const list = $("btstList");
   list.innerHTML = b.picks.length ? b.picks.map((c, i) => {
-    const p = c.plan, bull = c.side === "bull";
+    const p = c.plan, bull = c.side === "bull", z = c.zone || {};
+    const zs = { fresh: "untouched", partial: `partly filled${z.fill != null ? " " + Math.round(z.fill * 100) + "%" : ""}`, inverted: "inverted (flipped)" }[z.state] || z.state;
     return `<div class="pick ${c.side}" data-sym="${c.symbol}" data-side="${c.side}">
-      <div class="top"><span class="badge">${bull ? "BTST BUY" : "STBT SELL"}</span><span class="nm">${c.symbol}</span>
-        <span class="px">${fmt(c.price)} <span style="color:${c.pct >= 0 ? css("--bull") : css("--bear")}">${pct(c.pct)}</span></span>
-        ${c.oi ? `<span class="oi">${c.oi.kind} · OI ${pct(c.oi.oi_pct)}</span>` : ""}</div>
-      <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)}</div><canvas data-spark="${i}"></canvas></div>
-      <div class="why2">${c.why.map(w => `<span>${w}</span>`).join("")}</div>
-
+      <div class="top"><span class="badge">${bull ? "SWING BUY" : "SWING SELL"}</span><span class="nm">${c.symbol}</span>
+        <span class="px">${fmt(c.price)} <span style="color:${(c.pct || 0) >= 0 ? css("--bull") : css("--bear")}">${pct(c.pct || 0)}</span></span>
+        ${c.oi ? `<span class="oi">${c.oi.kind} · OI ${pct(c.oi.oi_pct)} (${c.oi.days}d)</span>` : `<span class="oi">OI n/a</span>`}</div>
+      <div class="mid"><div class="meta2">#${i + 1} · score ${Math.round(c.score)} · ${esc(c.sector || "")}<br>
+        <b>${esc(c.zone_text)}</b> · ${esc(zs)} · CE ${fmt(z.ce)}<br>${esc(c.signal)} at the zone</div>
+        ${c.spark ? `<canvas data-spark="${i}"></canvas>` : ""}</div>
+      <div class="chips">
+        <span class="${c.trend !== "range" ? "ok" : ""}">${c.trend === "up" ? "UPTREND HH/HL" : c.trend === "down" ? "DOWNTREND LH/LL" : "RANGE"}</span>
+        ${c.event ? `<span class="ok">✓ ${esc(c.event.toUpperCase())}</span>` : ""}
+        <span class="${c.discount ? "ok" : "bad"}">${c.discount ? (bull ? "✓ DISCOUNT ZONE" : "✓ PREMIUM ZONE") : (bull ? "⚠ PREMIUM HALF" : "⚠ DISCOUNT HALF")}</span>
+        <span class="${c.vol_x >= 1.2 ? "ok" : ""}">VOLUME ${c.vol_x}×</span>
+        ${c.rs != null ? `<span class="${(c.rs >= 0) === bull ? "ok" : "bad"}">VS NIFTY 20D ${c.rs >= 0 ? "+" : ""}${c.rs}%</span>` : ""}
+        <span>50 EMA ${fmt(c.ema50)}</span></div>
       <div class="nums" style="margin-top:8px">
-        <div>${bull ? "BUY ~" : "SELL ~"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
+        <div>${bull ? "BUY ABOVE" : "SELL BELOW"}<b>${fmt(p.entry)}</b></div><div class="sl">SL<b>${fmt(p.sl)}</b></div>
         <div class="tg">T1<b>${fmt(p.t1)}</b></div><div class="tg">T2<b>${fmt(p.t2)}</b></div>
         <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${p.risk_pct}%</b></div></div>
-      <div class="action">${bull ? "Buy" : "Sell (futures)"} between 3:15 and 3:25 PM near ${fmt(p.entry)} · stop ${fmt(p.sl)} · exit tomorrow at T1/T2, the stop, or by 11:00</div>
-      ${c.take === false ? `<div class="caution">Backup only: the risk engine takes the best ${(state.risk || {}).btst_max || 2} BTST trades a night.</div>` : sizeBox(c, true)}
-      <details class="more"${wide() ? " open" : ""}><summary>Score, checks, option &amp; news</summary>
+      <div class="action">${esc(p.action)}${bull ? "" : " (via futures or a put)"}</div>
+      ${c.take === false ? `<div class="caution">Not taken: the risk engine allows ${(state.risk || {}).btst_max || 3} open swing trades.</div>` : sizeBox(c, true)}
+      <details class="more"${wide() ? " open" : ""}><summary>Score, events, option &amp; news</summary>
         ${(c.flags || []).length ? `<div class="chips">${flagChips(c)}</div>` : ""}${partsBars(c)}${optBox(c.option, bull, true)}${newsList(c)}</details>
     </div>`;
-  }).join("") : `<div class="empty">${b.open ? "No stock closes strong enough right now. The next hourly scan may find some." : `BTST picks appear from ${b.from}, after the first hourly scan.`}</div>`;
+  }).join("") : `<div class="empty">${b.open ? "No stock is back in a Fair Value Gap with the trend and a price-action trigger right now." : `Swing setups are worked out from ${b.from} on today's daily candle.`}</div>`;
   list.querySelectorAll("canvas[data-spark]").forEach(cv => drawSpark(cv, b.picks[+cv.dataset.spark]));
   keepOpen(list);
   list.querySelectorAll(".pick").forEach(el => el.onclick = ev => { if (ev.target.closest("a")) return; selected = [el.dataset.sym, el.dataset.side]; hl(); loadChart(); });
   const hl = () => list.querySelectorAll(".pick").forEach(el => el.classList.toggle("sel", !!selected && el.dataset.sym === selected[0]));
   if (!selected || !b.picks.some(c => c.symbol === selected[0])) selected = b.picks[0] ? [b.picks[0].symbol, b.picks[0].side] : null;
   hl(); loadChart();
-  // the locked-in BTST trades
+  // the locked-in swing trades
   const bk = b.book || { rows: [], summary: {} }, sm = bk.summary || {};
   $("bSum").innerHTML = bk.rows.length ? `<span>Trades <b>${sm.count}</b></span><span>Won <b style="color:${css("--bull")}">${sm.wins}</b> · Lost <b style="color:${css("--bear")}">${sm.losses}</b></span>
     ${sm.win_rate != null ? `<span>Win rate <b>${sm.win_rate}%</b></span>` : ""}<span>Total <b style="color:${sm.total_r >= 0 ? css("--bull") : css("--bear")}">${sm.total_r >= 0 ? "+" : ""}${sm.total_r}R</b></span>` : "";
@@ -1332,12 +1345,12 @@ function renderBtst() {
       const res = r.result_r != null ? r.result_r : r.running_r;
       const cls = r.result_r != null ? (r.result_r > 0 ? "win" : r.result_r < 0 ? "loss" : "") : "live";
       return `<div class="trow"><span class="tm">${istDay(r.picked_at)}</span>
-        <span><span class="badge" style="font-size:10px;padding:1px 6px;background:${r.side === "bull" ? css("--bull") : css("--bear")};color:#fff">${r.side === "bull" ? "BTST" : "STBT"}</span> <span class="sym">${r.symbol}</span></span>
+        <span><span class="badge" style="font-size:10px;padding:1px 6px;background:${r.side === "bull" ? css("--bull") : css("--bear")};color:#fff">${r.side === "bull" ? "BUY" : "SELL"}</span> <span class="sym">${r.symbol}</span></span>
         <span class="num hide-s">${fmt(r.entry)}</span><span class="num hide-s" style="color:#ff8193">${fmt(r.sl)}</span>
         <span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t1)}</span><span class="num hide-s" style="color:${css("--bull")}">${fmt(r.t2)}</span>
         <span class="st"><span class="tst ${cls}">${r.status}</span>${r.gap_pct != null ? ` <span class="tm">gap ${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</span>` : ""}</span>
         <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}${r.result_r == null && res != null ? "*" : ""}</span></div>`;
-    }).join("") : `<div class="empty">The 3:00 PM BTST list is locked in here each day and followed into the next morning.</div>`;
+    }).join("") : `<div class="empty">The 3:00 PM swing list is locked in here and followed for up to 10 sessions.</div>`;
 }
 
 // Phone: the stock list comes first; tapping a stock scrolls down to its chart.
@@ -1488,10 +1501,14 @@ function keepOpen(list) {
     d.ontoggle = () => { if (wide()) return; d.open ? OPEN_DETAILS.add(key) : OPEN_DETAILS.delete(key); };
   });
 }
+const SWING_MAX = { structure: 25, zone: 25, price_action: 20, oi: 15, participation: 15 };
+const SWING_NAME = { structure: "Structure", zone: "FVG zone", price_action: "Price action", oi: "OI", participation: "Volume+RS" };
 function partsBars(c) {
   if (!c.parts) return "";
-  return `<div class="parts">${Object.entries(c.parts).map(([k, v]) => `<div>${PART_NAME[k] || k} ${Math.round(v)}/${PART_MAX[k] || 20}
-    <i><b style="width:${Math.max(0, Math.min(100, v / (PART_MAX[k] || 20) * 100))}%"></b></i></div>`).join("")}</div>`;
+  const sw = c.zone && typeof c.zone === "object" && !Array.isArray(c.zone);   // swing pick
+  const mx = k => (sw ? SWING_MAX[k] : PART_MAX[k]) || 20, nm = k => (sw ? SWING_NAME[k] : PART_NAME[k]) || k;
+  return `<div class="parts">${Object.entries(c.parts).map(([k, v]) => `<div>${nm(k)} ${Math.round(v)}/${mx(k)}
+    <i><b style="width:${Math.max(0, Math.min(100, v / mx(k) * 100))}%"></b></i></div>`).join("")}</div>`;
 }
 function sizeBox(c, btst) {
   const z = c.size, o = c.opt_size, rk = state.risk || {};
@@ -1522,7 +1539,7 @@ function optBox(o, bull, btst) {
     <div class="on"><div>ENTRY ~<b>${n(o.entry)}</b></div><div style="color:#ff8193">SL<b>${n(o.sl)}</b></div>
       <div style="color:${css("--bull")}">T1<b>${n(o.t1)}</b></div><div style="color:${css("--bull")}">T2<b>${n(o.t2)}</b></div></div>
     <div class="om">Premium now ${n(o.ltp)} · delta ${o.delta}${o.iv ? ` · IV ${o.iv}%` : ""}${o.lot ? ` · lot ${o.lot} · risk ₹${Number(o.risk_lot).toLocaleString("en-IN")}/lot` : ""}${o.spread_pct != null ? ` · spread ${o.spread_pct}%` : ""}.
-      ${btst ? `Buy the ${o.kind === "CE" ? "call" : "put"} at 3:15–3:25 PM; exit tomorrow when the stock hits its SL/T1/T2 or by 11:00.`
+      ${btst ? `Buy the ${o.kind === "CE" ? "call" : "put"} when the stock triggers its entry; exit when the stock hits its SL/T1/T2 or after 10 sessions.`
              : `Buy the ${o.kind === "CE" ? "call" : "put"} when the stock ${bull ? "breaks above" : "breaks below"} its entry; option levels match the stock's SL/T1/T2.`}</div></div>`;
 }
 function newsList(c) {
@@ -2179,7 +2196,7 @@ async function loadSettings() {
     ? `Not scanned today (too thin, ${state.universe.skipped_list.length}): ${state.universe.skipped_list.map(esc).join(", ")}` : "";
   const rk = st.risk || {};
   $("rkCap").value = rk.capital ?? 150000; $("rkPct").value = rk.risk_pct ?? 1; $("rkDay").value = rk.daily_loss_pct ?? 3;
-  $("rkOpen").value = rk.max_open ?? 3; $("rkMax").value = rk.max_trades ?? 5; $("rkBtst").value = rk.btst_max ?? 2;
+  $("rkOpen").value = rk.max_open ?? 3; $("rkMax").value = rk.max_trades ?? 5; $("rkBtst").value = rk.btst_max ?? 3;
   $("minTurn").value = st.min_turnover_cr ?? 200; $("minVol").value = st.min_volume_lakh ?? 5;
   $("cloudSect").hidden = !st.cloud; $("phoneSect").hidden = !!st.cloud;
   $("cloudUrl").textContent = st.public_url || location.origin;

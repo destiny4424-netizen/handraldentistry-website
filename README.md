@@ -207,11 +207,14 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
     last week's high/low and swing highs/lows. Closing above one is a buy, closing below one is a sell.
     Scans every 15 minutes from 9:30 to 14:00. Every breakout goes into **Today's breakouts**,
     each stock once, newest first, and is followed until 3:15. Order blocks stay on their own tab.
-  - **BTST / STBT:** worked out from 11:00, with the final list at 3:00. A BTST must close at the day's
-    high, above yesterday's high, on 1.5× volume and up 1.5–6%. A 20-day breakout and OI build-up rank
-    higher. These are strong closers to buy (or, in
-    F&O, sell) between 3:15 and 3:25 PM and exit the next morning. The 3 PM list is locked in and followed
-    into the next session (target, stop, or 11:00 exit).
+  - **Swing (replaced BTST):** daily chart, held for up to 10 sessions. A stock qualifies when:
+    - it is trending (HH/HL or a fresh BOS/CHoCH, above the 50-day EMA)
+    - it has come back into a Fair Value Gap zone (FVG, inverse FVG, BPR or price gap) and closed back above its middle
+    - it printed a price-action candle there (hammer, engulfing or strong close)
+    - 5-day futures OI agrees
+
+    Entry above the trigger day's high within 3 sessions. Stop below the zone. T1/T2 at the next swing levels;
+    after T1, half is booked and the stop moves to cost; a time stop applies after 10 sessions. The 3 PM list is locked in.
 - **Options:** each intraday and BTST pick also shows a stock option to trade instead:
   - a call for a buy, a put for a sell, at the money (or one strike in the money if that is thin)
   - next month's expiry when this month's is 7 days away or less
@@ -235,7 +238,7 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
     make a one-step Apple Shortcut named **TradingView Chart** (Open App → TradingView). After that the button
     copies the symbol (e.g. NSE:SBIN) and opens the app; paste it in the app's search. Change it under Settings.
   - a watchlist on the right
-  - a bottom bar on the iPhone: Intraday, BTST, Trades, Market, Stats
+  - a bottom bar on the iPhone: Intraday, Swing, Trades, Market, Stats
 - Runs 24/7 on the droplet, whether your PC is on or off. It scans during
   market hours (9:15–15:30 IST, Mon–Fri), starts on boot and restarts itself if it ever stops.
 - An intraday trade is listed when a 15-minute candle closes beyond yesterday's high/low on volume.

@@ -307,24 +307,57 @@ Order blocks have their own tab and are not mixed in. Scans run every 15 minutes
 - **Watchlist:** stocks within 0.5% of yesterday's high/low on good volume, and breakouts that are extended
   or not yet backed by VWAP/Supertrend.
 
-## How BTST / STBT is chosen
-Worked out in every scan from 11:00; the 3:00 PM list is locked in. A BTST buy needs **all** of these:
-- up 1.5–6% today (bigger moves often give back the next morning)
-- closing in the top 20% of the day's range, and still at the last hour's high
-- above yesterday's high, and above VWAP
-- volume at least 1.5× a normal day (projected for the full day)
-- NIFTY not bearish
+## How Swing trades are chosen (replaced BTST)
+Swing setups come from the daily chart (`swing.py`) and are held for up to 10 sessions. They are worked out in
+every scan from 11:00 on today's forming daily candle, and the 3:00 PM list is locked in. Shown for a buy; a
+sell is the mirror image, traded through futures or a put.
 
-STBT is the mirror image. The rest is ranked:
-- closing strength and volume
-- a 20-day high/low breakout (big plus)
-- above (below) the 20-day average close
-- sector agrees
-- long build-up in futures OI
-Long unwinding (money leaving) removes the stock, and so do results due before the next session.
-- **Stop-loss:** beyond the last hour's low, 0.5–2.5% away.
-- **Targets:** the next level, or 1.2R and 2.2R.
-- **Exit:** next morning at T1/T2, the stop, or by 11:00.
+1. **Trend (price action):**
+   - daily structure is up (higher highs and higher lows), or a fresh bullish break of structure (BOS) or
+     change of character (CHoCH)
+   - the close is above the 50-day EMA
+2. **An imbalance zone to buy from.** These Fair Value Gap types count, each from the last 60 sessions:
+   - **FVG:** candle 1's high below candle 3's low. Fresh (untouched) or partly filled.
+   - **Inverse FVG (IFVG):** a bearish FVG that price closed through. It flips to support.
+   - **BPR (balanced price range):** where a bullish and a bearish FVG overlap.
+   - **Gap:** a true gap between two days (today's low above yesterday's high), until it is filled.
+
+   Price must have come back into the zone today or yesterday and closed beyond its middle (the CE, 50%).
+   A zone in the "discount" half of the latest swing range scores higher (the "premium" half for sells).
+3. **Price-action trigger at the zone:** a hammer / pin bar, a bullish engulfing, or a strong close.
+4. **Futures OI over 5 sessions:**
+   - long build-up scores best, and short covering is fine
+   - short build-up against the trade rules it out
+5. **Participation:** the trigger day's volume against its 20-day average, and strength against NIFTY over 20 days.
+
+**The plan:**
+- **Entry:** buy above the trigger day's high, valid for 3 sessions.
+- **Stop:** below the zone and the trigger low.
+- **T1:** the nearest swing high or opposing zone, at least 1.5R away; otherwise 2R.
+- **T2:** the next one, or 3.5R.
+- **Managing the trade:**
+  - after T1, half is booked and the stop moves to cost
+  - anything still open after 10 sessions is closed
+
+**Score (out of 100):** structure 25, FVG zone 25, price action 20, OI 15, volume + relative strength 15.
+
+**Limits:**
+- Stocks with results inside the holding window are left out.
+- The risk engine keeps at most 3 swing trades open, each sized at 1% risk and at most 1× capital (delivery).
+
+**In the backtest:**
+- Swing is replayed at 3:20 PM each day and followed on daily candles.
+- Futures OI history isn't available there, so it is scored as "no data".
+- Costs are delivery costs: 0.25% of the position.
+
+**Compare rules variants:**
+- longs only
+- fresh zones only
+- needs a BOS/CHoCH
+- trigger-day volume 1.2× or more
+- discount zones only
+- targets 2R/4R
+- score 65 or more
 
 ## How an HTF key level breakout is found
 1. **Key levels** come from daily candles:
