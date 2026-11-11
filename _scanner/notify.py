@@ -184,6 +184,9 @@ def trade_alerts(row, kind):
             out.append(f"⏱ Square off · {name}\n3:15 PM: close the trade{tail}")
         elif st.startswith("Time stop"):
             out.append(f"⏱ Time exit · {name}\n{st}: exit at market{tail}")
+        elif st.startswith("Skipped"):
+            out.append(f"⏭ Skipped · {name}\nOpened more than half the stop distance past the entry {f(row['entry'])}: "
+                       "don't chase it.")
         elif st.startswith("Cancelled"):
             out.append(f"➖ Cancelled · {name}\nThe stop broke before the entry: don't take it.")
         elif st.startswith("Not triggered") and kind != "intra":

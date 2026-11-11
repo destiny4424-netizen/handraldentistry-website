@@ -347,6 +347,32 @@ only buys when a move is likely soon and options are not expensive:
   estimated from index R minus time decay and costs.
 - The ⭐ variant (best total, both halves positive, 10+ trades) is used live. Without one, the card says "paper first".
 
+## Problem alerts
+Every 5 minutes a watchdog checks for problems. When alerts are on, each problem sends one urgent notification,
+and a "back to normal" one when it is fixed. It checks for:
+- an expired Dhan token, or one about to expire that couldn't be renewed
+- a failing scan
+- no finished scan for 30 minutes between 9:50 and 3:30 on market days
+
+## Took it: your real results
+Every trade row (Today's trades, Swing trades, Bank Nifty trades) has a **TOOK IT?** button. Enter your entry
+price, your exit price (leave it empty while open) and the quantity. For Bank Nifty, enter the option prices.
+
+Stats → **Your trades** shows:
+- your result in R (against the planned risk) and in ₹
+- the scanner's result on the same trades
+- what the triggered trades you skipped made on paper
+
+## Live option prices (Bank Nifty)
+For open Bank Nifty trades, every 5 minutes the option's real price is read from Dhan's option chain. The scanner
+records the option price at the entry, at T1 and at the exit (within the 5-minute check), and shows the
+option's ₹ a lot and R next to the trade.
+
+## Bank Nifty entry timing
+No entry before the 9:30 candle closes: today's candle for the trade starts at 9:30. If Bank Nifty opens more
+than half the stop distance past the entry, the trade is skipped and an alert says so. The backtest applies the
+gap rule too.
+
 ## Minimum intraday score
 Settings → Intraday → **Minimum score for intraday picks** (a slider, 0–90; 0 = all). Breakouts scoring below
 it are not shown, not tracked in Performance and not alerted. The Intraday tab lists the ones left out.
