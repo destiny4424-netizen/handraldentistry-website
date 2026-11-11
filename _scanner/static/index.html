@@ -646,6 +646,7 @@
   </section>
   <section class="panel" id="btstPanel" hidden>
     <div class="ptitle"><h2>Swing setups</h2><small id="btstNote"></small></div>
+    <div id="bnfBox"></div>
     <div class="caution" id="btstCaution" hidden></div>
     <div id="btstList"></div>
     <div class="hint" id="btstSkipped" style="margin-top:10px"></div>
@@ -1302,6 +1303,7 @@ function renderBtst() {
                                      : `forming from ${b.from} · final list at 3:00 PM`;
   $("btstCaution").hidden = !b.caution; $("btstCaution").textContent = b.caution ? "⚠ " + b.caution : "";
   $("btstSkipped").innerHTML = (b.skipped || []).length ? "Left out: " + b.skipped.map(x => `<b>${esc(x.symbol)}</b> (${esc(x.why)})`).join(", ") : "";
+  renderBnf(b.bnf);
   const list = $("btstList");
   list.innerHTML = b.picks.length ? b.picks.map((c, i) => {
     const p = c.plan, bull = c.side === "bull", z = c.zone || {};
@@ -1334,7 +1336,9 @@ function renderBtst() {
   keepOpen(list);
   list.querySelectorAll(".pick").forEach(el => el.onclick = ev => { if (ev.target.closest("a")) return; selected = [el.dataset.sym, el.dataset.side]; hl(); loadChart(); });
   const hl = () => list.querySelectorAll(".pick").forEach(el => el.classList.toggle("sel", !!selected && el.dataset.sym === selected[0]));
-  if (!selected || !b.picks.some(c => c.symbol === selected[0])) selected = b.picks[0] ? [b.picks[0].symbol, b.picks[0].side] : null;
+  const bnfSel = selected && selected[0] === "BANKNIFTY" && b.bnf && b.bnf.pick;
+  if (!bnfSel && (!selected || !b.picks.some(c => c.symbol === selected[0])))
+    selected = b.picks[0] ? [b.picks[0].symbol, b.picks[0].side] : b.bnf && b.bnf.pick ? ["BANKNIFTY", b.bnf.pick.side] : null;
   hl(); loadChart();
   // the locked-in swing trades
   const bk = b.book || { rows: [], summary: {} }, sm = bk.summary || {};
@@ -1351,6 +1355,77 @@ function renderBtst() {
         <span class="st"><span class="tst ${cls}">${r.status}</span>${r.gap_pct != null ? ` <span class="tm">gap ${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</span>` : ""}</span>
         <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}${r.result_r == null && res != null ? "*" : ""}</span></div>`;
     }).join("") : `<div class="empty">The 3:00 PM swing list is locked in here and followed for up to 10 sessions.</div>`;
+}
+
+// Bank Nifty option buying (monthly expiry): the view, the trade, the backtest and the book.
+const BNF_MAX = { trend: 20, setup: 20, price_action: 10, volatility: 15, futures_oi: 10, banks: 10, option_chain: 15 };
+const BNF_NAME = { trend: "Trend", setup: "Setup", price_action: "Price action", volatility: "VIX / IV", futures_oi: "Futures OI", banks: "Big banks", option_chain: "Option chain" };
+function renderBnf(x) {
+  const el = $("bnfBox");
+  if (!x) { el.innerHTML = ""; return; }
+  const inr = v => "₹" + Math.round(v).toLocaleString("en-IN"), n0 = v => v == null ? "—" : Math.round(v).toLocaleString("en-IN");
+  const c = x.pick, bull = c ? c.side === "bull" : x.bias === "bull", ch = x.chain || {}, fo = x.fut_oi;
+  const verdict = x.verdict || (x.open ? "…" : "LATER");
+  const vcol = verdict === "BUY CE" ? css("--bull") : verdict === "BUY PE" ? css("--bear") : "var(--muted)";
+  const chips = [];
+  if (x.trend) chips.push(`<span class="${x.bias !== "neutral" ? "ok" : ""}">${x.trend === "up" ? "UPTREND HH/HL" : x.trend === "down" ? "DOWNTREND LH/LL" : "RANGE"}${x.event ? " · " + esc(x.event.toUpperCase()) : ""}</span>`);
+  if (x.ema20) chips.push(`<span>20/50 EMA ${n0(x.ema20)} / ${n0(x.ema50)}</span>`);
+  if (x.vix != null) chips.push(`<span class="${x.vix <= 18 ? "ok" : x.vix > 22 ? "bad" : ""}">VIX ${x.vix}${x.vix_pct != null ? ` · ${x.vix_pct}th pct` : ""}</span>`);
+  if (x.iv != null) chips.push(`<span class="${x.iv_hv != null && x.iv_hv <= 1.1 ? "ok" : x.iv_hv > 1.4 ? "bad" : ""}">ATM IV ${x.iv}% · HV ${x.hv}%</span>`);
+  if (ch.pcr != null) chips.push(`<span class="${(bull ? ch.pcr >= 1 : ch.pcr <= 0.8) ? "ok" : ""}">PCR ${ch.pcr}</span>`);
+  if (ch.call_wall) chips.push(`<span>CALL WALL ${n0(ch.call_wall)}</span><span>PUT WALL ${n0(ch.put_wall)}</span><span>MAX PAIN ${n0(ch.max_pain)}</span>`);
+  if (ch.d_ce != null) chips.push(`<span class="${(ch.d_pe > ch.d_ce) === bull ? "ok" : "bad"}">OI TODAY: CALLS ${ch.d_ce >= 0 ? "+" : ""}${(ch.d_ce / 1e5).toFixed(1)}L · PUTS ${ch.d_pe >= 0 ? "+" : ""}${(ch.d_pe / 1e5).toFixed(1)}L</span>`);
+  if (fo) chips.push(`<span>FUT ${esc(fo.kind)} · OI ${pct(fo.oi_pct)} (5d)</span>`);
+  (x.banks || []).forEach(k => chips.push(`<span class="${k.above ? "ok" : "bad"}">${esc(k.symbol)} ${k.above ? "▲" : "▼"} 20EMA</span>`));
+  let body = "";
+  if (c) {
+    const p = c.plan, o = c.option, sz = c.opt_size;
+    body = `<div class="meta2" style="margin-top:6px"><b>${esc(p.basis)}</b> · score ${Math.round(c.score)}<br>${esc(c.zone_text)} · ${esc(c.signal)}</div>
+      <div class="nums" style="margin-top:8px">
+        <div>BNF ${bull ? "ABOVE" : "BELOW"}<b>${n0(p.entry)}</b></div><div class="sl">SL<b>${n0(p.sl)}</b></div>
+        <div class="tg">T1<b>${n0(p.t1)}</b></div><div class="tg">T2<b>${n0(p.t2)}</b></div>
+        <div>R:R<b>1:${p.rr}</b></div><div>RISK<b>${n0(p.risk_pts)} pts</b></div></div>
+      <div class="action">${esc(p.action)}</div>
+      ${o ? `<div class="optbox"><div class="oh">BUY ${esc(o.label)}${o.rolled ? " · next month (this month's expiry is too close)" : ""}${x.days_left != null ? ` · ${x.days_left} days to expiry` : ""}</div>
+        <div class="on"><div>ENTRY ~<b>${fmt(o.entry)}</b></div><div style="color:#ff8193">SL<b>${fmt(o.sl)}</b></div>
+          <div style="color:${css("--bull")}">T1<b>${fmt(o.t1)}</b></div><div style="color:${css("--bull")}">T2<b>${fmt(o.t2)}</b></div></div>
+        <div class="om">Premium now ${fmt(o.ltp)} · delta ${o.delta}${o.iv ? ` · IV ${o.iv}%` : ""} · lot ${o.lot}
+          ${o.decay_lot ? ` · time decay ~${inr(o.decay_lot)} a day per lot` : ""} · stop = −${o.loss_pct}% of premium.<br>
+          1 lot costs ${inr(o.entry * o.lot)} and risks <b>${inr(o.risk_lot)}</b>${o.risk_lot_pct != null ? ` (<b>${o.risk_lot_pct}%</b> of capital)` : ""}.
+          ${sz && sz.lots > 0 ? `Your ${(state.risk || {}).risk_pct || 1}% risk allows <b>${sz.lots} lot${sz.lots > 1 ? "s" : ""}</b>.` : `That is more than your ${(state.risk || {}).risk_pct || 1}% (${inr((state.risk || {}).risk_amt || 0)}) a trade: one lot is the smallest size, so take it only if you accept that risk.`}
+          Enter when Bank Nifty ${bull ? "breaks above" : "breaks below"} ${n0(p.entry)}; exit on Bank Nifty's SL/T1/T2.</div>
+        ${o.spread ? `<div class="om" style="margin-top:6px"><b>Lower-risk version:</b> ${bull ? "bull call" : "bear put"} spread, buy ${esc(o.spread.label.split("/")[0])} and sell ${esc(o.spread.label.split("/")[1])} ·
+          cost ~${fmt(o.spread.debit)} (${o.spread.cost_lot ? inr(o.spread.cost_lot) + "/lot" : ""}) · risk ${o.spread.risk_lot ? inr(o.spread.risk_lot) + "/lot" : "—"}${o.spread.risk_lot_pct != null ? ` (${o.spread.risk_lot_pct}%)` : ""} · less time decay and IV risk, profit capped at the sold strike.</div>` : ""}</div>` : `<div class="hint">Option chain not available right now: the Bank Nifty levels still apply.</div>`}
+      ${c.caution ? `<div class="caution">⚠ ${esc(c.caution)}</div>` : ""}
+      <details class="more"${wide() ? " open" : ""}><summary>Score</summary><div class="parts">${Object.entries(c.parts).map(([k, v]) => `<div>${BNF_NAME[k] || k} ${Math.round(v)}/${BNF_MAX[k] || 20}
+        <i><b style="width:${Math.max(0, Math.min(100, v / (BNF_MAX[k] || 20) * 100))}%"></b></i></div>`).join("")}</div></details>`;
+  } else {
+    body = `<div class="empty" style="padding:10px 0">${esc(x.open ? (x.reason || "Working it out…") : "Worked out from 11:00 on today's daily candle.")}</div>
+      ${x.watch ? `<div class="hint">Levels to watch: ${x.watch.basis ? esc(x.watch.basis) + " · " : ""}entry ${n0(x.watch.entry)} · stop ${n0(x.watch.sl)} · T1 ${n0(x.watch.t1)}</div>` : ""}`;
+  }
+  const bt = x.bt || {}, cmp = bt.cmp || [];
+  const btHtml = cmp.length ? `<details class="more"><summary>Backtest · Bank Nifty since ${esc(bt.since || "")} (${bt.sessions} sessions) · live rules: ${esc(x.rules)}${x.edge ? " ⭐" : ""}</summary>
+    <table class="ptable"><tr><th class="l">Rules</th><th>Trades</th><th>Win</th><th>Avg (option)</th><th>Total (option)</th><th>Early / late</th></tr>
+    ${cmp.map(v => `<tr><td class="l">${v.pick ? "⭐ " : ""}${esc(v.name)}</td><td>${v.option.n}</td><td>${v.option.win_rate ?? "—"}%</td>
+      <td style="color:${(v.option.avg_r || 0) >= 0 ? css("--bull") : css("--bear")}">${v.option.avg_r ?? "—"}R</td><td>${v.option.total_r}R</td>
+      <td>${v.early.avg_r ?? "—"} / ${v.late.avg_r ?? "—"}</td></tr>`).join("")}</table>
+    <div class="hint">Option R is estimated from Bank Nifty's moves minus time decay and costs; there is no option-chain, OI or bank history in the backtest. ⭐ = best total with both halves of the history positive (10+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>` : "";
+  const bk = x.book || { rows: [], summary: {} }, sm = bk.summary || {};
+  const bookHtml = bk.rows.length ? `<details class="more"><summary>Bank Nifty trades · ${sm.count} · won ${sm.wins} / lost ${sm.losses} · ${sm.total_r >= 0 ? "+" : ""}${sm.total_r}R</summary>
+    ${bk.rows.slice(0, 12).map(r => { const res = r.result_r != null ? r.result_r : r.running_r;
+      return `<div class="trow"><span class="tm">${istDay(r.picked_at)}</span><span><b>${esc(r.option || (r.side === "bull" ? "CE" : "PE"))}</b></span>
+        <span class="num hide-s">${n0(r.entry)}</span><span class="st"><span class="tst">${esc(r.status)}</span></span>
+        <span class="r" style="color:${res == null ? css("--muted") : res >= 0 ? css("--bull") : css("--bear")}">${res == null ? "—" : (res >= 0 ? "+" : "") + res + "R"}</span></div>`; }).join("")}</details>` : "";
+  const wasOpen = [...el.querySelectorAll("details")].map(d => d.open);
+  el.innerHTML = `<div class="pick ${bull ? "bull" : "bear"}${selected && selected[0] === "BANKNIFTY" ? " sel" : ""}" id="bnfCard" data-sym="BANKNIFTY" data-side="${bull ? "bull" : "bear"}" style="margin-bottom:14px">
+    <div class="top"><span class="badge" style="background:${vcol};color:#fff">${esc(verdict)}</span><span class="nm">BANK NIFTY</span>
+      ${x.price ? `<span class="px">${n0(x.price)} <span style="color:${(x.pct || 0) >= 0 ? css("--bull") : css("--bear")}">${pct(x.pct || 0)}</span></span>` : ""}
+      <span class="oi">options · monthly expiry${x.expiry ? " " + new Date(x.expiry + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}</span></div>
+    <div class="chips">${chips.join("")}</div>${body}${btHtml}${bookHtml}</div>`;
+  el.querySelectorAll("details").forEach((d, i) => { if (wasOpen[i] != null) d.open = wasOpen[i]; });
+  const card = $("bnfCard");
+  if (card && c) card.onclick = ev => { if (ev.target.closest("a, details")) return; selected = ["BANKNIFTY", c.side];
+    document.querySelectorAll("#btstList .pick").forEach(q => q.classList.remove("sel")); card.classList.add("sel"); loadChart(); };
 }
 
 // Phone: the stock list comes first; tapping a stock scrolls down to its chart.
