@@ -347,21 +347,25 @@ only buys when a move is likely soon and options are not expensive:
   estimated from index R minus time decay and costs.
 - The ⭐ variant (best total, both halves positive, 10+ trades) is used live. Without one, the card says "paper first".
 
-## WhatsApp alerts (Bank Nifty options)
-`notify.py` sends WhatsApp messages through CallMeBot (free, for messages to your own number):
+## Phone alerts (Bank Nifty options)
+`notify.py` sends alerts at these points:
 - the 3 PM Bank Nifty setup, with the option, its levels and the risk of a lot
-- the entry triggering
-- T1, T2, the stop, the time exit, or "not triggered"
+- the entry triggering (urgent)
+- T1, T2 or the stop (urgent)
+- the time exit, or "not triggered"
 
 Each stage is sent once.
 
-**Setup:**
-1. Save +34 694 29 84 96 in your phone.
-2. Send it "I allow callmebot to send me messages" on WhatsApp. It replies with your API key.
-3. Open Settings → WhatsApp alerts and enter your number and the key. Use **Send test message** to check.
+**Recommended: ntfy** (free push notifications, no account):
+1. Install the ntfy app.
+2. Tap **+** and subscribe to the topic shown in Settings → Phone alerts. The scanner makes a long random topic
+   name; anyone who knows it can read the alerts, so keep it private.
+3. Save, then use **Send test message** to check.
 
-The number and key are kept only in the settings file on the server. Open trades are checked every 5 minutes,
-so an alert arrives within about 5 minutes of a level being hit.
+**Second choice: WhatsApp via CallMeBot.** It is free but often slow to answer.
+
+The topic, number and key are kept only in the settings file on the server. Open trades are checked every
+5 minutes, so an alert arrives within about 5 minutes of a level being hit.
 
 ## How Swing trades are chosen (replaced BTST)
 Swing setups come from the daily chart (`swing.py`) and are held for up to 10 sessions. They are worked out in

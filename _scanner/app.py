@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "11 Nov · WhatsApp alerts for Bank Nifty option trades"
+VERSION = "12 Nov · Phone alerts by ntfy (or WhatsApp) for Bank Nifty option trades"
 
 
 def load_env():
@@ -443,11 +443,23 @@ for _r in BNFS.rows:                                   # trades from before What
     _r.setdefault("wa", notify.stages(_r))
 
 
-def wa_config():
-    """(phone, key) when WhatsApp alerts are switched on, else None."""
-    if SETTINGS.get("wa_on") and SETTINGS.get("wa_phone") and SETTINGS.get("wa_key"):
-        return SETTINGS["wa_phone"], SETTINGS["wa_key"]
+def alert_config(force=False):
+    """Where alerts go (ntfy topic, or WhatsApp number + key) when they are switched on, else None."""
+    if not (SETTINGS.get("alerts_on") or force):
+        return None
+    if (SETTINGS.get("alert_via") or "ntfy") == "ntfy":
+        t = SETTINGS.get("ntfy_topic")
+        return {"via": "ntfy", "topic": t, "server": SETTINGS.get("ntfy_server"), "click": PUBLIC_URL or None} if t else None
+    if SETTINGS.get("wa_phone") and SETTINGS.get("wa_key"):
+        return {"via": "whatsapp", "phone": SETTINGS["wa_phone"], "key": SETTINGS["wa_key"]}
     return None
+
+
+def ntfy_topic():
+    """Your private ntfy topic (made once, long and random: anyone who knows it can read the alerts)."""
+    if not SETTINGS.get("ntfy_topic"):
+        save_settings(ntfy_topic=notify.new_topic())
+    return SETTINGS["ntfy_topic"]
 
 
 def bnf_notify():
@@ -459,9 +471,9 @@ def bnf_notify():
         msgs += notify.bnf_alerts(r)
     if msgs:
         BNFS.save()
-        if wa_config():
+        if alert_config():
             for m in msgs:
-                notify.send(m)
+                notify.send(m, notify.priority_of(m))
 BNF_BT = {}                                            # "day" -> date, "cmp" -> rule variants on Bank Nifty history
 BTST_PICKS = {}                                        # symbol -> (swing pick, daily candles) for the chart
 FUT_DAILY = {}                                         # futures id -> (IST day, daily candles with OI)
@@ -1206,8 +1218,8 @@ def bank_nifty(demo, idx, swing_daily, ev, now_ts, open_, session_time):
                         BNFS.rows[-1].update(option=o["label"], opt_entry=o["entry"], opt_sl=o["sl"], opt_t1=o["t1"])
                     BNFS.rows[-1]["wa"] = []
                     BNFS.save()
-                    if wa_config():
-                        notify.send(notify.bnf_new(BNFS.rows[-1], pick))
+                    if alert_config():
+                        notify.send(notify.bnf_new(BNFS.rows[-1], pick), 4)
         state.update(res)
     BNFS.update({"BANKNIFTY": d}, now_ts)
     bnf_notify()
@@ -1994,8 +2006,9 @@ class Handler(BaseHTTPRequestHandler):
                             "risk": risk.config(SETTINGS),
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
-                            "wa": {"on": bool(SETTINGS.get("wa_on")), "phone": SETTINGS.get("wa_phone") or "",
-                                   "has_key": bool(SETTINGS.get("wa_key")),
+                            "alerts": {"on": bool(SETTINGS.get("alerts_on")), "via": SETTINGS.get("alert_via") or "ntfy",
+                                   "topic": ntfy_topic(), "server": SETTINGS.get("ntfy_server") or notify.NTFY,
+                                   "phone": SETTINGS.get("wa_phone") or "", "has_key": bool(SETTINGS.get("wa_key")),
                                    "last": [{"at": datetime.fromtimestamp(t, IST).strftime("%d %b %H:%M"), "ok": ok, "text": x}
                                             for t, ok, x in notify.LOG[-3:]]},
                             "urls": [] if CLOUD else local_addresses()})
@@ -2125,28 +2138,35 @@ class Handler(BaseHTTPRequestHandler):
             save_settings(intraday_from=t, **liq)
             WAKE.set()                                  # rescan so the change shows now
             return self.send(200, {"ok": True})
-        if path == "/api/whatsapp":
-            phone = notify.clean_phone(body.get("phone"))
-            if body.get("phone") and not phone:
-                return self.send(400, {"error": "Enter the phone number with its country code, e.g. +91 98765 43210."})
-            key = str(body.get("key") or "").strip()
-            if key and not (key.isdigit() and 4 <= len(key) <= 12):
-                return self.send(400, {"error": "The CallMeBot API key is the number it sent you (digits only)."})
-            ch = {"wa_on": bool(body.get("on"))}
-            if phone:
-                ch["wa_phone"] = phone
-            if key:
-                ch["wa_key"] = key
+        if path == "/api/alerts":
+            via = body.get("via") if body.get("via") in ("ntfy", "whatsapp") else "ntfy"
+            ch = {"alerts_on": bool(body.get("on")), "alert_via": via}
+            if via == "ntfy":
+                topic = notify.clean_topic(body.get("topic")) if body.get("topic") else ntfy_topic()
+                if not topic:
+                    return self.send(400, {"error": "The topic name can use letters, numbers, - and _ (6 to 64 characters)."})
+                ch["ntfy_topic"] = topic
+            else:
+                phone = notify.clean_phone(body.get("phone"))
+                if body.get("phone") and not phone:
+                    return self.send(400, {"error": "Enter the phone number with its country code, e.g. +91 98765 43210."})
+                key = str(body.get("key") or "").strip()
+                if key and not (key.isdigit() and 4 <= len(key) <= 12):
+                    return self.send(400, {"error": "The CallMeBot API key is the number it sent you (digits only)."})
+                if phone:
+                    ch["wa_phone"] = phone
+                if key:
+                    ch["wa_key"] = key
             save_settings(**ch)
-            if ch["wa_on"] and not wa_config():
-                return self.send(400, {"error": "Saved, but alerts need both your number and the API key."})
+            if ch["alerts_on"] and not alert_config():
+                return self.send(400, {"error": "Saved, but WhatsApp alerts need both your number and the API key."})
             return self.send(200, {"ok": True})
-        if path == "/api/whatsapp/test":
-            cfg = (SETTINGS.get("wa_phone"), SETTINGS.get("wa_key"))
-            if not all(cfg):
-                return self.send(400, {"error": "Save your number and the API key first."})
-            ok, detail = notify.send_now(cfg[0], cfg[1], "✅ OrderBlock Scanner: WhatsApp alerts are working. "
-                                         "You'll get Bank Nifty option setups, entries and exits here.")
+        if path == "/api/alerts/test":
+            cfg = alert_config(force=True)
+            if not cfg:
+                return self.send(400, {"error": "Save the alert settings first."})
+            ok, detail = notify.send_now(cfg, "✅ OrderBlock Scanner alerts are working\nYou'll get Bank Nifty option setups, "
+                                              "entries and exits here.", 4)
             notify.LOG.append((time.time(), ok, "test message" if ok else detail))
             return self.send(200 if ok else 400, {"ok": ok, "error": None if ok else detail})
         if path == "/api/forget":
@@ -2226,7 +2246,7 @@ def main():
     threading.Thread(target=scanner, daemon=True).start()
     threading.Thread(target=token_keeper, daemon=True).start()
     threading.Thread(target=bullion_loop, daemon=True).start()
-    notify.start(wa_config)
+    notify.start(alert_config)
     try:
         server = ThreadingHTTPServer((HOST, PORT), Handler)
     except OSError:

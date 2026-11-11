@@ -1,21 +1,37 @@
-"""WhatsApp alerts through CallMeBot (free, for messages to your own number).
+"""Phone alerts: ntfy push notifications (recommended) or WhatsApp through CallMeBot.
 
-Setup: save +34 694 29 84 96 in your phone, send it "I allow callmebot to send me messages" on WhatsApp,
-and it replies with your API key. Put your number and the key in the scanner's Settings (they stay in the
-settings file on the server). Messages go out one at a time from a background thread, so a slow or failed
-send never holds up a scan.
+ntfy (https://ntfy.sh): install the free ntfy app, subscribe to your private topic name (shown in Settings),
+and alerts arrive as phone notifications within seconds. No account. Anyone who knows the topic name can read
+it, so the scanner makes a long random one.
+CallMeBot (WhatsApp): free but often slow to answer; kept as a second choice.
+
+Messages go out one at a time from a background thread, so a slow or failed send never holds up a scan.
+Settings (topic, number, key) stay in the settings file on the server.
 """
+import json
 import os
 import queue
+import secrets
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
-URL = os.environ.get("OBS_WA_URL") or "https://api.callmebot.com/whatsapp.php"
-GAP = 4                                                # seconds between messages (CallMeBot asks for spacing)
+WA_URL = os.environ.get("OBS_WA_URL") or "https://api.callmebot.com/whatsapp.php"
+NTFY = os.environ.get("OBS_NTFY_URL") or "https://ntfy.sh"
+GAP = 2                                                # seconds between messages
 _Q = queue.Queue()
 LOG = []                                               # last few sends: (time, ok, text or error)
+
+
+def new_topic():
+    return "obs-" + secrets.token_urlsafe(12).replace("_", "x").replace("-", "y")
+
+
+def clean_topic(t):
+    t = str(t or "").strip()
+    return t if 6 <= len(t) <= 64 and all(ch.isalnum() or ch in "-_" for ch in t) else None
 
 
 def clean_phone(p):
@@ -26,11 +42,36 @@ def clean_phone(p):
     return p if 11 <= len(p) <= 16 and p[1:].isdigit() else None
 
 
-def send_now(phone, key, text, timeout=20):
-    """One message, right now. Returns (ok, detail)."""
-    q = urllib.parse.urlencode({"phone": phone, "text": text, "apikey": key})
+def _post(url, data, headers, timeout):
+    req = urllib.request.Request(url, data=data, headers=dict({"User-Agent": "scanner-alerts"}, **headers))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, r.read(4000).decode("utf-8", "replace")
+
+
+def send_ntfy(cfg, text, priority=4, timeout=15):
+    """Push one notification to the ntfy topic. Returns (ok, detail)."""
+    server = (cfg.get("server") or NTFY).rstrip("/")
+    lines = text.split("\n")
+    one = len(lines) == 1
+    msg = {"topic": cfg["topic"], "title": "Bank Nifty options" if one else lines[0][:120],
+           "message": text if one else "\n".join(lines[1:]),
+           "priority": priority, "tags": ["chart_with_upwards_trend"]}
+    if cfg.get("click"):
+        msg["click"] = cfg["click"]
     try:
-        with urllib.request.urlopen(urllib.request.Request(f"{URL}?{q}", headers={"User-Agent": "scanner-alerts"}),
+        st, body = _post(server + "/", json.dumps(msg).encode("utf-8"), {"Content-Type": "application/json"}, timeout)
+    except urllib.error.HTTPError as e:
+        return False, f"ntfy answered {e.code}: {e.read(200).decode('utf-8', 'replace')}"
+    except Exception as e:
+        return False, f"couldn't reach ntfy: {e}"
+    return (True, "sent") if st == 200 and '"id"' in body else (False, f"ntfy answered: {body[:160]}")
+
+
+def send_whatsapp(cfg, text, timeout=20):
+    """One WhatsApp message through CallMeBot. Returns (ok, detail)."""
+    q = urllib.parse.urlencode({"phone": cfg["phone"], "text": text, "apikey": cfg["key"]})
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f"{WA_URL}?{q}", headers={"User-Agent": "scanner-alerts"}),
                                     timeout=timeout) as r:
             body = r.read(2000).decode("utf-8", "replace")
     except Exception as e:
@@ -43,29 +84,38 @@ def send_now(phone, key, text, timeout=20):
     return False, "CallMeBot answered: " + " ".join(body.replace("<", " <").split())[:160]
 
 
+def send_now(cfg, text, priority=4):
+    return send_ntfy(cfg, text, priority) if cfg.get("via") == "ntfy" else send_whatsapp(cfg, text)
+
+
 def _worker(get_cfg):
     while True:
-        text = _Q.get()
+        text, priority = _Q.get()
         cfg = get_cfg()
         if cfg:
             ok, detail = False, ""
             for attempt in range(3):
-                ok, detail = send_now(cfg[0], cfg[1], text)
+                ok, detail = send_now(cfg, text, priority)
                 if ok or "key is wrong" in detail:
                     break
                 time.sleep(5 * (attempt + 1))
-            LOG.append((time.time(), ok, text[:60] if ok else detail))
+            LOG.append((time.time(), ok, text.split("\n")[0][:60] if ok else detail))
             del LOG[:-20]
         time.sleep(GAP)
 
 
 def start(get_cfg):
-    """get_cfg() -> (phone, key) when alerts are on, else None."""
+    """get_cfg() -> the alert settings dict when alerts are on, else None."""
     threading.Thread(target=_worker, args=(get_cfg,), daemon=True).start()
 
 
-def send(text):
-    _Q.put(text)
+def send(text, priority=4):
+    _Q.put((text, priority))
+
+
+def priority_of(text):
+    """Entries and exits are urgent (they ring through); the rest are high."""
+    return 5 if text[:1] in ("🟢", "🔴", "🎯", "✅") else 4
 
 
 # ── Bank Nifty option trades → messages ───────────────────────────────────────────────────

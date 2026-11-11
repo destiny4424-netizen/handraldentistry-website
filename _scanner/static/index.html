@@ -519,20 +519,32 @@
       <div class="err" id="prefErr"></div>
     </div>
     <div class="sect">
-      <b style="font-size:14px">WhatsApp alerts · Bank Nifty options</b>
-      <div class="hint">You get a WhatsApp message when a Bank Nifty option setup is confirmed at 3 PM, when its entry triggers,
-      and at T1, T2, the stop or the time exit. Messages are sent through CallMeBot (free).
-      To get your key: save <b>+34 694 29 84 96</b> in your phone, send it <b>I allow callmebot to send me messages</b> on WhatsApp,
-      and it replies with your API key.</div>
-      <label class="switch"><input type="checkbox" id="waOn"> Send me WhatsApp alerts</label>
-      <label for="waPhone">Your WhatsApp number (with country code)</label>
-      <input id="waPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="+91 98765 43210">
-      <label for="waKey">CallMeBot API key</label>
-      <input id="waKey" type="password" inputmode="numeric" autocomplete="off" placeholder="The number CallMeBot sent you">
-      <div class="actions" style="margin-top:10px;justify-content:space-between"><button type="button" class="link" id="waTest">Send test message</button>
-        <button type="button" id="waSave">Save WhatsApp settings</button></div>
-      <div class="err" id="waErr"></div>
-      <div class="hint" id="waLog"></div>
+      <b style="font-size:14px">Phone alerts · Bank Nifty options</b>
+      <div class="hint">A notification when a Bank Nifty option setup is confirmed at 3 PM, when its entry triggers,
+      and at T1, T2, the stop or the time exit.</div>
+      <label class="switch"><input type="checkbox" id="alOn"> Send me alerts</label>
+      <label for="alVia">Send them by</label>
+      <select id="alVia"><option value="ntfy">ntfy app (free, instant push notifications)</option><option value="whatsapp">WhatsApp via CallMeBot</option></select>
+      <div id="alNtfy">
+        <div class="hint"><b>1.</b> Install <b>ntfy</b> from the App Store / Play Store (free, no account).
+        <b>2.</b> In the app tap <b>+</b>, type the topic name below exactly, and tap Subscribe.
+        <b>3.</b> Save here, then tap Send test message. Keep the topic name private: anyone who knows it can read the alerts.</div>
+        <label for="alTopic">Your topic name</label>
+        <div style="display:flex;gap:8px"><input id="alTopic" autocomplete="off" spellcheck="false" style="flex:1;min-width:0">
+          <button type="button" class="ghost" id="alCopy">Copy</button></div>
+      </div>
+      <div id="alWa" hidden>
+        <div class="hint">Save <b>+34 694 29 84 96</b> in your phone, send it <b>I allow callmebot to send me messages</b> on WhatsApp,
+        and it replies with your API key. (CallMeBot is free but sometimes slow to answer.)</div>
+        <label for="waPhone">Your WhatsApp number (with country code)</label>
+        <input id="waPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="+91 98765 43210">
+        <label for="waKey">CallMeBot API key</label>
+        <input id="waKey" type="password" inputmode="numeric" autocomplete="off" placeholder="The number CallMeBot sent you">
+      </div>
+      <div class="actions" style="margin-top:10px;justify-content:space-between"><button type="button" class="link" id="alTest">Send test message</button>
+        <button type="button" id="alSave">Save alert settings</button></div>
+      <div class="err" id="alErr"></div>
+      <div class="hint" id="alLog"></div>
     </div>
     <div class="sect" id="cloudSect" hidden>
       <b style="font-size:14px">Running in the cloud</b>
@@ -2272,7 +2284,7 @@ async function loadSettings() {
   const r = await fetch("/api/settings", { cache: "no-store" });
   if (!r.ok) return;
   const st = await r.json();
-  showWa(st.wa);
+  showAlerts(st.alerts);
   $("cid").value = st.client_id || "";
   const tk = st.token || {};
   $("savedInfo").className = "saved" + (st.token_tail && !tk.expired ? "" : " none");
@@ -2341,24 +2353,30 @@ $("prefSave").onclick = async () => {
     setTimeout(refresh, 800);
   } catch (err) { $("prefErr").textContent = err.message; }
 };
-function showWa(w) {
-  if (!w) return;
-  $("waOn").checked = w.on; $("waPhone").value = w.phone || "";
-  $("waKey").value = ""; $("waKey").placeholder = w.has_key ? "Saved (leave empty to keep it)" : "The number CallMeBot sent you";
-  $("waLog").innerHTML = (w.last || []).length ? "Last sent: " + w.last.map(x => `${esc(x.at)} ${x.ok ? "✓" : "✗"} ${esc(x.text)}`).join(" · ") : "";
+function showAlerts(a) {
+  if (!a) return;
+  $("alOn").checked = a.on; $("alVia").value = a.via || "ntfy"; $("alTopic").value = a.topic || "";
+  $("waPhone").value = a.phone || "";
+  $("waKey").value = ""; $("waKey").placeholder = a.has_key ? "Saved (leave empty to keep it)" : "The number CallMeBot sent you";
+  $("alLog").innerHTML = (a.last || []).length ? "Last sent: " + a.last.map(x => `${esc(x.at)} ${x.ok ? "✓" : "✗"} ${esc(x.text)}`).join(" · ") : "";
+  viaShow();
 }
-$("waSave").onclick = async () => {
-  $("waErr").style.color = ""; $("waErr").textContent = "";
+function viaShow() { const n = $("alVia").value === "ntfy"; $("alNtfy").hidden = !n; $("alWa").hidden = n; }
+$("alVia").onchange = viaShow;
+$("alCopy").onclick = async () => { try { await navigator.clipboard.writeText($("alTopic").value); $("alCopy").textContent = "Copied"; }
+  catch { $("alTopic").select(); } setTimeout(() => $("alCopy").textContent = "Copy", 1500); };
+$("alSave").onclick = async () => {
+  $("alErr").style.color = ""; $("alErr").textContent = "";
   try {
-    await post("/api/whatsapp", { on: $("waOn").checked, phone: $("waPhone").value, key: $("waKey").value });
+    await post("/api/alerts", { on: $("alOn").checked, via: $("alVia").value, topic: $("alTopic").value, phone: $("waPhone").value, key: $("waKey").value });
     await loadSettings();
-    $("waErr").style.color = "var(--bull)"; $("waErr").textContent = $("waOn").checked ? "Saved. WhatsApp alerts are on: tap Send test message to check." : "Saved. WhatsApp alerts are off.";
-  } catch (err) { $("waErr").textContent = err.message; }
+    $("alErr").style.color = "var(--bull)"; $("alErr").textContent = $("alOn").checked ? "Saved. Alerts are on: tap Send test message to check." : "Saved. Alerts are off.";
+  } catch (err) { $("alErr").textContent = err.message; }
 };
-$("waTest").onclick = async () => {
-  $("waErr").style.color = ""; $("waErr").textContent = "Sending…";
-  try { await post("/api/whatsapp/test", {}); $("waErr").style.color = "var(--bull)"; $("waErr").textContent = "Sent. Check WhatsApp (it can take up to a minute)."; }
-  catch (err) { $("waErr").textContent = err.message; }
+$("alTest").onclick = async () => {
+  $("alErr").style.color = ""; $("alErr").textContent = "Sending…";
+  try { await post("/api/alerts/test", {}); $("alErr").style.color = "var(--bull)"; $("alErr").textContent = "Sent. Check your phone."; }
+  catch (err) { $("alErr").textContent = err.message; }
   try { await loadSettings(); } catch {}
 };
 $("logout").onclick = async () => { await post("/api/logout", {}).catch(() => {}); location.reload(); };
