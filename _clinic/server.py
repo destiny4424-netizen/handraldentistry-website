@@ -19,8 +19,16 @@ The app at https://handraldentistry.com/clinic/ talks to it with:
   POST /api/public/request   appointment request from the public website (no login)
   GET  /healthz
 
+Ortho Assess (https://destiny4424-netizen.github.io/ortho-assess/) syncs its cases with the
+same logins; each login sees only its own cases (kept in ortho.db next to clinic.db):
+  GET/POST /api/ortho/cases         cases changed after a revision / save cases
+  GET  /api/ortho/blobs             keys of the photos, scans and X-rays already stored
+  GET/POST /api/ortho/blob?k=       download / upload one (uploaded in pieces of up to 8 MB)
+  POST /api/ortho/blobs/delete      remove files of deleted cases
+
 Settings (environment):
   CLINIC_DB       database file   (default ./clinic.db)
+  CLINIC_ORTHO_DB Ortho Assess database (default ortho.db next to CLINIC_DB)
   CLINIC_HOST     listen address  (default 127.0.0.1)
   CLINIC_PORT     listen port     (default 3030)
   CLINIC_ORIGINS  comma-separated web origins allowed to call the API
@@ -524,6 +532,183 @@ def public_request(h, con, q):
     h.send_json(200, {"ok": True})
 
 
+
+# ── Ortho Assess sync ───────────────────────────────────────────────────────
+# Ortho Assess (https://destiny4424-netizen.github.io/ortho-assess/) keeps its cases on the
+# device; when the doctor signs in with a clinic login they are also kept here, so every
+# phone and computer signed in with that login sees the same cases. Each login sees only
+# its own cases. Kept in a separate database (ortho.db) because scans and X-rays are big.
+ORTHO_DB = os.environ.get("CLINIC_ORTHO_DB", os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "ortho.db"))
+ORTHO_ORIGIN = "https://destiny4424-netizen.github.io"
+ORIGINS.add(ORTHO_ORIGIN)
+ORTHO_PART = 8 * 1024 * 1024        # upload pieces stay under the web server's 26 MB request limit
+ORTHO_MAX_PARTS = 40                # up to 320 MB per file
+ORTHO_KEY = re.compile(r"b:[A-Za-z0-9_-]{4,64}")
+ORTHO_ID = re.compile(r"[A-Za-z0-9_-]{4,64}")
+
+
+def odb():
+    con = sqlite3.connect(ORTHO_DB, timeout=60)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    return con
+
+
+def init_ortho_db():
+    con = odb()
+    con.executescript("""
+    CREATE TABLE IF NOT EXISTS cases(
+      owner INTEGER NOT NULL, id TEXT NOT NULL, data TEXT, deleted INTEGER NOT NULL DEFAULT 0,
+      updated REAL NOT NULL, rev INTEGER NOT NULL, PRIMARY KEY(owner, id));
+    CREATE INDEX IF NOT EXISTS cases_rev ON cases(owner, rev);
+    CREATE TABLE IF NOT EXISTS blobs(
+      owner INTEGER NOT NULL, k TEXT NOT NULL, mime TEXT NOT NULL, body BLOB NOT NULL,
+      size INTEGER NOT NULL, created REAL NOT NULL, PRIMARY KEY(owner, k));
+    CREATE TABLE IF NOT EXISTS parts(
+      owner INTEGER NOT NULL, k TEXT NOT NULL, i INTEGER NOT NULL, n INTEGER NOT NULL,
+      body BLOB NOT NULL, created REAL NOT NULL, PRIMARY KEY(owner, k, i));
+    """)
+    con.commit()
+    con.close()
+
+
+def ortho_cases_get(h, con, q):
+    u = h.auth(con)
+    try:
+        since = int(q.get("since") or 0)
+    except ValueError:
+        since = 0
+    oc = odb()
+    try:
+        rows = oc.execute("SELECT id,data,deleted,updated,rev FROM cases WHERE owner=? AND rev>? ORDER BY rev LIMIT 501",
+                          (u["id"], since)).fetchall()
+        top = oc.execute("SELECT COALESCE(MAX(rev),0) FROM cases WHERE owner=?", (u["id"],)).fetchone()[0]
+    finally:
+        oc.close()
+    more = len(rows) > 500
+    rows = rows[:500]
+    out = [{"id": r["id"], "deleted": bool(r["deleted"]), "updated": r["updated"], "rev": r["rev"],
+            "data": None if r["deleted"] else json.loads(r["data"])} for r in rows]
+    h.send_json(200, {"cases": out, "rev": rows[-1]["rev"] if rows else top, "more": more})
+
+
+def ortho_cases_post(h, con, q):
+    u = h.auth(con)
+    items = h.read_json().get("cases")
+    if not isinstance(items, list) or len(items) > 200:
+        raise ApiError(400, "Bad cases")
+    saved, newer = [], []
+    oc = odb()
+    try:
+        with _lock:
+            rev = oc.execute("SELECT COALESCE(MAX(rev),0) FROM cases WHERE owner=?", (u["id"],)).fetchone()[0]
+            for c in items:
+                cid = str(c.get("id") or "")
+                if not ORTHO_ID.fullmatch(cid):
+                    raise ApiError(400, "Bad case id")
+                try:
+                    upd = float(c.get("updated") or 0)
+                except (TypeError, ValueError):
+                    raise ApiError(400, "Bad case time")
+                deleted = bool(c.get("deleted"))
+                data = None if deleted else c.get("data")
+                if not deleted and not isinstance(data, dict):
+                    raise ApiError(400, "Bad case")
+                old = oc.execute("SELECT updated FROM cases WHERE owner=? AND id=?", (u["id"], cid)).fetchone()
+                if old and old["updated"] > upd:      # a newer copy is already here: keep it
+                    newer.append(cid)
+                    continue
+                rev += 1
+                oc.execute(
+                    "INSERT INTO cases(owner,id,data,deleted,updated,rev) VALUES(?,?,?,?,?,?) "
+                    "ON CONFLICT(owner,id) DO UPDATE SET data=excluded.data, deleted=excluded.deleted, "
+                    "updated=excluded.updated, rev=excluded.rev",
+                    (u["id"], cid, None if deleted else json.dumps(data, separators=(",", ":")), int(deleted), upd, rev))
+                saved.append(cid)
+            oc.commit()
+    finally:
+        oc.close()
+    h.send_json(200, {"saved": saved, "newer": newer, "rev": rev})
+
+
+def ortho_blob_keys(h, con, q):
+    u = h.auth(con)
+    oc = odb()
+    try:
+        keys = [r["k"] for r in oc.execute("SELECT k FROM blobs WHERE owner=?", (u["id"],))]
+    finally:
+        oc.close()
+    h.send_json(200, {"keys": keys})
+
+
+def ortho_blob_post(h, con, q):
+    u = h.auth(con)
+    k, mime = q.get("k") or "", (q.get("mime") or "application/octet-stream")[:100]
+    try:
+        i, n = int(q.get("i") or 0), int(q.get("n") or 1)
+    except ValueError:
+        raise ApiError(400, "Bad piece")
+    if not ORTHO_KEY.fullmatch(k) or not (0 <= i < n <= ORTHO_MAX_PARTS) or not re.fullmatch(r"[\w.+/-]+", mime):
+        raise ApiError(400, "Bad file")
+    body = h.read_body(ORTHO_PART + 1024)
+    if not body:
+        raise ApiError(400, "Empty file")
+    oc = odb()
+    try:
+        with _lock:
+            now = time.time()
+            oc.execute("DELETE FROM parts WHERE created<?", (now - 86400,))   # half-finished uploads from yesterday
+            oc.execute("INSERT OR REPLACE INTO parts(owner,k,i,n,body,created) VALUES(?,?,?,?,?,?)",
+                       (u["id"], k, i, n, body, now))
+            got = oc.execute("SELECT i, body FROM parts WHERE owner=? AND k=? AND n=? ORDER BY i",
+                             (u["id"], k, n)).fetchall()
+            done = len(got) == n and [r["i"] for r in got] == list(range(n))
+            if done:
+                whole = b"".join(r["body"] for r in got)
+                oc.execute("INSERT OR REPLACE INTO blobs(owner,k,mime,body,size,created) VALUES(?,?,?,?,?,?)",
+                           (u["id"], k, mime, whole, len(whole), now))
+                oc.execute("DELETE FROM parts WHERE owner=? AND k=?", (u["id"], k))
+            oc.commit()
+    finally:
+        oc.close()
+    h.send_json(200, {"ok": True, "done": done})
+
+
+def ortho_blob_get(h, con, q):
+    u = h.auth(con)
+    k = q.get("k") or ""
+    if not ORTHO_KEY.fullmatch(k):
+        raise ApiError(400, "Bad file")
+    oc = odb()
+    try:
+        r = oc.execute("SELECT mime, body FROM blobs WHERE owner=? AND k=?", (u["id"], k)).fetchone()
+    finally:
+        oc.close()
+    if not r:
+        raise ApiError(404, "Not found")
+    h.send_response(200)
+    h.cors()
+    h.send_header("Content-Type", r["mime"])
+    h.send_header("Cache-Control", "private, no-store")
+    h.send_header("Content-Length", str(len(r["body"])))
+    h.end_headers()
+    h.wfile.write(r["body"])
+
+
+def ortho_blob_delete(h, con, q):
+    u = h.auth(con)
+    keys = h.read_json().get("keys")
+    if not isinstance(keys, list) or len(keys) > 500 or not all(isinstance(k, str) and ORTHO_KEY.fullmatch(k) for k in keys):
+        raise ApiError(400, "Bad files")
+    oc = odb()
+    try:
+        oc.executemany("DELETE FROM blobs WHERE owner=? AND k=?", [(u["id"], k) for k in keys])
+        oc.commit()
+    finally:
+        oc.close()
+    h.send_json(200, {"ok": True})
+
+
 ROUTES = {
     ("POST", "/api/public/request"): public_request,
     ("POST", "/api/login"): login,
@@ -537,6 +722,12 @@ ROUTES = {
     ("GET", "/api/ai-key"): ai_key,
     ("POST", "/api/ai-key"): ai_key,
     ("POST", "/api/ai/read"): ai_read,
+    ("GET", "/api/ortho/cases"): ortho_cases_get,
+    ("POST", "/api/ortho/cases"): ortho_cases_post,
+    ("GET", "/api/ortho/blobs"): ortho_blob_keys,
+    ("GET", "/api/ortho/blob"): ortho_blob_get,
+    ("POST", "/api/ortho/blob"): ortho_blob_post,
+    ("POST", "/api/ortho/blobs/delete"): ortho_blob_delete,
 }
 
 
@@ -557,6 +748,7 @@ def main():
         print("Password set for", sys.argv[2])
         return
     init_db()
+    init_ortho_db()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True
     print("Handral Clinic server on http://%s:%d (db %s)" % (HOST, PORT, DB_PATH), flush=True)

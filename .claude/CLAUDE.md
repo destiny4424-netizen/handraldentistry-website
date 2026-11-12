@@ -10,12 +10,12 @@ say what's wrong instead.
 ## Patient data
 This repository is public and `main` is published on handraldentistry.com by GitHub Pages.
 Never commit patient photos, records, names or anything taken from the owner's Gmail.
-The Clinic Photos app (`photos/`) keeps photos only on the phone; Ortho Assess (`ortho/`) keeps records only in the browser.
+The Clinic Photos app (`photos/`) keeps photos only on the phone; Ortho Assess (its own repository) keeps records in the browser and, when the doctor signs in to ☁️ sync, in `ortho.db` on the droplet (per login; served by `_clinic/server.py` under `/api/ortho/`).
 
 ## Layout
 - `index.html` — public patient website
 - `clinic/` — staff clinic management app
 - `photos/` — Clinic Photos, the iPhone photo organiser (single HTML file, no build step)
-- `ortho/` — Ortho Assess, orthodontic case assessment (single HTML file; records stay on the device)
+- `ortho/` — redirect to Ortho Assess (destiny4424-netizen/ortho-assess); its cases sync through `_clinic/server.py`
 - `_books/` — bookkeeping app that runs on the droplet (not published; see README)
 - `_scanner/` — OrderBlock Scanner, F&O scanner on Dhan data that runs on the droplet (not published; see README)
