@@ -399,7 +399,13 @@ Each stage is sent once.
 - the 3 PM pick, with its zone and size
 - entry, T1, T2, stop, the 10-session time exit, or not triggered
 
-Entries and exits are sent as urgent notifications.
+Every alert is sent at normal priority, so it has no priority arrows. Each one shows:
+- **a price bar** `SL ▕──┃──●───◆────▏ T2`: ┃ is the entry, ◆ is T1 and ● is the price now
+- **buttons:**
+  - **✓ Took it** marks the trade as yours at the planned price and size, so you can correct it later with TOOK
+    in Meridian. The button is signed, so it works without signing in, and only for that trade.
+  - **TradingView** opens the chart.
+  - **Open Meridian** opens the scanner.
 
 **Recommended: ntfy** (free push notifications, no account):
 1. Install the ntfy app.

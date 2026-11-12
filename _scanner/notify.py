@@ -48,16 +48,18 @@ def _post(url, data, headers, timeout):
         return r.status, r.read(4000).decode("utf-8", "replace")
 
 
-def send_ntfy(cfg, text, priority=4, timeout=15):
+def send_ntfy(cfg, text, priority=3, timeout=15, extra=None):
     """Push one notification to the ntfy topic. Returns (ok, detail)."""
     server = (cfg.get("server") or NTFY).rstrip("/")
     lines = text.split("\n")
     one = len(lines) == 1
     msg = {"topic": cfg["topic"], "title": "Bank Nifty options" if one else lines[0][:120],
            "message": text if one else "\n".join(lines[1:]),
-           "priority": priority, "tags": ["chart_with_upwards_trend"]}
+           "priority": priority}                       # 3 = normal: no priority arrows on the notification
     if cfg.get("click"):
         msg["click"] = cfg["click"]
+    if extra:
+        msg.update(extra)                              # action buttons, click link
     try:
         st, body = _post(server + "/", json.dumps(msg).encode("utf-8"), {"Content-Type": "application/json"}, timeout)
     except urllib.error.HTTPError as e:
@@ -84,18 +86,18 @@ def send_whatsapp(cfg, text, timeout=20):
     return False, "CallMeBot answered: " + " ".join(body.replace("<", " <").split())[:160]
 
 
-def send_now(cfg, text, priority=4):
-    return send_ntfy(cfg, text, priority) if cfg.get("via") == "ntfy" else send_whatsapp(cfg, text)
+def send_now(cfg, text, priority=3, extra=None):
+    return send_ntfy(cfg, text, priority, extra=extra) if cfg.get("via") == "ntfy" else send_whatsapp(cfg, text)
 
 
 def _worker(get_cfg):
     while True:
-        text, priority = _Q.get()
+        text, priority, extra = _Q.get()
         cfg = get_cfg()
         if cfg:
             ok, detail = False, ""
             for attempt in range(3):
-                ok, detail = send_now(cfg, text, priority)
+                ok, detail = send_now(cfg, text, priority, extra)
                 if ok or "key is wrong" in detail:
                     break
                 time.sleep(5 * (attempt + 1))
@@ -109,8 +111,29 @@ def start(get_cfg):
     threading.Thread(target=_worker, args=(get_cfg,), daemon=True).start()
 
 
-def send(text, priority=4):
-    _Q.put((text, priority))
+def send(text, priority=3, extra=None):
+    _Q.put((text, priority, extra))
+
+
+def ladder(sl, t2, entry=None, t1=None, px=None, width=16):
+    """Where price is between the stop and the target, as a small bar:
+    SL ▕──┃──●───◆────▏ T2   (┃ entry · ◆ T1 · ● price now)."""
+    try:
+        span = t2 - sl
+        if not span:
+            return ""
+        cells = ["─"] * width
+        pos = lambda v: max(0, min(width - 1, round((v - sl) / span * (width - 1))))
+        for v, ch in ((entry, "┃"), (t1, "◆"), (px, "●")):
+            if v is not None:
+                cells[pos(v)] = ch
+        return f"SL ▕{''.join(cells)}▏ T2"
+    except (TypeError, ZeroDivisionError):
+        return ""
+
+
+def row_ladder(row):
+    return ladder(row.get("sl"), row.get("t2"), row.get("entry"), row.get("t1"), row.get("last"))
 
 
 # ── Bank Nifty option trades → messages ───────────────────────────────────────────────────
@@ -127,7 +150,8 @@ def bnf_new(row, pick):
     return (f"🏦 BANK NIFTY {'CALL' if bull else 'PUT'} setup confirmed ({p['basis'].split('· ')[-1]}, score {pick['score']:.0f})"
             f"\nEnter when BNF {'breaks above' if bull else 'breaks below'} {_n(p['entry'])} (next 2 sessions, after 9:30)"
             f"\nBNF SL {_n(p['sl'])} · T1 {_n(p['t1'])} (book half, SL to cost) · T2 {_n(p['t2'])}{opt}"
-            + (f"\n⚠ {pick['caution']}" if pick.get("caution") else ""))
+            + (f"\n⚠ {pick['caution']}" if pick.get("caution") else "")
+            + "\n" + ladder(p["sl"], p["t2"], p["entry"], p["t1"], pick.get("price")) + "  ● now")
 
 
 def stages(row):
@@ -164,6 +188,7 @@ def trade_alerts(row, kind):
         if k in sent:
             continue
         sent.append(k)
+        n0 = len(out)
         if k == "trig":
             what = f"BUY {row.get('option')}" if kind == "bnf" and row.get("option") else name
             out.append(f"🟢 Entry triggered · {what}\n{lvl} crossed {f(row['entry'])} · SL {f(row['sl'])} · "
@@ -191,11 +216,15 @@ def trade_alerts(row, kind):
             out.append(f"➖ Cancelled · {name}\nThe stop broke before the entry: don't take it.")
         elif st.startswith("Not triggered") and kind != "intra":
             out.append(f"➖ Not triggered · {name}\nEntry {f(row['entry'])} didn't trigger in time: setup cancelled.")
+        if len(out) > n0:
+            if k in ("trig", "t1", "rev") and row_ladder(row):
+                out[-1] += "\n" + row_ladder(row) + "  ● now"
+            out[-1] = (k, out[-1])
     return out
 
 
 def bnf_alerts(row):
-    return trade_alerts(row, "bnf")
+    return [t for _, t in trade_alerts(row, "bnf")]
 
 
 def intra_new(pick):
@@ -206,7 +235,8 @@ def intra_new(pick):
             f"\n{'Buy above' if bull else 'Sell below'} {_p(p['entry'])} · SL {_p(p['sl'])} · T1 {_p(p['t1'])} · T2 {_p(p['t2'])}"
             f"\n{p.get('basis') or ''}"
             + (f" · {z['qty']} shares, risk ₹{z['risk']:,}" if z.get("qty") else "")
-            + (f"\nOption: {o['label']} ~{o['entry']:.2f} · SL {o['sl']:.2f}" if o.get("label") else ""))
+            + (f"\nOption: {o['label']} ~{o['entry']:.2f} · SL {o['sl']:.2f}" if o.get("label") else "")
+            + "\n" + ladder(p["sl"], p["t2"], p["entry"], p["t1"], pick.get("price")) + "  ● now")
 
 
 def swing_new(pick):
@@ -217,9 +247,10 @@ def swing_new(pick):
             f"\n{'Buy above' if bull else 'Sell below'} {_p(p['entry'])} within 3 sessions · SL {_p(p['sl'])} · "
             f"T1 {_p(p['t1'])} · T2 {_p(p['t2'])}"
             f"\n{pick.get('zone_text') or ''} · {pick.get('signal') or ''}"
-            + (f"\n{z['qty']} shares, risk ₹{z['risk']:,}" if z.get("qty") else ""))
+            + (f"\n{z['qty']} shares, risk ₹{z['risk']:,}" if z.get("qty") else "")
+            + "\n" + ladder(p["sl"], p["t2"], p["entry"], p["t1"], pick.get("price")) + "  ● now")
 
 
 def priority_of(text):
-    """Entries and exits are urgent (they ring through); the rest are high."""
-    return 5 if text[:1] in ("🟢", "🔴", "🎯", "✅", "🟠", "⏱") else 4
+    """Normal priority for every alert (no red priority arrows); the sound is the ntfy app's default."""
+    return 3
