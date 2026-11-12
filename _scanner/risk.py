@@ -11,9 +11,11 @@ Blocked picks are still shown (marked), but they are not taken into Today's trad
 import math
 
 DEFAULTS = {"capital": 150000, "risk_pct": 1.0, "daily_loss_pct": 3.0,
-            "max_open": 3, "max_trades": 5, "btst_max": 3}      # btst_max = most swing trades open
+            "max_open": 3, "max_trades": 5, "btst_max": 3,     # btst_max = most swing trades open
+            "results_max": 3}                                 # most results-breakout trades open
 LIMITS = {"capital": (10000, 1e9), "risk_pct": (0.1, 5), "daily_loss_pct": (0.5, 20),
-          "max_open": (1, 20), "max_trades": (1, 50), "btst_max": (0, 10)}
+          "max_open": (1, 20), "max_trades": (1, 50), "btst_max": (0, 10),
+          "results_max": (0, 10)}
 INTRADAY_LEVERAGE = 2.0
 
 

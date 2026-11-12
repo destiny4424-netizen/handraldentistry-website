@@ -352,6 +352,12 @@ class BnfBook(SwingBook):
     GAP_SKIP = 0.5
 
 
+class ResultsBook(SwingBook):
+    """Results breakouts (mid caps, delivery): trigger within 5 sessions, out after 25."""
+    TRIGGER_DAYS, HOLD_DAYS = 5, 25
+    FILE, KIND = "results.json", "results"
+
+
 def _stats(rows):
     """Totals for a list of trades (rows with result_r when finished)."""
     done = [r for r in rows if r.get("result_r") is not None]
@@ -452,7 +458,7 @@ def mine_result(row, kind):
     return {"r": round(pts / risk, 2), "rs": round(pts * qty) if qty else None, "open": open_, "exit": ex}
 
 
-def mine_report(folder, month, swing_rows, bnf_rows):
+def mine_report(folder, month, swing_rows, bnf_rows, results_rows=()):
     """Every trade you marked as taken this month, with your result next to the scanner's (paper) result,
     and what the triggered trades you didn't take made on paper."""
     rows = []
@@ -464,6 +470,7 @@ def mine_report(folder, month, swing_rows, bnf_rows):
             continue
     rows += [("swing", r) for r in swing_rows if r.get("day", "").startswith(month)]
     rows += [("bnf", r) for r in bnf_rows if r.get("day", "").startswith(month)]
+    rows += [("results", r) for r in results_rows if r.get("day", "").startswith(month)]
     taken, missed = [], []
     for kind, r in rows:
         day = datetime.fromtimestamp(r["picked_at"], IST).strftime("%Y-%m-%d")

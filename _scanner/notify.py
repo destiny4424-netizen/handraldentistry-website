@@ -168,7 +168,7 @@ def _name(row, kind):
     if kind == "bnf":
         return "BANK NIFTY " + (row.get("option") or ("CE" if row["side"] == "bull" else "PE")), _n
     word = "BUY" if row["side"] == "bull" else "SELL"
-    return f"{'SWING' if kind == 'swing' else 'INTRADAY'} {word} {row['symbol']}", _p
+    return f"{ {'swing': 'SWING', 'results': 'RESULTS'}.get(kind, 'INTRADAY')} {word} {row['symbol']}", _p
 
 
 def trade_alerts(row, kind):
@@ -247,6 +247,17 @@ def swing_new(pick):
             f"\n{'Buy above' if bull else 'Sell below'} {_p(p['entry'])} within 3 sessions · SL {_p(p['sl'])} · "
             f"T1 {_p(p['t1'])} · T2 {_p(p['t2'])}"
             f"\n{pick.get('zone_text') or ''} · {pick.get('signal') or ''}"
+            + (f"\n{z['qty']} shares, risk ₹{z['risk']:,}" if z.get("qty") else "")
+            + "\n" + ladder(p["sl"], p["t2"], p["entry"], p["t1"], pick.get("price")) + "  ● now")
+
+
+def results_new(pick):
+    """A results breakout, locked in at the close."""
+    p, z = pick["plan"], pick.get("size") or {}
+    return (f"🚀 Results breakout · {pick['symbol']} (score {pick['score']:.0f})"
+            f"\nResults {pick['result_day']} {pick['react_pct']:+.1f}% · new 52W high on {pick['breakout_day']} · "
+            f"volume {pick['vol_x']}x"
+            f"\nBuy above {_p(p['entry'])} within 5 sessions · SL {_p(p['sl'])} ({p['risk_pct']}%) · T1 {_p(p['t1'])} · T2 {_p(p['t2'])}"
             + (f"\n{z['qty']} shares, risk ₹{z['risk']:,}" if z.get("qty") else "")
             + "\n" + ladder(p["sl"], p["t2"], p["entry"], p["t1"], pick.get("price")) + "  ● now")
 

@@ -35,6 +35,7 @@ import backtest
 import breakout
 import bullion
 import bnf
+import earnings
 import notify
 import swing
 import events
@@ -52,7 +53,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "12 Nov · Alerts: no priority arrows, price bar, Took it / TradingView buttons"
+VERSION = "12 Nov · Results breakouts: mid caps at a new 52-week high after results"
 
 
 def load_env():
@@ -275,11 +276,14 @@ def fno_stocks():
     OPTIONS.update(opts)
     LOTS.update({u: l for u, l in lots.items() if l})
     NAMES.update(names)
+    ALL_EQUITY.clear()
+    ALL_EQUITY.update(equity)
     COMMODITY.update({k: (sid, inst) for k, (_, sid, inst) in comm.items()})
     return stocks
 
 
 FUTURES = {}                                           # symbol -> current-month futures security id
+ALL_EQUITY = {}                                        # every NSE EQ symbol -> security id (for the mid caps)
 BNF_FUT = []                                           # [expiry, security id] of the current Bank Nifty future
 # Dhan security ids of the indices (IDX_I); read from the scrip master, these are fallbacks.
 INDEXES = {"NIFTY": "13", "BANKNIFTY": "25", "INDIAVIX": "21"}
@@ -462,7 +466,7 @@ def ntfy_topic():
     return SETTINGS["ntfy_topic"]
 
 
-ALERT_KINDS = ("bnf", "swing", "intra")
+ALERT_KINDS = ("bnf", "swing", "intra", "results")
 
 
 def alert_on(kind):
@@ -907,6 +911,172 @@ def bullion_loop():
         wait = BULLION_EVERY * 60 if mcx_open() or DEMO else 3 * 3600
         BULLION_WAKE.wait(wait)
         BULLION_WAKE.clear()
+
+
+# ── Results breakouts: mid caps at a new 52-week high after their results ─────────────────
+RESULTS = trades.ResultsBook(SETTINGS_DIR)             # followed for up to 25 sessions
+RESULT_PICKS = {}                                      # symbol -> (pick, daily candles) for the chart
+RES_DAILY = {}                                         # symbol -> (IST date, ~400 days of daily candles)
+RES_WAKE = threading.Event()
+MIDCAP_URLS = ("https://niftyindices.com/IndexConstituent/ind_niftymidcap150list.csv",
+               "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
+               "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv")
+
+
+def midcap_list():
+    """Nifty Midcap 150 constituents {symbol: industry}, refreshed weekly from Nifty Indices / NSE (cached)."""
+    f = SETTINGS_DIR / "midcap150.json"
+    try:
+        cached = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cached = None
+    if cached and time.time() - cached.get("at", 0) < 7 * 86400 and cached.get("symbols"):
+        return cached["symbols"]
+    for url in MIDCAP_URLS:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": events.UA, "Accept": "text/csv,*/*"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                syms = earnings.parse_index_csv(r.read().decode("utf-8", "replace"))
+            if len(syms) >= 100:
+                SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+                f.write_text(json.dumps({"at": time.time(), "symbols": syms}), encoding="utf-8")
+                return syms
+        except Exception:
+            continue
+    return (cached or {}).get("symbols")               # an older list beats none
+
+
+def demo_long_daily(sym):
+    """Made-up ~300 sessions of daily candles; some demo stocks get a results jump to a 52-week high."""
+    rng = random.Random(sym + "long")
+    jump = rng.random() < 0.3
+    p, out = rng.uniform(150, 3000), []
+    day0 = datetime.now(IST).date() - timedelta(days=440)
+    i = 0
+    d = day0
+    while d <= datetime.now(IST).date():
+        if d.weekday() < 5:
+            out.append(d)
+        d += timedelta(days=1)
+    rows = []
+    n = len(out)
+    cap = None
+    for i, dd in enumerate(out):
+        t = int(datetime(dd.year, dd.month, dd.day, tzinfo=IST).timestamp())
+        o = p
+        if jump and i == n - 7:
+            o, c = p * 1.04, p * 1.09
+        else:
+            c = o * (1 + rng.gauss(0.0005 if not jump or i > n - 7 else 0.0003, 0.013))
+        if jump and i < n - 7:
+            cap = cap or p * 1.18
+            c = min(c, cap)
+        h, l = max(o, c) * (1 + abs(rng.gauss(0, .005))), min(o, c) * (1 - abs(rng.gauss(0, .005)))
+        rows.append({"t": t, "o": o, "h": h, "l": l, "c": c, "v": (4e6 if jump and i == n - 7 else 1e6 * rng.uniform(.6, 1.4))})
+        p = c
+    return rows
+
+
+def res_daily(sym, sid, demo):
+    if demo:
+        return demo_long_daily(sym)
+    today = datetime.now(IST).date()
+    hit = RES_DAILY.get(sym)
+    if not hit or hit[0] != today:
+        RES_DAILY[sym] = (today, dhan_daily(sid, days=420))
+        time.sleep(0.25)
+    return RES_DAILY[sym][1]
+
+
+def results_once():
+    """Scan the mid caps for results breakouts; lock in the list after the close; follow the trades."""
+    demo = DEMO
+    set_state(results=dict(STATE.get("results") or {}, status="scanning"))
+    if demo:
+        uni, source = {s: "" for s in DEMO_SYMBOLS[:60]}, "demo stocks"
+    else:
+        if not ALL_EQUITY:
+            fno_stocks()
+        mids = midcap_list()
+        uni, source = (mids, "Nifty Midcap 150") if mids else ({s: "" for s in FUTURES}, "F&O stocks (the mid-cap list couldn't be fetched)")
+    rec = {} if demo else events.recent_results(40)
+    if demo:                                           # demo: no results calendar, the big-volume day stands in
+        rec = {}
+    try:
+        nifty_d = demo_long_daily("NIFTY") if demo else index_daily("NIFTY", INDEXES["NIFTY"], False, None, days=420)
+    except DhanError as e:
+        if e.fatal:
+            raise
+        nifty_d = []
+    cands, daily_of, failed = [], {}, 0
+    open_syms = {r["symbol"] for r in RESULTS.open_rows()}
+    for sym in sorted(set(uni) | open_syms):
+        sid = sym if demo else ALL_EQUITY.get(sym)
+        if not sid:
+            continue
+        try:
+            d = res_daily(sym, sid, demo)
+        except DhanError as e:
+            if e.fatal:
+                raise
+            failed += 1
+            continue
+        daily_of[sym] = d
+        if sym not in uni:
+            continue
+        rd = rec.get(sym)
+        rday = analysis._day(int(datetime.fromisoformat(rd).replace(tzinfo=IST).timestamp())) if rd else None
+        c = earnings.analyse(sym, d, rday, nifty_d, NAMES.get(sym))
+        if c:
+            c["sector"] = uni.get(sym) or picks.sector_of(sym)
+            c["spark"] = [round(x["c"], 2) for x in d[-60:]]
+            cands.append(c)
+    buys, watch = earnings.rank(cands)
+    rcfg = risk.config(SETTINGS)
+    free = max(0, rcfg["results_max"] - len(RESULTS.open_rows()))
+    for i, c in enumerate(buys):
+        c["size"] = risk.size_stock(c["plan"], rcfg, btst=True)
+        c["take"] = i < free
+    now = time.time()
+    today = datetime.now(IST).date()
+    closed_today = not demo and today.weekday() < 5 and datetime.now(IST).strftime("%H:%M") >= "15:45"
+    for c in buys:                                     # the day's list is locked in after the close
+        d = daily_of.get(c["symbol"]) or []
+        if closed_today and c["take"] and d and datetime.fromtimestamp(d[-1]["t"], IST).date() == today:
+            if RESULTS.record(c, now):
+                RESULTS.rows[-1].update(wa=[], card={"size": c.get("size")})
+                RESULTS.save()
+                alert("results", notify.results_new(c), RESULTS.rows[-1], "new")
+    RESULTS.update({s: daily_of[s] for s in open_syms | {r["symbol"] for r in RESULTS.rows} if s in daily_of}, now)
+    book_notify(RESULTS, "results")
+    with LOCK:
+        RESULT_PICKS.clear()
+        RESULT_PICKS.update({c["symbol"]: (c, daily_of[c["symbol"]]) for c in buys + watch if c["symbol"] in daily_of})
+    set_state(results={"status": "done", "source": source, "universe": len(uni), "failed": failed,
+                       "results_known": len(rec), "at": datetime.now(IST).strftime("%d %b %H:%M"),
+                       "picks": buys[:10], "watch": watch[:10], "book": RESULTS.view(), "demo": demo})
+
+
+def results_loop():
+    """At start, then every market day after the close (16:05), or when asked to."""
+    RES_WAKE.wait(60)                                  # let the first market scan go first
+    RES_WAKE.clear()
+    while True:
+        try:
+            results_once()
+        except DhanError as e:
+            set_state(results=dict(STATE.get("results") or {}, status="error", error=str(e)))
+        except Exception as e:
+            warn("results breakouts", e)
+            set_state(results=dict(STATE.get("results") or {}, status="error", error=f"Results scan failed: {e}"))
+        now = datetime.now(IST)
+        nxt = now.replace(hour=16, minute=5, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(days=1)
+        while nxt.weekday() >= 5:
+            nxt += timedelta(days=1)
+        RES_WAKE.wait((nxt - now).total_seconds())
+        RES_WAKE.clear()
 
 
 def bullion_payload(symbol):
@@ -2208,9 +2378,10 @@ class Handler(BaseHTTPRequestHandler):
             month = (q.get("month", [""])[0] or datetime.now(IST).strftime("%Y-%m"))[:7]
             if not (len(month) == 7 and month[4] == "-" and month.replace("-", "").isdigit()):
                 return self.send(400, {"error": "month must be YYYY-MM"})
-            self.send(200, trades.mine_report(SETTINGS_DIR, month, SWINGS.rows, BNFS.rows))
+            self.send(200, trades.mine_report(SETTINGS_DIR, month, SWINGS.rows, BNFS.rows, RESULTS.rows))
         elif url.path == "/api/btst":
-            p = pick_payload(q.get("symbol", [""])[0].upper(), BTST_PICKS)
+            sym_ = q.get("symbol", [""])[0].upper()
+            p = pick_payload(sym_, BTST_PICKS) or pick_payload(sym_, RESULT_PICKS)
             self.send(200 if p else 404, p or {"error": "not found"})
         elif url.path == "/api/pick":
             p = pick_payload(q.get("symbol", [""])[0].upper())
@@ -2241,6 +2412,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(401, {"error": "Sign in first."})
         if path == "/api/scan":
             WAKE.set()
+            return self.send(200, {"ok": True})
+        if path == "/api/results/scan":
+            RES_WAKE.set()
             return self.send(200, {"ok": True})
         if path == "/api/bullion/scan":
             BULLION_WAKE.set()
@@ -2299,7 +2473,7 @@ class Handler(BaseHTTPRequestHandler):
                     v = None
                 if v is None or not lo <= v <= hi:
                     return self.send(400, {"error": f"Risk setting {k.replace('_', ' ')} must be between {lo:g} and {hi:g}."})
-                liq["risk_" + k] = int(v) if k in ("capital", "max_open", "max_trades", "btst_max") else v
+                liq["risk_" + k] = int(v) if k in ("capital", "max_open", "max_trades", "btst_max", "results_max") else v
             ms = body.get("intra_min_score")
             if ms not in (None, ""):
                 try:
@@ -2340,8 +2514,8 @@ class Handler(BaseHTTPRequestHandler):
                     ok = trades.set_mine(rows, picked_at, sym, data)
                     if ok:
                         f.write_text(json.dumps(rows), encoding="utf-8")
-            elif kind in ("swing", "bnf"):
-                book = SWINGS if kind == "swing" else BNFS
+            elif kind in ("swing", "bnf", "results"):
+                book = {"swing": SWINGS, "bnf": BNFS, "results": RESULTS}[kind]
                 ok = trades.set_mine(book.rows, picked_at, sym, data)
                 book.save()
             else:
@@ -2423,7 +2597,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": "bad"})
         if kind not in ALERT_KINDS or not hmac.compare_digest(str(body.get("sig") or ""), hook_sig(kind, at, sym)):
             return self.send(403, {"error": "bad signature"})
-        book = {"intra": TRADES, "swing": SWINGS, "bnf": BNFS}[kind]
+        book = {"intra": TRADES, "swing": SWINGS, "bnf": BNFS, "results": RESULTS}[kind]
         row = next((r for r in book.rows if abs(r["picked_at"] - at) < 1 and r["symbol"] == sym), None)
         if not row:
             return self.send(404, {"error": "That trade wasn't found."})
@@ -2488,6 +2662,7 @@ def main():
     threading.Thread(target=scanner, daemon=True).start()
     threading.Thread(target=token_keeper, daemon=True).start()
     threading.Thread(target=bullion_loop, daemon=True).start()
+    threading.Thread(target=results_loop, daemon=True).start()
     notify.start(alert_config)
     threading.Thread(target=watchdog, daemon=True).start()
     try:
