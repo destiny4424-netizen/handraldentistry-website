@@ -253,3 +253,37 @@ def results_calendar():
         out = hit[1] if hit else {}
     _CACHE["nse-results"] = (time.time(), out)
     return out
+
+
+def recent_results(days=35):
+    """{symbol: 'YYYY-MM-DD'} of the latest results board meeting in the last `days` days, from NSE's
+    corporate event calendar (past dates). {} if NSE can't be reached."""
+    hit = _CACHE.get("nse-recent-results")
+    if hit and time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    out = {}
+    today = date.today()
+    try:
+        import http.cookiejar
+        jar = http.cookiejar.CookieJar()
+        op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        hdr = {"User-Agent": UA, "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9",
+               "Referer": "https://www.nseindia.com/companies-listing/corporate-filings-event-calendar"}
+        op.open(urllib.request.Request("https://www.nseindia.com/", headers=hdr), timeout=12).read()
+        url = ("https://www.nseindia.com/api/event-calendar?index=equities&from_date="
+               f"{(today - timedelta(days=days)).strftime('%d-%m-%Y')}&to_date={today.strftime('%d-%m-%Y')}")
+        for row in json.loads(op.open(urllib.request.Request(url, headers=hdr), timeout=15).read()):
+            purpose = (row.get("purpose") or "") + " " + (row.get("bm_desc") or "")
+            if "result" not in purpose.lower():
+                continue
+            try:
+                d = datetime.strptime(row.get("date") or "", "%d-%b-%Y").date()
+            except ValueError:
+                continue
+            sym = row.get("symbol")
+            if sym and d <= today and (sym not in out or d.isoformat() > out[sym]):
+                out[sym] = d.isoformat()
+    except Exception:
+        out = hit[1] if hit else {}
+    _CACHE["nse-recent-results"] = (time.time(), out)
+    return out

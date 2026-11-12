@@ -307,6 +307,42 @@ Order blocks have their own tab and are not mixed in. Scans run every 15 minutes
 - **Watchlist:** stocks within 0.5% of yesterday's high/low on good volume, and breakouts that are extended
   or not yet backed by VWAP/Supertrend.
 
+## Results breakouts (mid caps) — Swing tab
+`earnings.py`. It catches mid-cap stocks that broke their 52-week high after their quarterly results. Two
+well-documented effects point the same way:
+- **post-earnings drift:** prices keep moving after a strong result (Bernard & Thomas)
+- **the 52-week-high effect** (George & Hwang)
+
+Both are stronger in mid caps.
+
+**Universe and data:**
+- **Universe:** Nifty Midcap 150, downloaded weekly from Nifty Indices / NSE. If that fails, the F&O stocks
+  are used and the panel says so.
+- **Results dates:** NSE's corporate event calendar for the last 40 days. If NSE can't be reached, a
+  big-volume day (2.5× the 50-day average, a 3%+ move) stands in, and the pick says so.
+
+**Rules (long only, delivery):**
+1. Results in the last 15 sessions.
+2. A close above the previous 52-week high on or after the results day, in the last 10 sessions.
+3. Still above the old high, and within 8% of the high since.
+4. Above a rising 50-day EMA.
+5. More than 3 ATR above the 20-day EMA, or a stop more than 8% away, goes on the watchlist.
+
+**Plan:**
+- Buy above the 3-day high, within 5 sessions.
+- Stop under the 5-day low.
+- T1 at 2R: book half and move the stop to cost.
+- T2 at 4R.
+- Out after 25 sessions.
+
+**Score (out of 100):** fresh breakout 20, results reaction 20, volume 20, trend + strength vs NIFTY 20,
+tightness 20.
+
+**Running and tracking:**
+- Scanned at start and every market day at 16:05 on daily candles.
+- The day's list is locked into `results.json`, at most 3 open (Settings).
+- Phone alerts: kind "Results breakouts".
+
 ## Bank Nifty options (monthly expiry) — top of the Swing tab
 `bnf.py`. Bank Nifty has one expiry a month, so a swing trade can use an option with 3+ weeks to go.
 Option buyers lose to time decay and to paying too much for volatility, and win on quick moves. So the setup
