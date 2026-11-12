@@ -287,3 +287,45 @@ def recent_results(days=35):
         out = hit[1] if hit else {}
     _CACHE["nse-recent-results"] = (time.time(), out)
     return out
+
+
+def past_results(days=1000):
+    """{symbol: ['YYYY-MM-DD', ...]} of past results board meetings, from NSE's event calendar, fetched
+    in 90-day pieces (for the results-breakout backtest). Cached for a day; {} if NSE can't be reached."""
+    hit = _CACHE.get("nse-past-results")
+    if hit and time.time() - hit[0] < 24 * 3600:
+        return hit[1]
+    out = {}
+    today = date.today()
+    try:
+        import http.cookiejar
+        jar = http.cookiejar.CookieJar()
+        op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        hdr = {"User-Agent": UA, "Accept": "*/*", "Accept-Language": "en-US,en;q=0.9",
+               "Referer": "https://www.nseindia.com/companies-listing/corporate-filings-event-calendar"}
+        op.open(urllib.request.Request("https://www.nseindia.com/", headers=hdr), timeout=12).read()
+        end = today
+        while (today - end).days < days:
+            beg = end - timedelta(days=89)
+            url = ("https://www.nseindia.com/api/event-calendar?index=equities&from_date="
+                   f"{beg.strftime('%d-%m-%Y')}&to_date={end.strftime('%d-%m-%Y')}")
+            try:
+                for row in json.loads(op.open(urllib.request.Request(url, headers=hdr), timeout=20).read()):
+                    purpose = (row.get("purpose") or "") + " " + (row.get("bm_desc") or "")
+                    if "result" not in purpose.lower():
+                        continue
+                    try:
+                        d = datetime.strptime(row.get("date") or "", "%d-%b-%Y").date()
+                    except ValueError:
+                        continue
+                    if row.get("symbol") and d <= today:
+                        out.setdefault(row["symbol"], set()).add(d.isoformat())
+            except Exception:
+                pass
+            end = beg - timedelta(days=1)
+            time.sleep(1)
+        out = {k: sorted(v) for k, v in out.items()}
+    except Exception:
+        out = hit[1] if hit else {}
+    _CACHE["nse-past-results"] = (time.time(), out)
+    return out

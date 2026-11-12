@@ -338,6 +338,21 @@ Both are stronger in mid caps.
 **Score (out of 100):** fresh breakout 20, results reaction 20, volume 20, trend + strength vs NIFTY 20,
 tightness 20.
 
+**Backtest (once a day):**
+- Rule variants replayed on about 3 years of daily data for the whole list:
+  - current rules
+  - not stretched (2 ATR)
+  - strong results (+4% day)
+  - volume 2x+
+  - targets 3R / 6R
+  - strong results + volume
+- Each trade is followed exactly like a live one.
+- Results are in R after 0.25% delivery costs.
+- Past results dates come from NSE's event calendar, fetched in 90-day pieces; a big-volume day stands in where
+  NSE has none.
+- The ⭐ variant (best total, both halves of the history positive, 20+ trades) is used live.
+- Caveat: today's index list is used for the whole history, so stocks that left it are missing.
+
 **Running and tracking:**
 - Scanned at start and every market day at 16:05 on daily candles.
 - The day's list is locked into `results.json`, at most 3 open (Settings).

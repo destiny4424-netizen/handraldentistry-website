@@ -918,6 +918,7 @@ RESULTS = trades.ResultsBook(SETTINGS_DIR)             # followed for up to 25 s
 RESULT_PICKS = {}                                      # symbol -> (pick, daily candles) for the chart
 RES_DAILY = {}                                         # symbol -> (IST date, ~400 days of daily candles)
 RES_WAKE = threading.Event()
+RES_BT = {}                                            # "day", "cmp": the rule variants on ~2 years of history
 MIDCAP_URLS = ("https://niftyindices.com/IndexConstituent/ind_niftymidcap150list.csv",
                "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
                "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv")
@@ -951,7 +952,7 @@ def demo_long_daily(sym):
     rng = random.Random(sym + "long")
     jump = rng.random() < 0.3
     p, out = rng.uniform(150, 3000), []
-    day0 = datetime.now(IST).date() - timedelta(days=440)
+    day0 = datetime.now(IST).date() - timedelta(days=1100)
     i = 0
     d = day0
     while d <= datetime.now(IST).date():
@@ -983,7 +984,7 @@ def res_daily(sym, sid, demo):
     today = datetime.now(IST).date()
     hit = RES_DAILY.get(sym)
     if not hit or hit[0] != today:
-        RES_DAILY[sym] = (today, dhan_daily(sid, days=420))
+        RES_DAILY[sym] = (today, dhan_daily(sid, days=1100))   # ~3 years: 52-week highs + the backtest
         time.sleep(0.25)
     return RES_DAILY[sym][1]
 
@@ -1003,7 +1004,7 @@ def results_once():
     if demo:                                           # demo: no results calendar, the big-volume day stands in
         rec = {}
     try:
-        nifty_d = demo_long_daily("NIFTY") if demo else index_daily("NIFTY", INDEXES["NIFTY"], False, None, days=420)
+        nifty_d = demo_long_daily("NIFTY") if demo else index_daily("NIFTY", INDEXES["NIFTY"], False, None, days=1100)
     except DhanError as e:
         if e.fatal:
             raise
@@ -1022,11 +1023,29 @@ def results_once():
             failed += 1
             continue
         daily_of[sym] = d
-        if sym not in uni:
+    # Backtest the rule variants once a day on the same history; the ⭐ variant is used live.
+    today = datetime.now(IST).date()
+    if RES_BT.get("day") != today and daily_of:
+        set_state(results=dict(STATE.get("results") or {}, status="backtesting"))
+        past = {} if demo else events.past_results(1000)
+        for k, v in rec.items():
+            past.setdefault(k, [])
+            if v not in past[k]:
+                past[k] = sorted(past[k] + [v])
+        hist = {s: daily_of[s] for s in uni if s in daily_of}
+        RES_BT.update(day=today, cmp=earnings.compare(hist, nifty_d, past, trades.ResultsBook),
+                      stocks=len(hist), dated=sum(1 for s in hist if past.get(s)),
+                      since=min((datetime.fromtimestamp(d[260]["t"], IST).strftime("%d %b %Y") for d in hist.values()
+                                 if len(d) > 280), default=None))
+    star = next((v for v in RES_BT.get("cmp") or [] if v.get("pick")), None)
+    rules = star["rules"] if star else {}
+    for sym in uni:
+        d = daily_of.get(sym)
+        if not d:
             continue
         rd = rec.get(sym)
         rday = analysis._day(int(datetime.fromisoformat(rd).replace(tzinfo=IST).timestamp())) if rd else None
-        c = earnings.analyse(sym, d, rday, nifty_d, NAMES.get(sym))
+        c = earnings.analyse(sym, d, rday, nifty_d, NAMES.get(sym), rules)
         if c:
             c["sector"] = uni.get(sym) or picks.sector_of(sym)
             c["spark"] = [round(x["c"], 2) for x in d[-60:]]
@@ -1038,7 +1057,6 @@ def results_once():
         c["size"] = risk.size_stock(c["plan"], rcfg, btst=True)
         c["take"] = i < free
     now = time.time()
-    today = datetime.now(IST).date()
     closed_today = not demo and today.weekday() < 5 and datetime.now(IST).strftime("%H:%M") >= "15:45"
     for c in buys:                                     # the day's list is locked in after the close
         d = daily_of.get(c["symbol"]) or []
@@ -1054,7 +1072,9 @@ def results_once():
         RESULT_PICKS.update({c["symbol"]: (c, daily_of[c["symbol"]]) for c in buys + watch if c["symbol"] in daily_of})
     set_state(results={"status": "done", "source": source, "universe": len(uni), "failed": failed,
                        "results_known": len(rec), "at": datetime.now(IST).strftime("%d %b %H:%M"),
-                       "picks": buys[:10], "watch": watch[:10], "book": RESULTS.view(), "demo": demo})
+                       "picks": buys[:10], "watch": watch[:10], "book": RESULTS.view(), "demo": demo,
+                       "rules": star["name"] if star else "Current rules", "edge": bool(star),
+                       "bt": {k: RES_BT.get(k) for k in ("cmp", "stocks", "dated", "since")}})
 
 
 def results_loop():
