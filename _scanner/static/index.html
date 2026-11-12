@@ -274,6 +274,7 @@
     border: 1px solid var(--line, #2a3140); color: var(--muted); cursor: pointer; vertical-align: middle; }
   button.took.on { border-color: var(--bull); color: var(--bull); }
   .optlive { display: block; font: 11px var(--mono); color: var(--muted); }
+  #bnfBox .ptable, #resBox .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12px; }
   .ressec { margin: 4px 0 18px; padding-top: 14px; border-top: 1px solid rgba(201,164,92,.18); }
   .pick.watchc { opacity: .85; } .pick.watchc .badge { background: var(--gold); color: #17130b; }
   .trow .r { font: 800 13px var(--mono); text-align: right; }
@@ -1612,6 +1613,7 @@ function renderResults(x) {
     ${x.status === "done" && !x.demo && !x.results_known ? `<div class="hint">NSE's results calendar couldn't be reached: big-volume days stand in for results dates.</div>` : ""}
     ${(x.picks || []).map((c, i) => card(c, i, false)).join("") || `<div class="empty">${x.status === "scanning" && !x.at ? "Scanning the mid caps…" : "No mid cap has broken its 52-week high after results and is ready to buy right now."}</div>`}
     ${(x.watch || []).length ? `<details class="more"><summary>Watchlist · ${x.watch.length} broke out but are stretched</summary>${x.watch.map((c, i) => card(c, i, true)).join("")}</details>` : ""}
+    ${resBt(x)}
     ${bk.rows.length ? `<details class="more"><summary>Results trades · ${sm.count} · won ${sm.wins} / lost ${sm.losses} · ${sm.total_r >= 0 ? "+" : ""}${sm.total_r}R</summary>
       ${bk.rows.slice(0, 15).map(r => { const res = r.result_r != null ? r.result_r : r.running_r;
         return `<div class="trow"><span class="tm">${istDay(r.picked_at)}</span><span><b>${esc(r.symbol)}</b></span><span class="num hide-s">${fmt(r.entry)}</span>
@@ -1622,6 +1624,19 @@ function renderResults(x) {
   el.querySelectorAll(".pick[data-res]").forEach(c => c.onclick = ev => { if (ev.target.closest("a, details, button")) return;
     selected = [c.dataset.res, "bull"]; document.querySelectorAll("#btstList .pick, #bnfCard, #resBox .pick").forEach(q => q.classList.remove("sel")); c.classList.add("sel"); loadChart(); });
   const sc = $("resScan"); if (sc) sc.onclick = async ev => { ev.preventDefault(); sc.textContent = "scanning…"; await post("/api/results/scan", {}).catch(() => {}); setTimeout(refresh, 3000); };
+}
+function resBt(x) {
+  const bt = x.bt || {}, cmp = bt.cmp || [];
+  if (!cmp.length) return x.status === "backtesting" ? `<div class="hint">Backtesting the rules on the stocks' history…</div>` : "";
+  const col = v => (v || 0) >= 0 ? css("--bull") : css("--bear"), r2 = v => v == null ? "—" : (+v).toFixed(2);
+  return `<details class="more"><summary>Backtest · ${bt.stocks} stocks since ${esc(bt.since || "")} · live rules: ${esc(x.rules)}${x.edge ? " ⭐" : ""}</summary>
+    <table class="ptable"><tr><th class="l">Rules</th><th>Trades</th><th>Win</th><th>Avg</th><th>Total</th><th>Early / late</th></tr>
+    ${cmp.map(v => `<tr><td class="l">${v.pick ? "⭐ " : ""}${esc(v.name)}</td><td>${v.all.n}</td><td>${v.all.win_rate ?? "—"}%</td>
+      <td style="color:${col(v.all.avg_r)}">${r2(v.all.avg_r)}R</td><td style="color:${col(v.all.total_r)}">${r2(v.all.total_r)}R</td>
+      <td>${r2(v.early.avg_r)} / ${r2(v.late.avg_r)}</td></tr>`).join("")}</table>
+    <div class="hint">After delivery costs (0.25% a round trip). Results dates from NSE for ${bt.dated} of ${bt.stocks} stocks${cmp[0].confirmed != null ? ` (${cmp[0].confirmed}% of trades)` : ""}; a big-volume day stands in for the rest.
+    It uses today's Midcap 150 list for the whole history, so stocks that dropped out of the index are missing (results look a little better than reality).
+    ⭐ = best total with both halves positive (20+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>`;
 }
 // "I took this trade": your real prices, for Performance → Your trades.
 const TOOK = {};
