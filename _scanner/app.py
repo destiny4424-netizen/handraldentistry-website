@@ -28,7 +28,7 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import analysis
 import backtest
@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "12 Nov · Meridian: new name and look"
+VERSION = "12 Nov · Alerts: no priority arrows, price bar, Took it / TradingView buttons"
 
 
 def load_env():
@@ -470,9 +470,38 @@ def alert_on(kind):
     return bool(alert_config()) and kind in SETTINGS.get("alert_kinds", ALERT_KINDS)
 
 
-def alert(kind, text):
+def hook_sig(kind, picked_at, symbol):
+    """Signs a "Took it" button in a notification, so the phone can mark the trade without signing in."""
+    if not SETTINGS.get("hook_secret"):
+        save_settings(hook_secret=secrets.token_hex(16))
+    msg = f"{kind}|{float(picked_at):.0f}|{symbol}".encode()
+    return hmac.new(bytes.fromhex(SETTINGS["hook_secret"]), msg, hashlib.sha256).hexdigest()[:32]
+
+
+def tv_symbol(symbol):
+    return "NSE:" + ("BANKNIFTY" if symbol == "BANKNIFTY" else symbol.replace("&", "_").replace("-", "_"))
+
+
+def alert_extra(kind, row, stage):
+    """Buttons on the notification: ✓ Took it (marks the trade as yours at the planned price),
+    TradingView, and open Meridian."""
+    acts = []
+    if row is not None and stage in ("new", "trig") and PUBLIC_URL and not row.get("mine"):
+        body = {"kind": kind, "picked_at": row["picked_at"], "symbol": row["symbol"],
+                "sig": hook_sig(kind, row["picked_at"], row["symbol"])}
+        acts.append({"action": "http", "label": "✓ Took it", "url": PUBLIC_URL.rstrip("/") + "/api/hook/took",
+                     "method": "POST", "headers": {"Content-Type": "application/json"}, "body": json.dumps(body), "clear": True})
+    if row is not None:
+        acts.append({"action": "view", "label": "TradingView",
+                     "url": "https://www.tradingview.com/chart/?symbol=" + quote(tv_symbol(row["symbol"]))})
+    if PUBLIC_URL:
+        acts.append({"action": "view", "label": "Open Meridian", "url": PUBLIC_URL})
+    return {"actions": acts[:3]} if acts else None
+
+
+def alert(kind, text, row=None, stage=None):
     if not DEMO and alert_on(kind):
-        notify.send(text, notify.priority_of(text))
+        notify.send(text, notify.priority_of(text), alert_extra(kind, row, stage))
 
 
 def book_notify(book, kind):
@@ -481,11 +510,11 @@ def book_notify(book, kind):
         return
     msgs = []
     for r in book.rows:
-        msgs += notify.trade_alerts(r, kind)
+        msgs += [(r, st, m) for st, m in notify.trade_alerts(r, kind)]
     if msgs:
         book.save()
-        for m in msgs:
-            alert(kind, m)
+        for r, st, m in msgs:
+            alert(kind, m, r, st)
 
 
 def bnf_option_marks(chains=None):
@@ -1265,7 +1294,7 @@ def bank_nifty(demo, idx, swing_daily, ev, now_ts, open_, session_time):
                                              opt_expiry=o["expiry"], opt_lot=o.get("lot"))
                     BNFS.rows[-1]["wa"] = []
                     BNFS.save()
-                    alert("bnf", notify.bnf_new(BNFS.rows[-1], pick))
+                    alert("bnf", notify.bnf_new(BNFS.rows[-1], pick), BNFS.rows[-1], "new")
         state.update(res)
     BNFS.update({"BANKNIFTY": with_today(d, c5, "09:30") if c5 else d}, now_ts)
     if not demo:
@@ -1489,7 +1518,7 @@ def scan_once():
                 if SWINGS.record(c, btst_now):
                     SWINGS.rows[-1]["wa"] = []
                     SWINGS.save()
-                    alert("swing", notify.swing_new(c))
+                    alert("swing", notify.swing_new(c), SWINGS.rows[-1], "new")
     SWINGS.update(swing_daily, btst_now)
     book_notify(SWINGS, "swing")
     btst_state = {"open": btst_open, "from": btst_from, "picks": btst_picks, "book": SWINGS.view(),
@@ -1531,7 +1560,7 @@ def scan_once():
         c["locked_new"] = TRADES.record(c, book_now)
         if c["locked_new"] and not demo:
             TRADES.rows[-1]["wa"] = []
-            alert("intra", notify.intra_new(c))
+            alert("intra", notify.intra_new(c), TRADES.rows[-1], "new")
     TRADES.update(candles_by, book_now)
     book_notify(TRADES, "intra")
     risk_state = dict(rcfg, **risk.day_status(TRADES.rows, rcfg), skipped=blocked)
@@ -1856,7 +1885,7 @@ def watchdog():
             now = problems_now()
             for k, text in now.items():
                 if k not in PROBLEMS and alert_config():
-                    notify.send("🚨 Scanner problem\n" + text, 5)
+                    notify.send("🚨 Scanner problem\n" + text, 3, alert_extra(None, None, None))
             for k in [k for k in PROBLEMS if k not in now]:
                 if alert_config():
                     notify.send("✅ Scanner back to normal\n" + {"token": "The Dhan token is working again.",
@@ -2206,6 +2235,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": "Bad request"})
         if path == "/api/login":
             return self.login(body)
+        if path == "/api/hook/took":                   # "✓ Took it" on a phone notification (signed, no sign-in)
+            return self.took_hook(body)
         if not self.signed_in():
             return self.send(401, {"error": "Sign in first."})
         if path == "/api/scan":
@@ -2383,6 +2414,30 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, {"ok": True})
         else:
             self.send(404, {"error": "not found"})
+
+    def took_hook(self, body):
+        kind, sym = body.get("kind"), str(body.get("symbol") or "")
+        try:
+            at = float(body.get("picked_at"))
+        except (TypeError, ValueError):
+            return self.send(400, {"error": "bad"})
+        if kind not in ALERT_KINDS or not hmac.compare_digest(str(body.get("sig") or ""), hook_sig(kind, at, sym)):
+            return self.send(403, {"error": "bad signature"})
+        book = {"intra": TRADES, "swing": SWINGS, "bnf": BNFS}[kind]
+        row = next((r for r in book.rows if abs(r["picked_at"] - at) < 1 and r["symbol"] == sym), None)
+        if not row:
+            return self.send(404, {"error": "That trade wasn't found."})
+        if kind == "bnf" and (row.get("opt_fill") or row.get("opt_entry")):
+            entry, qty = row.get("opt_fill") or row["opt_entry"], row.get("opt_lot")
+        else:
+            entry, qty = row["entry"], ((row.get("card") or {}).get("size") or {}).get("qty")
+        if not row.get("mine"):
+            row["mine"] = {"entry": entry, "exit": None, "qty": qty, "at": time.time(), "via": "alert"}
+            book.save()
+        what = row.get("option") if kind == "bnf" else row["symbol"]
+        notify.send(f"✓ Marked as taken · {what}\nAt {entry:,.2f}{f' × {qty}' if qty else ''}. "
+                    "Correct your prices with TOOK in Meridian.", 3)
+        return self.send(200, {"ok": True})
 
     def login(self, body):
         ip, now = self.client_ip(), time.time()
