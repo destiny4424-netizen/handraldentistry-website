@@ -297,6 +297,13 @@
   .pl-kv b { display: block; font-size: 16px; color: var(--text); }
   #pulsePanel .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12.5px; }
   @media (max-width: 900px) { .pl-hero, .pl-grid { grid-template-columns: minmax(0, 1fr); } .pl-gauge svg { max-width: 220px; } }
+  .ol-wrap { margin: 4px 0 6px; } .ol-title { font: 600 24px var(--serif); color: #efe7d4; margin: 0 0 10px; }
+  .ol-title small { font: 400 12px Inter; color: var(--muted); }
+  .ol-sum { font-size: 14.5px; margin: 0 0 10px; color: var(--text); }
+  .ol-row { display: grid; grid-template-columns: 78px 1fr; gap: 10px; align-items: center; margin: 6px 0; font-size: 12px; }
+  .ol-k { color: var(--muted); }
+  .ol-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: rgba(255,255,255,.04); }
+  .ol-bar b { display: flex; align-items: center; justify-content: center; font: 600 11px Inter; color: #0d1015; white-space: nowrap; overflow: hidden; }
   .ressec { margin: 4px 0 18px; padding-top: 14px; border-top: 1px solid rgba(201,164,92,.18); }
   .pick.watchc { opacity: .85; } .pick.watchc .badge { background: var(--gold); color: #17130b; }
   .trow .r { font: 800 13px var(--mono); text-align: right; }
@@ -1689,6 +1696,46 @@ function resBt(x, open) {
     It uses today's Midcap 150 list for the whole history, so stocks that dropped out of the index are missing (results look a little better than reality).
     ⭐ = best total with both halves positive (20+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>`;
 }
+// ---------- Outlook: tomorrow and next week ----------
+function outlookHtml(o) {
+  if (!o || !o.day) return "";
+  const B = css("--bull"), R = css("--bear"), G = "#c9a45c", n0 = v => v == null ? "—" : Math.round(v).toLocaleString("en-IN");
+  const tri = (label, items, pick) => `<div class="ol-row"><span class="ol-k">${label}</span><div class="ol-bar">${items.map(([name, p, c]) =>
+      `<b style="width:${p}%;background:${c};opacity:${name === pick ? 1 : .45}" title="${name} ${p}%">${p >= 14 ? `${name} ${p}%` : ""}</b>`).join("")}</div></div>`;
+  const conf = c => ({ clear: "clear edge", slight: "slight edge", "toss-up": "close call" })[c];
+  const test = (t, keys) => t ? `<div class="hint">Tested on the last ${t.n} ${keys === 3 ? "days" : "weeks"} (each forecast made only from data before it):
+      direction right <b>${t.direction.hit}%</b> vs ${t.direction.guess}% by always guessing "${esc(t.direction.guess_pick)}" ·
+      type right <b>${t.type.hit}%</b> vs ${t.type.guess}%${keys === 3 ? ` · opening right <b>${t.open.hit}%</b> vs ${t.open.guess}%` : ""}.
+      ${t.direction.hit - t.direction.guess >= 4 ? "It has had a small real edge." : "No real edge over guessing so far: treat it as context, not a signal."}</div>` : "";
+  const card = (title, f, isDay) => {
+    if (!f) return "";
+    const v = f.verdict, L = Object.assign({}, f.levels || {});
+    ["call_wall", "put_wall"].forEach(k => { if (L[k] && L.close && Math.abs(L[k] / L.close - 1) > 0.05) L[k] = null; });   // a wall far from price isn't a level
+    return `<div class="pl-card ol-card"><h3>${title} <small style="font:400 12px Inter;color:var(--muted)">${esc(f.target_txt)} · from the ${esc(f.based_on)} close</small></h3>
+      <p class="ol-sum">${esc(f.summary)}</p>
+      ${tri("Direction", [["Up", f.up, B], ["Flat", f.flat, G], ["Down", f.down, R]], v.direction.pick)}
+      ${tri("Type", [["Continuation", f.continuation, B], ["Sideways", f.sideways, G], ["Reversal", f.reversal, R]],
+            { "Trend continuation": "Continuation", "Sideways": "Sideways", "Reversal": "Reversal" }[v.type.pick])}
+      ${isDay ? tri("Opening", [["Gap up", f.gap_up, B], ["Flat", f.gap_flat, G], ["Gap down", f.gap_down, R]], { "Gap up": "Gap up", "Flat open": "Flat", "Gap down": "Gap down" }[v.open.pick]) : ""}
+      <div class="hint" style="margin-top:6px">${v.direction.pick} · ${conf(v.direction.conf)} · "continuation" means moving on in the ${esc(f.ref_dir === "up" ? "upward" : "downward")} direction of the last ${isDay ? "day" : "week"}.
+        Based on the ${f.n} most similar past ${isDay ? "days" : "weeks"} of NIFTY.${(f.nudges || []).length ? " Nudged by: " + f.nudges.map(esc).join(", ") + "." : ""}</div>
+      <div class="pl-kv" style="margin-top:8px">
+        <div>Typical move<b>±${f.move_med}%</b>${isDay ? "close to close" : "over the week"}</div>
+        <div>Last close<b>${n0(L.close)}</b>H ${n0(L.high)} · L ${n0(L.low)}</div>
+        <div>Resistance<b style="color:${R}">${n0(L.call_wall || L.up1)}</b>${L.call_wall ? "call wall" : "+½ ATR"} · ${n0(L.high)}</div>
+        <div>Support<b style="color:${B}">${n0(L.put_wall || L.dn1)}</b>${L.put_wall ? "put wall" : "−½ ATR"} · ${n0(L.low)}</div></div>
+      ${f.events && f.events.length ? `<div class="hint" style="margin-top:6px">Scheduled: ${f.events.map(esc).join(" · ")}</div>` : ""}
+      ${f.note ? `<div class="hint">${esc(f.note)}</div>` : ""}
+      ${test(f.test, isDay ? 3 : 2)}</div>`;
+  };
+  const tr = o.track;
+  return `<div class="ol-wrap"><h3 class="ol-title">Outlook <small>odds from how NIFTY behaved after similar days and weeks · not a certainty</small></h3>
+    <div class="pl-grid">${card("Tomorrow", o.day, true)}${card(o.week && o.week.note ? "This week" : "Next week", o.week, false)}</div>
+    ${tr ? `<div class="hint" style="margin:8px 0 16px">Live track record, last ${tr.n} forecasts: direction ${tr.direction}/${tr.n} right · type ${tr.type}/${tr.n} · opening ${tr.open}/${tr.n}.
+      ${(o.recent || []).map(r => `<span title="${r.date}: NIFTY ${r.move > 0 ? "+" : ""}${r.move}%" style="color:${r.direction ? B : R}">${r.direction ? "✓" : "✗"}</span>`).join(" ")}</div>`
+      : `<div class="hint" style="margin:8px 0 16px">Every forecast is saved and graded the next day; the live track record shows here once a few are graded.</div>`}</div>`;
+}
+
 // ---------- Market Pulse ----------
 function renderPulse() {
   const x = state.pulse, body = $("plBody");
@@ -1754,7 +1801,7 @@ function renderPulse() {
       <div>India VIX<b>${x.vix ?? "—"}</b>${x.vix_pct != null ? x.vix_pct + "th pct (4M)" : ""}</div>
       ${mb ? `<div>Mid caps &gt; 50 DMA<b style="color:${mb.above50 >= 55 ? B : mb.above50 <= 40 ? R : G}">${mb.above50}%</b>of ${mb.n}</div>
       <div>New 52W highs / lows<b><span style="color:${B}">${mb.highs}</span> / <span style="color:${R}">${mb.lows}</span></b>mid caps today</div>` : ""}</div></div>`;
-  body.innerHTML = hero + hist + `<div class="pl-grid">${broad}${secs}${fii}${pos}${opt}</div>`;
+  body.innerHTML = hero + hist + outlookHtml(x.outlook) + `<div class="pl-grid">${broad}${secs}${fii}${pos}${opt}</div>`;
   const ps2 = $("plScan"); if (ps2) ps2.onclick = async ev => { ev.preventDefault(); ps2.textContent = "refreshing…"; await post("/api/pulse/scan", {}).catch(() => {}); setTimeout(refresh, 4000); };
 }
 
