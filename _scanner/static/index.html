@@ -275,6 +275,28 @@
   button.took.on { border-color: var(--bull); color: var(--bull); }
   .optlive { display: block; font: 11px var(--mono); color: var(--muted); }
   #bnfBox .ptable, #resBox .ptable, #perfDaily .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12px; }
+  .pl-hero { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 22px; align-items: center; margin-bottom: 18px; }
+  .pl-gauge { text-align: center; } .pl-gauge svg { width: 100%; max-width: 240px; }
+  .pl-score { font: 600 46px/1 var(--serif); color: #efe7d4; margin-top: -54px; } .pl-label { font: 700 12px Inter; letter-spacing: .22em; text-transform: uppercase; margin-top: 6px; }
+  .pl-advice { font-size: 15px; color: var(--text); margin: 0 0 10px; }
+  .pl-part { display: grid; grid-template-columns: 120px 1fr 42px; gap: 10px; align-items: center; font-size: 12.5px; margin: 6px 0; }
+  .pl-part .bar { position: relative; height: 6px; background: rgba(255,255,255,.06); border-radius: 3px; }
+  .pl-part .bar b { position: absolute; top: 0; bottom: 0; border-radius: 3px; } .pl-part .bar i { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: rgba(255,255,255,.25); }
+  .pl-part small { grid-column: 1 / -1; color: var(--muted); margin-top: -4px; }
+  .pl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .pl-card { background: rgba(255,255,255,.02); border: 1px solid #20252e; border-radius: 12px; padding: 14px; min-width: 0; }
+  .pl-card h3 { font: 600 19px var(--serif); margin: 0 0 8px; color: #efe7d4; }
+  .pl-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+  .pl-tile { border-radius: 8px; padding: 8px 9px; font-size: 12px; color: #f3efe6; }
+  .pl-tile b { display: block; font-size: 15px; } .pl-tile small { opacity: .8; }
+  .pl-bars { display: flex; align-items: center; gap: 4px; height: 90px; }
+  .pl-bars div { flex: 1; display: flex; flex-direction: column; justify-content: center; height: 100%; position: relative; }
+  .pl-bars div b { display: block; width: 100%; border-radius: 2px; }
+  .pl-kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+  .pl-kv div { background: rgba(255,255,255,.03); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; color: var(--muted); }
+  .pl-kv b { display: block; font-size: 16px; color: var(--text); }
+  #pulsePanel .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12.5px; }
+  @media (max-width: 900px) { .pl-hero, .pl-grid { grid-template-columns: minmax(0, 1fr); } .pl-gauge svg { max-width: 220px; } }
   .ressec { margin: 4px 0 18px; padding-top: 14px; border-top: 1px solid rgba(201,164,92,.18); }
   .pick.watchc { opacity: .85; } .pick.watchc .badge { background: var(--gold); color: #17130b; }
   .trow .r { font: 800 13px var(--mono); text-align: right; }
@@ -356,6 +378,9 @@
   /* last word: TradingView header on every screen size */
   header button, header .tab, header .chip, header .live { white-space: nowrap; flex-shrink: 0; }
   @media (max-width: 1500px) { header #auto, header #tf, header .lname { display: none; } }
+  @media (min-width: 1001px) and (max-width: 1800px) { header #niftyChip, header .lname { display: none; } }
+  @media (min-width: 1001px) { header { overflow-x: auto; scrollbar-width: none; } header::-webkit-scrollbar { display: none; } }
+  @media (min-width: 1001px) and (max-width: 1800px) { header .tab { padding: 7px 8px; font-size: 12.5px; } header .tab .count { margin-left: 4px; } }
   @media (max-width: 1000px) {
     header { flex-wrap: nowrap !important; height: auto !important; min-height: 48px; overflow-x: auto; overflow-y: hidden;
              padding: env(safe-area-inset-top) 8px 0 !important; gap: 6px; scrollbar-width: none; }
@@ -453,7 +478,7 @@
            border: 1px solid #20252e; box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 12px 32px -12px rgba(0,0,0,.55); }
   h2, .ptitle h2, .perfbar h2, dialog h3, .perfsec h3 { font-family: var(--serif); font-weight: 600; letter-spacing: .01em; color: #efe7d4; }
   h2, .ptitle h2 { font-size: 21px; } .ptitle h2 { white-space: nowrap; flex-shrink: 0; }
-  @media (min-width: 1500px) { header .lname { display: flex; } } .perfbar h2 { font-size: 26px; } dialog h3 { font-size: 24px; } .perfsec h3 { font-size: 20px; }
+  @media (min-width: 1801px) { header .lname { display: flex; } } .perfbar h2 { font-size: 26px; } dialog h3 { font-size: 24px; } .perfsec h3 { font-size: 20px; }
   .ptitle small, .hint { color: #8d8a83; }
   button { background: linear-gradient(180deg, #dcbd7d, #b38c4b); color: #17130b; font-weight: 600; letter-spacing: .02em;
            box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 1px 2px rgba(0,0,0,.4); }
@@ -494,6 +519,7 @@
   <nav class="tabs">
     <button class="tab" data-mode="pk">Intraday<span class="count" id="cntPk">0</span></button>
     <button class="tab" data-mode="btst">Swing<span class="count" id="cntBt">0</span></button>
+    <button class="tab" data-mode="pulse">Pulse<span class="count" id="cntPulse">–</span></button>
     <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
     <button class="tab" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
     <button class="tab" data-mode="mcx">Gold &amp; Silver<span class="count" id="cntMcx">0</span></button>
@@ -707,6 +733,10 @@
         <li>Leverage cuts both ways: one lot of GOLD moves ₹100 per ₹1, SILVER ₹30. Keep spare margin for swings and margin hikes.</li></ul></div>
     </div>
   </section>
+  <section class="panel full" id="pulsePanel" hidden>
+    <div class="ptitle"><h2>Market Pulse</h2><small id="plNote"></small></div>
+    <div id="plBody"><div class="empty">Reading the market…</div></div>
+  </section>
   <section class="panel full" id="perfPanel" hidden>
     <div class="perfbar"><h2>Performance</h2><select id="perfMonth"></select>
       <label>Risk per trade ₹ <input id="perfRisk" type="number" min="0" step="100" placeholder="e.g. 1000"></label>
@@ -786,7 +816,7 @@
   <button data-go="pk:picksPanel"><span>◎</span>Intraday</button>
   <button data-go="btst:btstPanel"><span>☾</span>Swing</button>
   <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
-  <button data-go="pk:marketPanel"><span>▲</span>Market</button>
+  <button data-go="pulse:pulsePanel"><span>◐</span>Pulse</button>
   <button data-go="perf:perfPanel"><span>%</span>Stats</button>
   <button id="moreBtn" type="button"><span>⋯</span>More</button>
 </nav>
@@ -805,7 +835,7 @@
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 let state = null, selected = null, mode = "pk", alertsOn = false, seen = null;
-try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo", "mcx", "perf"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
+try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo", "mcx", "perf", "pulse"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
 const view = () => mode === "ob" ? { bullish: state.bullish, bearish: state.bearish, scores: state.scores }
                                  : state.breakouts || { bullish: [], bearish: [], scores: [] };
 
@@ -835,13 +865,14 @@ function render() {
   $("tf").textContent = mode === "ob" ? s.timeframe + "m" : mode === "btst" ? "1h" : mode === "mcx" ? "1D" : s.breakout_tf + "m";
   $("cntMcx").textContent = ((s.bullion || {}).metals || []).filter(m => m.verdict === "BUY").length;
   $("cntBt").textContent = (s.btst && s.btst.picks || []).length;
+  const md = (s.pulse || {}).mood; $("cntPulse").textContent = md ? (md.score > 0 ? "+" : "") + md.score : "–";
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
   const show = { pk: ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"],
                  btst: ["marketPanel", "btstBookPanel", "btstPanel"], ob: ["strengthPanel", "listsPanel"], bo: ["strengthPanel", "listsPanel"],
-                 mcx: ["bullInfoPanel", "bullionPanel"], perf: ["perfPanel"] };
-  document.body.classList.toggle("noside", mode === "perf");
-  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel", "perfPanel", "bullInfoPanel", "bullionPanel"]
+                 mcx: ["bullInfoPanel", "bullionPanel"], perf: ["perfPanel"], pulse: ["pulsePanel"] };
+  document.body.classList.toggle("noside", mode === "perf" || mode === "pulse");
+  ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel", "perfPanel", "bullInfoPanel", "bullionPanel", "pulsePanel"]
     .forEach(id => $(id).hidden = !show[mode].includes(id));
   document.querySelectorAll(".bnav button[data-go]").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode && b.dataset.go !== "pk:tradesPanel" && b.dataset.go !== "pk:marketPanel"));
   $("moreBtn").classList.toggle("on", ["ob", "bo", "mcx"].includes(mode));
@@ -882,6 +913,7 @@ function render() {
   if (mode === "pk") { renderPicks(); return; }
   if (mode === "btst") { renderBtst(); return; }
   if (mode === "mcx") { renderBullion(); return; }
+  if (mode === "pulse") { renderPulse(); return; }
   if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); loadBacktest(); loadJournal(); } return; }
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
@@ -1657,6 +1689,75 @@ function resBt(x, open) {
     It uses today's Midcap 150 list for the whole history, so stocks that dropped out of the index are missing (results look a little better than reality).
     ⭐ = best total with both halves positive (20+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>`;
 }
+// ---------- Market Pulse ----------
+function renderPulse() {
+  const x = state.pulse, body = $("plBody");
+  if (!x) { $("plNote").textContent = "starts a few seconds after the scanner"; return; }
+  const src = x.sources || {}, miss = Object.entries(src).filter(([, v]) => !v).map(([k]) => k);
+  $("plNote").innerHTML = `whole market: large, mid and small caps, every sector, institutions and options · updated ${esc(x.at)}${x.demo ? " (demo data)" : ""} · <a href="#" id="plScan" style="color:var(--gold)">↻ refresh</a>`;
+  const B = css("--bull"), R = css("--bear"), G = "#c9a45c";
+  const sg = v => v == null ? "—" : (v > 0 ? "+" : "") + (+v).toFixed(2) + "%", col = v => v == null ? "" : v > 0 ? B : v < 0 ? R : "";
+  const cr = v => v == null ? "—" : (v >= 0 ? "+₹" : "−₹") + Math.abs(Math.round(v)).toLocaleString("en-IN") + " cr";
+  const m = x.mood;
+  let hero = `<div class="empty">Not enough data for the mood yet.</div>`;
+  if (m) {
+    const ang = Math.PI * (1 - (m.score + 100) / 200), cx = 120 + 92 * Math.cos(ang), cy = 120 - 92 * Math.sin(ang);
+    const mc = m.score >= 15 ? B : m.score <= -15 ? R : G;
+    hero = `<div class="pl-hero"><div class="pl-gauge"><svg viewBox="0 0 240 132">
+        <defs><linearGradient id="plg" x1="0" x2="1"><stop offset="0" stop-color="${R}"/><stop offset=".5" stop-color="${G}"/><stop offset="1" stop-color="${B}"/></linearGradient></defs>
+        <path d="M28 120 A92 92 0 0 1 212 120" fill="none" stroke="url(#plg)" stroke-width="12" stroke-linecap="round" opacity=".9"/>
+        <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="9" fill="#0d1015" stroke="#efe7d4" stroke-width="3"/>
+        <text x="22" y="131" fill="#8d8a83" font-size="9">RISK-OFF</text><text x="182" y="131" fill="#8d8a83" font-size="9">RISK-ON</text></svg>
+        <div class="pl-score">${m.score > 0 ? "+" : ""}${m.score}</div><div class="pl-label" style="color:${mc}">${esc(m.label)}</div></div>
+      <div><p class="pl-advice"><b>What it means:</b> ${esc(m.advice)}</p>
+        ${m.parts.map(p => { const w = Math.abs(p.value) * 50; return `<div class="pl-part"><span>${esc(p.name)} <small style="display:inline;color:var(--muted)">/${p.weight}</small></span>
+          <span class="bar"><i></i><b style="${p.value >= 0 ? `left:50%;width:${w}%;background:${B}` : `right:50%;width:${w}%;background:${R}`}"></b></span>
+          <span style="color:${col(p.points)};text-align:right">${p.points > 0 ? "+" : ""}${p.points}</span><small>${esc(p.text)}</small></div>`; }).join("")}
+        ${miss.length ? `<div class="hint" style="margin-top:8px">Not available right now: ${miss.map(esc).join(", ")}. The mood uses the other parts (${m.weight_used} of 100 points in play).</div>` : ""}</div></div>`;
+  }
+  const hs = Object.entries(x.history || {});
+  const hist = hs.length > 2 ? `<div class="hint" style="margin:-8px 0 14px">Mood, last ${hs.length} days: ${hs.slice(-15).map(([d, v]) => `<span style="color:${col(v)}">${v > 0 ? "+" : ""}${v}</span>`).join(" · ")}</div>` : "";
+  const broad = (x.broad || []).length ? `<div class="pl-card"><h3>Broad market</h3><table class="ptable"><tr><th class="l">Index</th><th>Today</th><th>1W</th><th>1M</th><th>Trend</th><th>Up / down</th><th>From 52W high</th></tr>
+    ${x.broad.map(v => `<tr><td class="l">${esc(v.short)}</td><td style="color:${col(v.pct)}">${sg(v.pct)}</td><td style="color:${col(v.w1)}">${sg(v.w1)}</td>
+      <td style="color:${col(v.m1)}">${sg(v.m1)}</td><td>${v.trend ? `<span style="color:${v.trend === "Uptrend" ? B : v.trend === "Downtrend" ? R : G}">${v.trend}</span> <small>${v.above}/${v.of}</small>` : "—"}</td>
+      <td>${v.adv != null ? `<span style="color:${B}">${v.adv}</span> / <span style="color:${R}">${v.dec}</span>` : "—"}</td><td>${v.from_high != null ? v.from_high + "%" : "—"}</td></tr>`).join("")}</table>
+    ${x.small_vs_large != null ? `<div class="hint">Small caps vs NIFTY over a month: <b style="color:${col(x.small_vs_large)}">${sg(x.small_vs_large)}</b> (${x.small_vs_large > 0 ? "money is taking risk" : "money is hiding in large caps"}).</div>` : ""}</div>` : "";
+  const tile = v => { const p = v.pct ?? v.w1 ?? 0, a = Math.min(1, Math.abs(p) / 2.5); const bg = p >= 0 ? `rgba(47,163,125,${.15 + .55 * a})` : `rgba(217,83,79,${.15 + .55 * a})`;
+    return `<div class="pl-tile" style="background:${bg}">${esc(v.short)}<b>${sg(v.pct)}</b><small>1M ${sg(v.m1)}${v.rotation ? " · " + v.rotation : ""}</small></div>`; };
+  const secs = (x.sectors || []).length ? `<div class="pl-card"><h3>Sectors <small style="font:400 12px Inter;color:var(--muted)">${x.sectors_up} of ${x.sectors.length} up today</small></h3>
+    <div class="pl-tiles">${x.sectors.map(tile).join("")}</div>
+    <div class="hint">Leading = stronger than NIFTY over a month and still gaining this week · Weakening = strong but slowing · Improving = weak but turning up · Lagging = weak and falling. Trade longs in Leading/Improving sectors, shorts in Lagging.</div></div>` : "";
+  const f = x.fii || [], mx = Math.max(1, ...f.map(r => Math.max(Math.abs(r.fii || 0), Math.abs(r.dii || 0))));
+  const fsum = k => f.slice(-5).reduce((a, r) => a + (r[k] || 0), 0);
+  const fii = f.length ? `<div class="pl-card"><h3>FII / DII cash</h3>
+    <div class="pl-kv"><div>FII last day<b style="color:${col(f[f.length - 1].fii)}">${cr(f[f.length - 1].fii)}</b>${esc(f[f.length - 1].date)}</div>
+      <div>DII last day<b style="color:${col(f[f.length - 1].dii)}">${cr(f[f.length - 1].dii)}</b></div>
+      <div>FII 5 sessions<b style="color:${col(fsum("fii"))}">${cr(fsum("fii"))}</b></div><div>DII 5 sessions<b style="color:${col(fsum("dii"))}">${cr(fsum("dii"))}</b></div></div>
+    <div class="pl-bars" style="margin-top:10px">${f.map(r => `<div title="${esc(r.date)} FII ${cr(r.fii)} · DII ${cr(r.dii)}">
+      <b style="height:${Math.abs(r.fii || 0) / mx * 45}px;background:${(r.fii || 0) >= 0 ? B : R};${(r.fii || 0) >= 0 ? "bottom:45px" : "top:45px"};position:absolute;left:10%;width:38%"></b>
+      <b style="height:${Math.abs(r.dii || 0) / mx * 45}px;background:${G};opacity:.75;${(r.dii || 0) >= 0 ? "bottom:45px" : "top:45px"};position:absolute;right:10%;width:38%"></b></div>`).join("")}</div>
+    <div class="hint">Bars: FII (green buy / red sell) and DII (gold), last ${f.length} sessions. Provisional NSE figures, out after the close.</div></div>` : "";
+  const ps = x.positions || [], lp = ps.length ? ps[ps.length - 1] : null;
+  const pos = lp ? `<div class="pl-card"><h3>FII positioning <small style="font:400 12px Inter;color:var(--muted)">index derivatives, ${esc(lp.date)}</small></h3>
+    <div class="pl-kv"><div>Long in index futures<b style="color:${lp.long_pct >= 55 ? B : lp.long_pct <= 35 ? R : G}">${lp.long_pct}%</b>${lp.long_pct >= 55 ? "bullish bets" : lp.long_pct <= 35 ? "mostly short" : "balanced"}</div>
+      <div>Net index futures<b style="color:${col(lp.fut_net)}">${Math.round(lp.fut_net).toLocaleString("en-IN")}</b>contracts</div>
+      <div>Net index calls<b style="color:${col(lp.call_net)}">${Math.round(lp.call_net).toLocaleString("en-IN")}</b>long − short</div>
+      <div>Net index puts<b style="color:${col(-lp.put_net)}">${Math.round(lp.put_net).toLocaleString("en-IN")}</b>long − short</div></div>
+    <div class="pl-bars" style="height:60px;margin-top:10px">${ps.map(r => `<div title="${r.date}: ${r.long_pct}% long"><b style="height:${(r.long_pct || 0) * .55}px;margin-top:auto;background:${r.long_pct >= 55 ? B : r.long_pct <= 35 ? R : G}"></b></div>`).join("")}</div>
+    <div class="hint">FII long % in index futures, last ${ps.length} sessions (NSE participant-wise open interest, out after ~7 PM). Above 55% they are betting up; below 35% they are mostly short (a very low number can also mean a short-covering rally is near).</div></div>` : "";
+  const w = x.walls || {}, mb = x.mid;
+  const opt = `<div class="pl-card"><h3>Options, volatility &amp; breadth</h3><div class="pl-kv">
+      <div>NIFTY PCR<b>${x.pcr ?? "—"}</b>${x.pcr == null ? "" : x.pcr > 1.3 ? "puts heavy (support)" : x.pcr < 0.8 ? "calls heavy (resistance)" : "balanced"}</div>
+      <div>Call wall<b>${w.call_wall ? Math.round(w.call_wall).toLocaleString("en-IN") : "—"}</b>resistance</div>
+      <div>Put wall<b>${w.put_wall ? Math.round(w.put_wall).toLocaleString("en-IN") : "—"}</b>support</div>
+      <div>Max pain<b>${w.max_pain ? Math.round(w.max_pain).toLocaleString("en-IN") : "—"}</b>expiry magnet</div>
+      <div>India VIX<b>${x.vix ?? "—"}</b>${x.vix_pct != null ? x.vix_pct + "th pct (4M)" : ""}</div>
+      ${mb ? `<div>Mid caps &gt; 50 DMA<b style="color:${mb.above50 >= 55 ? B : mb.above50 <= 40 ? R : G}">${mb.above50}%</b>of ${mb.n}</div>
+      <div>New 52W highs / lows<b><span style="color:${B}">${mb.highs}</span> / <span style="color:${R}">${mb.lows}</span></b>mid caps today</div>` : ""}</div></div>`;
+  body.innerHTML = hero + hist + `<div class="pl-grid">${broad}${secs}${fii}${pos}${opt}</div>`;
+  const ps2 = $("plScan"); if (ps2) ps2.onclick = async ev => { ev.preventDefault(); ps2.textContent = "refreshing…"; await post("/api/pulse/scan", {}).catch(() => {}); setTimeout(refresh, 4000); };
+}
+
 // "I took this trade": your real prices, for Performance → Your trades.
 const TOOK = {};
 function tookBtn(kind, r) {
@@ -1718,10 +1819,13 @@ $("hRefresh").onclick = openHealth;
 $("mstrip").onclick = ev => {
   const act = ev.target.closest("[data-act]");
   if (act && act.dataset.act === "scan") { $("scan").click(); act.textContent = "SCANNING…"; return; }
-  if (act && act.dataset.act === "health") { openHealth(); return; } if (mode !== "pk") { mode = "pk"; selected = null; render(); } setTimeout(() => $("marketPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
+  if (act && act.dataset.act === "health") { openHealth(); return; }
+  if (act && act.dataset.act === "pulse") { mode = "pulse"; selected = null; try { localStorage.setItem("mode", mode); } catch {} render(); return; } if (mode !== "pk") { mode = "pk"; selected = null; render(); } setTimeout(() => $("marketPanel").scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
 function renderStrip(s) {
   const m = s.market || {}, n = m.nifty, g = m.gex, v = m.vix, r = s.risk;
   const out = [];
+  const mo = (s.pulse || {}).mood;
+  if (mo) out.push(`<span class="${mo.score >= 15 ? "up" : mo.score <= -15 ? "dn" : "wa"}" data-act="pulse">MOOD ${mo.score > 0 ? "+" : ""}${mo.score} · ${esc(mo.label.toUpperCase())}</span>`);
   if (n) out.push(`<span class="${n.pct >= 0 ? "up" : "dn"}">NIFTY ${n.trend === "Bullish" ? "▲" : n.trend === "Bearish" ? "▼" : "◆"} ${pct(n.pct)}</span>`);
   if (g) out.push(`<span class="${g.regime === "pos" ? "bl" : "wa"}">GEX ${g.regime === "pos" ? "+ RANGE" : "− TREND"}${g.flip ? ` · flip ${Math.round(g.flip)}` : ""}</span>`);
   if (v) out.push(`<span class="${v.level === "High" ? "wa" : ""}">VIX ${fmt(v.price)}</span>`);

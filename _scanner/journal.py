@@ -25,6 +25,11 @@ def _bucket_score(f):
     return None if s is None else "score 70+" if s >= 70 else "score 55–70" if s >= 55 else "score under 55"
 
 
+def _bucket_mood(f):
+    m = f.get("mood")
+    return None if m is None else "Market mood +15 and up" if m >= 15 else "Market mood −15 to +15" if m > -15 else "Market mood −15 and below"
+
+
 INTRADAY_GROUPS = [
     ("Breakout volume", _bucket_vol),
     ("Time of breakout", _bucket_time),
@@ -35,6 +40,7 @@ INTRADAY_GROUPS = [
     ("Score", _bucket_score),
     ("Sector", lambda f: f.get("sector")),
     ("NIFTY gamma (GEX)", lambda f: {"pos": "Positive gamma (range day)", "neg": "Negative gamma (trend day)"}.get(f.get("gex"))),
+    ("Market mood", _bucket_mood),
 ]
 BTST_GROUPS = [                                        # the swing setup (it took over the BTST slot)
     ("Side", lambda f: {"bull": "Swing buys", "bear": "Swing sells"}.get(f.get("side"))),
@@ -47,6 +53,7 @@ BTST_GROUPS = [                                        # the swing setup (it too
     ("Futures OI", lambda f: (f.get("oi_kind") or "No OI data").title()),
     ("Score", _bucket_score),
     ("Sector", lambda f: f.get("sector")),
+    ("Market mood", _bucket_mood),
 ]
 
 

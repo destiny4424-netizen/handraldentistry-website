@@ -307,6 +307,28 @@ Order blocks have their own tab and are not mixed in. Scans run every 15 minutes
 - **Watchlist:** stocks within 0.5% of yesterday's high/low on good volume, and breakouts that are extended
   or not yet backed by VWAP/Supertrend.
 
+## Market Pulse (the Pulse tab)
+`pulse.py`: the whole market's mood before a trade. It updates every 10 minutes in market hours and hourly otherwise.
+
+**Sources (each optional):**
+- **NSE allIndices:** every index today: Nifty 50 / Next 50 / 500, Midcap 150/100, Smallcap 250/100,
+  Microcap 250, and 20 sector indices, with advances/declines, 30-day change and P/E.
+- **Dhan daily candles of those indices:** trend against the 20/50/200-day averages, 1-week, 1-month and
+  3-month change, and distance from the 52-week high.
+- **NSE FII/DII cash:** provisional, after the close. It is kept day by day in `pulse.json`.
+- **NSE participant-wise open interest:** FII long % in index futures, and net index calls and puts, for the
+  last 10 sessions.
+- **The NIFTY option chain:** PCR, call/put walls, max pain.
+- **India VIX.**
+- **Mid-cap breadth:** % above the 50-day average, and new 52-week highs/lows.
+
+**Mood (−100 to +100):**
+- Trend 20 · breadth 20 · FII cash 15 · FII index futures 15 · PCR 10 · VIX 10 · risk appetite (small caps
+  vs NIFTY) 10.
+- The label and advice go from Risk-on to Risk-off.
+- Sectors are shown as heat tiles with rotation (Leading / Weakening / Improving / Lagging).
+- Every trade records the mood when it was given, and the Learning journal groups results by it.
+
 ## Results breakouts (mid caps) — Swing tab
 `earnings.py`. It catches mid-cap stocks that broke their 52-week high after their quarterly results. Two
 well-documented effects point the same way:
