@@ -274,7 +274,7 @@
     border: 1px solid var(--line, #2a3140); color: var(--muted); cursor: pointer; vertical-align: middle; }
   button.took.on { border-color: var(--bull); color: var(--bull); }
   .optlive { display: block; font: 11px var(--mono); color: var(--muted); }
-  #bnfBox .ptable, #resBox .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12px; }
+  #bnfBox .ptable, #resBox .ptable, #perfDaily .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12px; }
   .ressec { margin: 4px 0 18px; padding-top: 14px; border-top: 1px solid rgba(201,164,92,.18); }
   .pick.watchc { opacity: .85; } .pick.watchc .badge { background: var(--gold); color: #17130b; }
   .trow .r { font: 800 13px var(--mono); text-align: right; }
@@ -713,6 +713,7 @@
       <small style="color:var(--muted)">Every pick the scanner gives is recorded and scored here. R = multiples of the risk; enter your ₹ risk per trade to see rupees.</small></div>
     <div class="perfgrid"><div class="perfsec" id="perfIntra"></div><div class="perfsec" id="perfBtst"></div></div>
     <div class="perfsec" id="perfMine" style="margin-top:14px"></div>
+    <div class="perfsec" id="perfDaily" style="margin-top:14px"></div>
     <div class="perfbar" style="margin-top:22px"><h2>Backtest</h2><button id="btRun">Run backtest · last 60 sessions</button>
       <small id="btStatus" style="color:var(--muted)"></small></div>
     <div class="hint" id="btNote" style="margin:4px 0 10px"></div>
@@ -1271,7 +1272,15 @@ async function loadPerf() {
   renderPerf();
   renderMine();
 }
+function renderDailyBt() {
+  const el = $("perfDaily"); if (!el || !state) return;
+  const b = (state.btst || {}).bnf, r = state.results;
+  const parts = [r && resBt(r, true), b && bnfBt(b, true)].filter(Boolean);
+  el.innerHTML = `<h3>Daily backtests <small style="color:var(--muted);font-weight:400">· run by themselves once a day on years of daily data; the ⭐ rules are used live</small></h3>` +
+    (parts.length ? parts.join("") : `<div class="empty">They appear after the first daily scans (Results breakouts after 4:05 PM, Bank Nifty from 11:00).</div>`);
+}
 function renderMine() {
+  renderDailyBt();
   const el = $("perfMine"), d = mineData;
   if (!el || !d) return;
   const sm = d.summary, col = v => v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
@@ -1291,7 +1300,7 @@ function renderMine() {
         <td>${fmt(t.mine.entry)} → ${t.mine.exit != null ? fmt(t.mine.exit) : "open"}</td>
         <td style="color:${col(t.real_r)}">${R(t.real_r)}${t.open ? "*" : ""}${t.real_rs != null ? ` <small>${inr(t.real_rs)}</small>` : ""}</td>
         <td style="color:${col(t.paper_r)}">${R(t.paper_r)}</td></tr>`).join("")}</table>`
-     : `<div class="empty">No trades marked yet. Tap <b>TOOK IT?</b> on a trade (Today's trades, Swing trades or Bank Nifty trades) and enter your prices.</div>`);
+     : `<div class="empty">No trades marked yet. Tap <b>TOOK IT?</b> on a trade (Today's trades, Swing trades, Bank Nifty or Results trades), or <b>✓ Took it</b> on a phone alert.</div>`);
 }
 function renderPerf() {
   renderBacktest();
@@ -1372,6 +1381,13 @@ async function loadBacktest() {
   else if (btData && btData.job.status === "done" && renderBacktest.wasRunning) loadJournal();
   renderBacktest.wasRunning = btData && btData.job.status === "running";
 }
+// Backtests run before the rules changed are out of date.
+const RULES_CHANGED = Date.UTC(2026, 10, 11);
+function stale(when) {
+  const m = /(\d{1,2}) (\w{3}) (\d{4})/.exec(when || ""); if (!m) return false;
+  const mon = "JanFebMarAprMayJunJulAugSepOctNovDec".indexOf(m[2]) / 3;
+  return mon >= 0 && Date.UTC(+m[3], mon, +m[1]) < RULES_CHANGED;
+}
 function renderBacktest() {
   const d = btData; if (!d) return;
   const job = d.job, rep = d.report, running = job.status === "running";
@@ -1382,7 +1398,7 @@ function renderBacktest() {
     : rep ? `Last run ${rep.ran_at}${rep.demo ? " (demo data)" : ""} · ${rep.sessions} sessions ${rep.from} → ${rep.to} · ${rep.stocks} liquid F&O stocks` : "Not run yet. Takes about 10 minutes (downloads ~3 months of 5-minute candles).";
   if (!rep) { $("btNote").textContent = ""; $("btIntra").innerHTML = $("btBtst").innerHTML = ""; return; }
   const dd = s => s.max_drawdown != null ? ` · worst drawdown ${s.max_drawdown}R` : "";
-  $("btNote").textContent = rep.notes + ` Intraday: ${rep.intraday.summary.closed} trades${dd(rep.intraday.summary)}. Swing: ${rep.btst.summary.closed} trades${dd(rep.btst.summary)}.`;
+  $("btNote").textContent = (stale(rep.ran_at) ? "⚠ This backtest is from before the Swing setup was rebuilt (11 Nov): tap Run again for today's rules. " : "") + rep.notes + ` Intraday: ${rep.intraday.summary.closed} trades${dd(rep.intraday.summary)}. Swing: ${rep.btst.summary.closed} trades${dd(rep.btst.summary)}.`;
   perfSec($("btIntra"), "Backtest · Intraday breakouts", rep.intraday, "intra");
   perfSec($("btBtst"), "Backtest · Swing", rep.btst, "btst");
 }
@@ -1390,7 +1406,7 @@ function renderCompare(d) {
   const c0 = d.compare, inUse = d.rules || {}, manual = d.manual || {};
   // ORB is switched off: hide its rows from comparisons made before that.
   const c = c0 && Object.assign({}, c0, { intraday: (c0.intraday || []).filter(r => ((r.rules || {}).setup || "breakout") === "breakout") });
-  $("cmpStatus").textContent = c ? `Last compared ${c.ran_at}${c.demo ? " (demo data)" : ""} · ${c.from} → ${c.to}. "Later" = ${c.split} onwards, kept aside to check each variant on days it wasn't chosen on.`
+  $("cmpStatus").textContent = c ? `${stale(c.ran_at) ? "⚠ Out of date (before the 11 Nov Swing rebuild): tap Compare again. " : ""}Last compared ${c.ran_at}${c.demo ? " (demo data)" : ""} · ${c.from} → ${c.to}. "Later" = ${c.split} onwards, kept aside to check each variant on days it wasn't chosen on.`
     : "Runs about 10 rule changes on the same history (~20 minutes after the first download) and shows which ones help.";
   const col = v => v == null ? "" : v > 0 ? css("--bull") : v < 0 ? css("--bear") : "";
   const f = v => v == null ? "—" : (v > 0 ? "+" : "") + v;
@@ -1547,13 +1563,7 @@ function renderBnf(x) {
     body = `<div class="empty" style="padding:10px 0">${esc(x.open ? (x.reason || "Working it out…") : "Worked out from 11:00 on today's daily candle.")}</div>
       ${x.watch ? `<div class="hint">Levels to watch: ${x.watch.basis ? esc(x.watch.basis) + " · " : ""}entry ${n0(x.watch.entry)} · stop ${n0(x.watch.sl)} · T1 ${n0(x.watch.t1)}</div>` : ""}`;
   }
-  const bt = x.bt || {}, cmp = bt.cmp || [];
-  const btHtml = cmp.length ? `<details class="more"><summary>Backtest · Bank Nifty since ${esc(bt.since || "")} (${bt.sessions} sessions) · live rules: ${esc(x.rules)}${x.edge ? " ⭐" : ""}</summary>
-    <table class="ptable"><tr><th class="l">Rules</th><th>Trades</th><th>Win</th><th>Avg (option)</th><th>Total (option)</th><th>Early / late</th></tr>
-    ${cmp.map(v => `<tr><td class="l">${v.pick ? "⭐ " : ""}${esc(v.name)}</td><td>${v.option.n}</td><td>${v.option.win_rate ?? "—"}%</td>
-      <td style="color:${(v.option.avg_r || 0) >= 0 ? css("--bull") : css("--bear")}">${v.option.avg_r ?? "—"}R</td><td>${v.option.total_r}R</td>
-      <td>${v.early.avg_r ?? "—"} / ${v.late.avg_r ?? "—"}</td></tr>`).join("")}</table>
-    <div class="hint">Option R is estimated from Bank Nifty's moves minus time decay and costs; there is no option-chain, OI or bank history in the backtest. ⭐ = best total with both halves of the history positive (10+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>` : "";
+  const btHtml = bnfBt(x);
   const bk = x.book || { rows: [], summary: {} }, sm = bk.summary || {};
   const bookHtml = bk.rows.length ? `<details class="more"><summary>Bank Nifty trades · ${sm.count} · won ${sm.wins} / lost ${sm.losses} · ${sm.total_r >= 0 ? "+" : ""}${sm.total_r}R</summary>
     ${bk.rows.slice(0, 12).map(r => { const res = r.result_r != null ? r.result_r : r.running_r;
@@ -1625,11 +1635,20 @@ function renderResults(x) {
     selected = [c.dataset.res, "bull"]; document.querySelectorAll("#btstList .pick, #bnfCard, #resBox .pick").forEach(q => q.classList.remove("sel")); c.classList.add("sel"); loadChart(); });
   const sc = $("resScan"); if (sc) sc.onclick = async ev => { ev.preventDefault(); sc.textContent = "scanning…"; await post("/api/results/scan", {}).catch(() => {}); setTimeout(refresh, 3000); };
 }
-function resBt(x) {
+function bnfBt(x, open) {
+  const bt = x.bt || {}, cmp = bt.cmp || [];
+  return cmp.length ? `<details class="more"${open ? " open" : ""}><summary>Backtest · Bank Nifty since ${esc(bt.since || "")} (${bt.sessions} sessions) · live rules: ${esc(x.rules)}${x.edge ? " ⭐" : ""}</summary>
+    <table class="ptable"><tr><th class="l">Rules</th><th>Trades</th><th>Win</th><th>Avg (option)</th><th>Total (option)</th><th>Early / late</th></tr>
+    ${cmp.map(v => `<tr><td class="l">${v.pick ? "⭐ " : ""}${esc(v.name)}</td><td>${v.option.n}</td><td>${v.option.win_rate ?? "—"}%</td>
+      <td style="color:${(v.option.avg_r || 0) >= 0 ? css("--bull") : css("--bear")}">${v.option.avg_r ?? "—"}R</td><td>${v.option.total_r}R</td>
+      <td>${v.early.avg_r ?? "—"} / ${v.late.avg_r ?? "—"}</td></tr>`).join("")}</table>
+    <div class="hint">Option R is estimated from Bank Nifty's moves minus time decay and costs; there is no option-chain, OI or bank history in the backtest. ⭐ = best total with both halves of the history positive (10+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>` : "";
+}
+function resBt(x, open) {
   const bt = x.bt || {}, cmp = bt.cmp || [];
   if (!cmp.length) return x.status === "backtesting" ? `<div class="hint">Backtesting the rules on the stocks' history…</div>` : "";
   const col = v => (v || 0) >= 0 ? css("--bull") : css("--bear"), r2 = v => v == null ? "—" : (+v).toFixed(2);
-  return `<details class="more"><summary>Backtest · ${bt.stocks} stocks since ${esc(bt.since || "")} · live rules: ${esc(x.rules)}${x.edge ? " ⭐" : ""}</summary>
+  return `<details class="more"${open ? " open" : ""}><summary>Backtest · Results breakouts · ${bt.stocks} stocks since ${esc(bt.since || "")} · live rules: ${esc(x.rules)}${x.edge ? " ⭐" : ""}</summary>
     <table class="ptable"><tr><th class="l">Rules</th><th>Trades</th><th>Win</th><th>Avg</th><th>Total</th><th>Early / late</th></tr>
     ${cmp.map(v => `<tr><td class="l">${v.pick ? "⭐ " : ""}${esc(v.name)}</td><td>${v.all.n}</td><td>${v.all.win_rate ?? "—"}%</td>
       <td style="color:${col(v.all.avg_r)}">${r2(v.all.avg_r)}R</td><td style="color:${col(v.all.total_r)}">${r2(v.all.total_r)}R</td>
