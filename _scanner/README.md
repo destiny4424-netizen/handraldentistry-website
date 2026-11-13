@@ -329,6 +329,26 @@ Order blocks have their own tab and are not mixed in. Scans run every 15 minutes
 - Sectors are shown as heat tiles with rotation (Leading / Weakening / Improving / Lagging).
 - Every trade records the mood when it was given, and the Learning journal groups results by it.
 
+## Outlook: tomorrow and next week (Pulse tab)
+`outlook.py`. These are odds, not certainties.
+
+**How it works:**
+- It finds the 60 most similar past days of NIFTY. Similarity is measured on: the day's move in ATRs, where it
+  closed in its range, the range width, the 5-day move, the trend against the 20/50-day averages, and the streak.
+- It counts what happened the next day:
+  - direction: up / down / flat (less than 0.3%)
+  - type: trend continuation / reversal / sideways
+  - opening: gap up / gap down / flat (0.25%)
+  - typical move
+- Small, shown nudges come from the mood, FII cash, FII futures long % and VIX.
+- The same is done on weekly bars (the 30 most similar weeks) for next week, with that week's events and expiries.
+
+**Honesty checks:**
+- A walk-forward test on the last 250 days (80 weeks) is shown against "always guess the most common answer".
+- Every live forecast is saved in `pulse.json` and graded the next day; the track record is shown.
+- Gaps depend mostly on overnight global markets, which the scanner can't read, so the opening odds are the
+  weakest part.
+
 ## Results breakouts (mid caps) — Swing tab
 `earnings.py`. It catches mid-cap stocks that broke their 52-week high after their quarterly results. Two
 well-documented effects point the same way:

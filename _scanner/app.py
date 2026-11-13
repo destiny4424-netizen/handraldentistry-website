@@ -37,6 +37,7 @@ import bullion
 import bnf
 import earnings
 import notify
+import outlook
 import pulse
 import swing
 import events
@@ -1155,9 +1156,14 @@ def pulse_once():
     for name in names:
         try:
             hit = PULSE_DAILY.get(name)
-            if not hit or hit[0] != today:
-                d = demo_long_daily(name) if demo else dhan_daily(INDEX_IDS[name], "IDX_I", "INDEX", days=400)
-                PULSE_DAILY[name] = (today, d)
+            after_close = market_open() is False and datetime.now(IST).strftime("%H:%M") >= "15:40" and today.weekday() < 5
+            # After the close, fetch again (every 30 minutes) until today's candle is in: tomorrow's outlook needs it.
+            stale_close = bool(hit and hit[1]) and after_close and not demo and \
+                datetime.fromtimestamp(hit[1][-1]["t"], IST).date() != today and time.time() - hit[2] > 1800
+            if not hit or hit[0] != today or stale_close:
+                d = demo_long_daily(name) if demo else dhan_daily(INDEX_IDS[name], "IDX_I", "INDEX",
+                                                                  days=1100 if name == "NIFTY 50" else 400)
+                PULSE_DAILY[name] = (today, d, time.time())
                 if not demo:
                     time.sleep(0.25)
             trends[name] = pulse.trend_of(PULSE_DAILY[name][1])
@@ -1210,6 +1216,11 @@ def pulse_once():
     svl = round(sm["m1"] - bench["m1"], 2) if sm and sm.get("m1") is not None and bench.get("m1") is not None else None
     m = pulse.mood(trends.get("NIFTY 50"), snap.get("NIFTY 500"), mb, fii, pos, pcr, vix, vix_pct, svl)
     sec_up = sum(1 for v in secs if (v["pct"] or 0) > 0)
+    try:
+        ol = market_outlook(demo, m, fii, pos, mk, gx, hist)
+    except Exception as e:
+        warn("Outlook", e)
+        ol = None
     hist = pulse_history() if not demo else hist
     if m and not demo:                                 # the day's mood, for the history line
         hist.setdefault("mood", {})[today.isoformat()] = m["score"]
@@ -1219,7 +1230,103 @@ def pulse_once():
                      "sectors_up": sec_up, "fii": fii[-10:], "positions": pos, "pcr": pcr,
                      "walls": {k: (gx.get("chain") or {}).get(k) for k in ("call_wall", "put_wall", "max_pain")} if gx.get("chain") else None,
                      "vix": vix, "vix_pct": vix_pct, "mid": mb, "small_vs_large": svl, "sources": sources,
-                     "history": (hist.get("mood") or {}) if not demo else {}})
+                     "history": (hist.get("mood") or {}) if not demo else {}, "outlook": ol})
+
+
+OUTLOOK_WF = {}                                        # (kind, last bar date) -> walk-forward test
+
+
+def _next_weekday(d):
+    d += timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def market_outlook(demo, m, fii, pos, mk, gx, hist):
+    """Tomorrow and next week for NIFTY: odds from similar past days/weeks, nudged by the flows,
+    with the walk-forward test and the live track record."""
+    hit = PULSE_DAILY.get("NIFTY 50")
+    d = hit[1] if hit else None
+    if not d or len(d) < 200:
+        return None
+    last = datetime.fromtimestamp(d[-1]["t"], IST).date()
+    # Day
+    p = outlook.analogue(d, len(d) - 1)
+    if not p:
+        return None
+    fii_today = fii[-1]["fii"] if fii and fii[-1].get("date") and _same_day(fii[-1]["date"], last) else None
+    lchg = (pos[-1]["long_pct"] - pos[-2]["long_pct"]) if len(pos) >= 2 and pos[-1]["date"] == last.isoformat() \
+        and pos[-1]["long_pct"] is not None and pos[-2]["long_pct"] is not None else None
+    vchg = (mk.get("vix") or {}).get("pct") if last == datetime.now(IST).date() else None
+    q = outlook.nudge(p, (m or {}).get("score"), fii_today, lchg, vchg)
+    v = outlook.verdicts(q)
+    target = _next_weekday(last)
+    a = outlook.atr_list(d)[-1]
+    lv = outlook.levels(d)
+    ch = gx.get("chain") or {}
+    key = ("day", last)
+    if key not in OUTLOOK_WF:
+        OUTLOOK_WF[key] = outlook.walk_forward(d)
+    day = dict(q, verdict=v, target=target.isoformat(), target_txt=target.strftime("%a %d %b"),
+               based_on=last.strftime("%a %d %b"), levels=dict(lv, call_wall=ch.get("call_wall"), put_wall=ch.get("put_wall")),
+               summary=outlook.summary(v, q, target.strftime("%A"), q["move_med"] / 100 * d[-1]["c"]),
+               test=OUTLOOK_WF[key], features=None)
+    # Week: from the last complete week (Friday close), or the week before while this one is running.
+    w = outlook.weekly(d)
+    week_done = last.weekday() == 4
+    wbars = w if week_done else w[:-1]
+    wk = None
+    if len(wbars) > 70:
+        pw = outlook.analogue(wbars, len(wbars) - 1, k=30, flat=outlook.FLAT_WEEK, start=30)
+        if pw:
+            qw = outlook.nudge(pw, (m or {}).get("score"), sum(x["fii"] for x in fii[-5:]) / 3 if fii else None, None, None)
+            vw = outlook.verdicts(qw)
+            wend = datetime.fromtimestamp(wbars[-1].get("t_end", wbars[-1]["t"]), IST).date()
+            mon = wend + timedelta(days=(7 - wend.weekday()))
+            fri = mon + timedelta(days=4)
+            kw = ("week", wend)
+            if kw not in OUTLOOK_WF:
+                OUTLOOK_WF[kw] = outlook.walk_forward(wbars, last=80, k=30, flat=outlook.FLAT_WEEK, first=60, start=30)
+            evs = [e for e in events.calendar(mon - timedelta(days=1)) if mon.isoformat() <= e["date"] <= fri.isoformat()]
+            tue = mon + timedelta(days=1)
+            notes = [f'{e["name"]} ({datetime.fromisoformat(e["date"]).strftime("%a %d %b")})' for e in evs]
+            notes.append(f"NIFTY weekly expiry {tue.strftime('%a %d %b')}")
+            if (tue + timedelta(days=7)).month != tue.month:
+                notes.append("monthly F&O expiry that Tuesday (bigger moves around expiry)")
+            wk = dict(qw, verdict=vw, target=mon.isoformat(), target_txt=f"{mon.strftime('%d %b')}–{fri.strftime('%d %b')}",
+                      based_on=f"week to {wend.strftime('%d %b')}", levels=outlook.levels(wbars), events=notes,
+                      summary=outlook.summary({**vw, "open": None}, qw, "Next week" if week_done else "This week",
+                                              qw["move_med"] / 100 * d[-1]["c"]), test=OUTLOOK_WF[kw], features=None)
+            if not week_done:
+                wk["note"] = "The week is still running: this is the forecast made at last Friday's close."
+    # Log today's forecasts, grade the old ones.
+    rec = hist.setdefault("outlook", {"day": {}, "week": {}})
+    if not demo:
+        rec["day"].setdefault(day["target"], {k: v[k]["pick"] for k in ("direction", "type", "open")} | {"ref_dir": p["ref_dir"]})
+        if wk:
+            rec["week"].setdefault(wk["target"], {k: wk["verdict"][k]["pick"] for k in ("direction", "type")} | {"ref_dir": wk["ref_dir"]})
+    graded = []
+    idx = {datetime.fromtimestamp(c["t"], IST).date().isoformat(): i for i, c in enumerate(d)}
+    for t, f in sorted(rec["day"].items()):
+        i = idx.get(t)
+        if i and i > 0:
+            act = outlook.actual(d, i - 1, outlook.FLAT_DAY, f["ref_dir"])
+            graded.append({"date": t, **{k: f[k] == act[k] for k in ("direction", "type", "open")}, "move": act["move"]})
+    rec["day"] = dict(sorted(rec["day"].items())[-90:])
+    rec["week"] = dict(sorted(rec["week"].items())[-30:])
+    if not demo:
+        pulse_save(hist)
+    g = graded[-30:]
+    track = {"n": len(g), **{k: sum(1 for x in g if x[k]) for k in ("direction", "type", "open")}} if g else None
+    return {"day": day, "week": wk, "track": track, "recent": g[-10:]}
+
+
+def _same_day(txt, d):
+    try:
+        return datetime.strptime(txt, "%d-%b-%Y").date() == d
+    except ValueError:
+        return False
 
 
 def pulse_loop():
