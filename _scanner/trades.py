@@ -19,7 +19,7 @@ def _hm(t):
 def features(pick):
     """What the pick looked like when it was given (for the learning journal)."""
     keys = ("side", "sector", "score", "parts", "vol_x", "broke_at", "retest", "gap", "nifty", "rvol", "pct", "at20",
-            "gex", "setup", "signal", "trend", "event", "discount")
+            "gex", "setup", "signal", "trend", "event", "discount", "mood")
     f = {k: pick.get(k) for k in keys if pick.get(k) is not None}
     if isinstance(pick.get("zone"), dict):             # swing: which imbalance zone
         f["zone_type"], f["zone_state"] = pick["zone"].get("type"), pick["zone"].get("state")

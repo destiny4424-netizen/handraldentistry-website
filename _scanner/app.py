@@ -37,6 +37,7 @@ import bullion
 import bnf
 import earnings
 import notify
+import pulse
 import swing
 import events
 import gex
@@ -53,7 +54,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "12 Nov · Results breakouts: mid caps at a new 52-week high after results"
+VERSION = "13 Nov · Market Pulse: whole-market mood, sectors, FII/DII, positioning"
 
 
 def load_env():
@@ -243,6 +244,9 @@ def fno_stocks():
             equity[sym] = row["SEM_SMST_SECURITY_ID"]
             names[sym] = (row.get("SM_SYMBOL_NAME") or row.get("SEM_CUSTOM_SYMBOL") or sym).strip()
         elif row.get("SEM_INSTRUMENT_NAME") == "INDEX":
+            pn = pulse.ALIAS.get(pulse.norm(sym)) or pulse.ALIAS.get(pulse.norm(row.get("SM_SYMBOL_NAME")))
+            if pn and pn not in INDEX_IDS:
+                INDEX_IDS[pn] = row["SEM_SMST_SECURITY_ID"]   # for Market Pulse
             key = sym.upper().replace(" ", "")
             if key in ("NIFTY", "NIFTY50", "BANKNIFTY", "NIFTYBANK", "INDIAVIX"):
                 INDEXES[{"NIFTY50": "NIFTY", "NIFTYBANK": "BANKNIFTY"}.get(key, key)] = row["SEM_SMST_SECURITY_ID"]
@@ -284,6 +288,7 @@ def fno_stocks():
 
 FUTURES = {}                                           # symbol -> current-month futures security id
 ALL_EQUITY = {}                                        # every NSE EQ symbol -> security id (for the mid caps)
+INDEX_IDS = {}                                         # Market Pulse index name -> Dhan security id (IDX_I)
 BNF_FUT = []                                           # [expiry, security id] of the current Bank Nifty future
 # Dhan security ids of the indices (IDX_I); read from the scrip master, these are fallbacks.
 INDEXES = {"NIFTY": "13", "BANKNIFTY": "25", "INDIAVIX": "21"}
@@ -409,7 +414,7 @@ STATE = {"status": "starting", "message": "Starting first scan…", "demo": DEMO
          "timeframe": TIMEFRAME, "scanned": 0, "total": 0, "last_scan": None,
          "breakout_tf": BREAKOUT_TF, "scan_every": SCAN_EVERY, "min_rr": MIN_RR, "next_scan": None,
          "version": VERSION, "market": None, "trades": {"rows": [], "summary": {}},
-         "btst": {"open": False, "from": "12:00", "picks": [], "book": {"rows": [], "summary": {}}},
+         "btst": {"open": False, "from": "11:00", "picks": [], "book": {"rows": [], "summary": {}}},
          "schedule": "Breakout scans every 15 min 9:30–2:00 · Swing from 11:00, final list at 3:00",
          "bullion": None, "bullish": [], "bearish": [], "scores": [],
          "breakouts": {"bullish": [], "bearish": [], "scores": []},
@@ -484,6 +489,10 @@ def hook_sig(kind, picked_at, symbol):
 
 def tv_symbol(symbol):
     return "NSE:" + ("BANKNIFTY" if symbol == "BANKNIFTY" else symbol.replace("&", "_").replace("-", "_"))
+
+
+def mood_now():
+    return (((STATE.get("pulse") or {}).get("mood")) or {}).get("score")
 
 
 def alert_extra(kind, row, stage):
@@ -732,6 +741,7 @@ def nifty_gex(demo, spot):
         g = gex.analyse(chain, float((chain or {}).get("last_price") or spot), days=max(days, 0) + 0.5) if chain else None
         if g:
             g["expiry"] = EXPIRY.get("nifty")
+            g["chain"] = bnf.chain_view(chain, float((chain or {}).get("last_price") or spot))   # PCR, walls, max pain
     except Exception as e:                             # extra information: never stop the scan
         warn("NIFTY GEX", e)
         g = hit[1] if hit else None
@@ -1061,6 +1071,7 @@ def results_once():
     for c in buys:                                     # the day's list is locked in after the close
         d = daily_of.get(c["symbol"]) or []
         if closed_today and c["take"] and d and datetime.fromtimestamp(d[-1]["t"], IST).date() == today:
+            c["mood"] = mood_now()
             if RESULTS.record(c, now):
                 RESULTS.rows[-1].update(wa=[], card={"size": c.get("size")})
                 RESULTS.save()
@@ -1097,6 +1108,130 @@ def results_loop():
             nxt += timedelta(days=1)
         RES_WAKE.wait((nxt - now).total_seconds())
         RES_WAKE.clear()
+
+
+# ── Market Pulse: the whole market's mood ───────────────────────────────────────────────────
+PULSE_WAKE = threading.Event()
+PULSE_DAILY = {}                                       # index name -> (IST date, daily candles)
+
+
+def pulse_history():
+    f = SETTINGS_DIR / "pulse.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def pulse_save(h):
+    try:
+        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        (SETTINGS_DIR / "pulse.json").write_text(json.dumps(h), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def mid_breadth():
+    """From the mid caps' daily candles (the results scan): % above the 50-day average, new 52-week highs/lows."""
+    rows = [v[1] for v in RES_DAILY.values() if v and len(v[1]) >= 60]
+    if len(rows) < 30:
+        return None
+    above = sum(1 for d in rows if d[-1]["c"] > sum(x["c"] for x in d[-50:]) / 50)
+    hi = sum(1 for d in rows if len(d) > 251 and d[-1]["h"] >= max(x["h"] for x in d[-251:-1]))
+    lo = sum(1 for d in rows if len(d) > 251 and d[-1]["l"] <= min(x["l"] for x in d[-251:-1]))
+    return {"n": len(rows), "above50": round(100 * above / len(rows)), "highs": hi, "lows": lo}
+
+
+def pulse_once():
+    demo = DEMO
+    sources = {}
+    snap = pulse.demo_snapshot() if demo else pulse.nse_indices()
+    sources["NSE indices"] = bool(snap)
+    snap = snap or {}
+    # Trends from Dhan daily candles (once a day per index).
+    trends = {}
+    today = datetime.now(IST).date()
+    names = [n for n, _ in pulse.ALL] if demo else list(INDEX_IDS)
+    for name in names:
+        try:
+            hit = PULSE_DAILY.get(name)
+            if not hit or hit[0] != today:
+                d = demo_long_daily(name) if demo else dhan_daily(INDEX_IDS[name], "IDX_I", "INDEX", days=400)
+                PULSE_DAILY[name] = (today, d)
+                if not demo:
+                    time.sleep(0.25)
+            trends[name] = pulse.trend_of(PULSE_DAILY[name][1])
+        except DhanError as e:
+            if e.fatal:
+                break
+        except Exception as e:
+            warn(f"Pulse {name}", e)
+    sources["Dhan index trends"] = bool(trends)
+    # FII / DII cash, kept day by day.
+    hist = pulse_history()
+    if demo:
+        fii = pulse.demo_fii()
+    else:
+        cash = pulse.nse_fii_cash()
+        sources["NSE FII/DII cash"] = bool(cash)
+        fii = hist.get("fii") or []
+        if cash and cash.get("fii") and cash["fii"].get("net") is not None:
+            row = {"date": cash.get("date") or today.strftime("%d-%b-%Y"), "fii": cash["fii"]["net"],
+                   "dii": (cash.get("dii") or {}).get("net"), "fii_buy": cash["fii"].get("buy"), "fii_sell": cash["fii"].get("sell")}
+            fii = [x for x in fii if x["date"] != row["date"]] + [row]
+            hist["fii"] = fii[-60:]
+            pulse_save(hist)
+    pos = pulse.demo_positioning() if demo else pulse.fii_positioning(10, today)
+    if not demo:
+        sources["NSE FII positions"] = bool(pos)
+    gx = (GEX_CACHE.get("nifty") or (0, None))[1] or {}
+    pcr = (gx.get("chain") or {}).get("pcr")
+    mk = STATE.get("market") or {}
+    vix = (mk.get("vix") or {}).get("price")
+    vd = (DAILY.get("LONGINDIAVIX") or (None, None))[1] or (DAILY.get("IDX" + INDEXES["INDIAVIX"]) or (None, None))[1]
+    vix_pct = bnf.vix_on(vd, analysis._day(time.time()))[1] if vd else None
+    mb = mid_breadth()
+
+    def view(name):
+        sn, tr = snap.get(name) or {}, trends.get(name) or {}
+        if not sn and not tr:
+            return None
+        return {"name": name, "short": pulse.short(name), "pct": sn.get("pct"), "last": sn.get("last") or tr.get("last"),
+                "adv": sn.get("adv"), "dec": sn.get("dec"), "pe": sn.get("pe"), "y1": sn.get("y1"),
+                "w1": tr.get("w1"), "m1": tr.get("m1") if tr.get("m1") is not None else sn.get("m1"), "m3": tr.get("m3"),
+                "trend": tr.get("label"), "above": tr.get("above"), "of": tr.get("of"), "from_high": tr.get("from_high")}
+    broad = [v for v in (view(n) for n, _ in pulse.BROAD) if v]
+    bench = view("NIFTY 50") or {}
+    secs = [v for v in (view(n) for n, _ in pulse.SECTORS) if v]
+    for v in secs:
+        v["rotation"] = pulse.rotation(v, bench)
+    secs.sort(key=lambda v: -(v["pct"] if v["pct"] is not None else (v.get("w1") or 0)))
+    sm = view("NIFTY SMALLCAP 250") or view("NIFTY SMALLCAP 100")
+    svl = round(sm["m1"] - bench["m1"], 2) if sm and sm.get("m1") is not None and bench.get("m1") is not None else None
+    m = pulse.mood(trends.get("NIFTY 50"), snap.get("NIFTY 500"), mb, fii, pos, pcr, vix, vix_pct, svl)
+    sec_up = sum(1 for v in secs if (v["pct"] or 0) > 0)
+    hist = pulse_history() if not demo else hist
+    if m and not demo:                                 # the day's mood, for the history line
+        hist.setdefault("mood", {})[today.isoformat()] = m["score"]
+        hist["mood"] = dict(sorted(hist["mood"].items())[-60:])
+        pulse_save(hist)
+    set_state(pulse={"at": datetime.now(IST).strftime("%d %b %H:%M"), "demo": demo, "mood": m, "broad": broad, "sectors": secs,
+                     "sectors_up": sec_up, "fii": fii[-10:], "positions": pos, "pcr": pcr,
+                     "walls": {k: (gx.get("chain") or {}).get(k) for k in ("call_wall", "put_wall", "max_pain")} if gx.get("chain") else None,
+                     "vix": vix, "vix_pct": vix_pct, "mid": mb, "small_vs_large": svl, "sources": sources,
+                     "history": (hist.get("mood") or {}) if not demo else {}})
+
+
+def pulse_loop():
+    PULSE_WAKE.wait(20)
+    PULSE_WAKE.clear()
+    while True:
+        try:
+            pulse_once()
+        except Exception as e:
+            warn("Market Pulse", e)
+        PULSE_WAKE.wait(600 if market_open() or DEMO else 3600)
+        PULSE_WAKE.clear()
 
 
 def bullion_payload(symbol):
@@ -1477,6 +1612,7 @@ def bank_nifty(demo, idx, swing_daily, ev, now_ts, open_, session_time):
                 pick["caution"] = "Big event soon: " + ", ".join(f'{e["name"]} ({e.get("label", "")})' for e in big) + \
                     ". Option IV usually drops after it: enter after the event, or with smaller size."
             if not demo and market_open() and session_time >= "15:00":
+                pick["mood"] = mood_now()
                 if BNFS.record(pick, now_ts):
                     if o:
                         BNFS.rows[-1].update(option=o["label"], opt_entry=o["entry"], opt_sl=o["sl"], opt_t1=o["t1"],
@@ -1705,6 +1841,7 @@ def scan_once():
     if not demo and market_open() and session_time >= "15:00":   # lock in the 3 PM swing list
         for c in btst_picks:
             if c.get("take"):
+                c["mood"] = mood_now()
                 if SWINGS.record(c, btst_now):
                     SWINGS.rows[-1]["wa"] = []
                     SWINGS.save()
@@ -1747,6 +1884,7 @@ def scan_once():
         if st["blocked"]:
             blocked.append({"symbol": c["symbol"], "side": c["side"], "why": st["blocked"]})
             continue
+        c["mood"] = mood_now()                         # recorded with the trade, for the Learning journal
         c["locked_new"] = TRADES.record(c, book_now)
         if c["locked_new"] and not demo:
             TRADES.rows[-1]["wa"] = []
@@ -2433,6 +2571,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/scan":
             WAKE.set()
             return self.send(200, {"ok": True})
+        if path == "/api/pulse/scan":
+            PULSE_WAKE.set()
+            return self.send(200, {"ok": True})
         if path == "/api/results/scan":
             RES_WAKE.set()
             return self.send(200, {"ok": True})
@@ -2683,6 +2824,7 @@ def main():
     threading.Thread(target=token_keeper, daemon=True).start()
     threading.Thread(target=bullion_loop, daemon=True).start()
     threading.Thread(target=results_loop, daemon=True).start()
+    threading.Thread(target=pulse_loop, daemon=True).start()
     notify.start(alert_config)
     threading.Thread(target=watchdog, daemon=True).start()
     try:
