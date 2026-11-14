@@ -21,7 +21,7 @@ CONF=/etc/orderblock-scanner
 LOGIN=$CONF/login.txt
 ENVFILE=/etc/default/orderblock-scanner
 SITE=/etc/caddy/orderblock-scanner.caddy
-PORT=3030
+PORT=3040                                        # 3030 is the clinic server, 3020 Handral Books
 
 main() {
   install -d -m 755 "$CONF"

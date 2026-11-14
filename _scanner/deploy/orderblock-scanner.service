@@ -13,7 +13,8 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=OBS_CLOUD=1
 Environment=OBS_HOST=127.0.0.1
-Environment=OBS_PORT=3030
+# 3040: the clinic server (Handral Clinic, Ortho Assess sync) uses 3030 and Handral Books 3020.
+Environment=OBS_PORT=3040
 Environment=OBS_SETTINGS_DIR=/var/lib/orderblock-scanner
 # OBS_PASSWORD and OBS_PUBLIC_URL are written here by web.sh; the file survives updates.
 EnvironmentFile=-/etc/default/orderblock-scanner
