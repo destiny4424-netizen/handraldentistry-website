@@ -17,10 +17,12 @@ main() {
   DEPLOY="$REPO/_scanner/deploy"
   STATE=/var/lib/orderblock-scanner
   BRANCH=$(cat /etc/orderblock-scanner/branch 2>/dev/null || echo main)
-  PORT=3030
+  PORT=3040                         # 3030 is the clinic server, 3020 Handral Books
+  SITE=/etc/caddy/orderblock-scanner.caddy
 
   if [ "${1:-}" = "--install" ]; then
     sync_files
+    fix_caddy
     systemctl enable orderblock-scanner.service orderblock-scanner-update.timer >/dev/null
     systemctl restart orderblock-scanner.service
     systemctl start orderblock-scanner-update.timer
@@ -33,18 +35,36 @@ main() {
   fi
 
   update_code
+  fix_caddy
   watchdog
 }
 
 log() { echo "$*"; }
 
+# The scanner's /healthz answers exactly "ok" (the clinic server answers JSON), so another
+# program on the port never counts as the scanner being up.
 healthy() {
   local i
   for i in $(seq 1 20); do
-    curl -fsS -m 3 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && return 0
+    [ "$(curl -fsS -m 3 "http://127.0.0.1:$PORT/healthz" 2>/dev/null)" = "ok" ] && return 0
     sleep 1
   done
   return 1
+}
+
+# The web address must point at the scanner's port. (Until 14 Nov 2026 the scanner used 3030,
+# which the clinic server also uses: then the scanner address showed the clinic server.)
+fix_caddy() {
+  [ -f "$SITE" ] || return 0
+  grep -q "reverse_proxy 127.0.0.1:$PORT\$" "$SITE" && return 0
+  cp "$SITE" "$SITE.bak"
+  sed -i -E "s#reverse_proxy 127\.0\.0\.1:[0-9]+#reverse_proxy 127.0.0.1:$PORT#" "$SITE"
+  if caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+    systemctl reload caddy && log "Web address now points at the scanner on port $PORT."
+  else
+    mv "$SITE.bak" "$SITE"
+    log "Could not switch the web address to port $PORT (Caddy config invalid); left it as it was."
+  fi
 }
 
 # Copy units and helper scripts from the checkout into place if they changed.
