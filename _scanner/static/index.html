@@ -273,6 +273,9 @@
   button.took { font: 700 10px system-ui; padding: 2px 7px; margin-left: 6px; border-radius: 6px; background: transparent;
     border: 1px solid var(--line, #2a3140); color: var(--muted); cursor: pointer; vertical-align: middle; }
   button.took.on { border-color: var(--bull); color: var(--bull); }
+  .tkinst { display: flex; gap: 18px; margin: 4px 0 2px; } .tkslp { margin-top: 12px; }
+  .tkrisk { font-size: 12.5px; margin-top: 10px; padding: 8px 10px; border-radius: 8px; } .tkrisk:empty { display: none; }
+  .tkrisk.ok { background: rgba(47,163,125,.12); } .tkrisk.bad { background: rgba(217,83,79,.16); color: #f0b4b2; }
   .optlive { display: block; font: 11px var(--mono); color: var(--muted); }
   #bnfBox .ptable, #resBox .ptable, #perfDaily .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12px; }
   .pl-hero { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 22px; align-items: center; margin-bottom: 18px; }
@@ -566,11 +569,17 @@
   <form method="dialog" id="tookForm">
     <h3 id="tookTitle">I took this trade</h3>
     <p class="hint" id="tookHint">Enter your real prices. Performance then shows your results next to the scanner's.</p>
-    <label for="tkEntry">My entry price</label><input id="tkEntry" type="number" inputmode="decimal" step="any" required>
+    <div id="tkInstWrap" class="tkinst"><label class="switch"><input type="radio" name="tkInst" value="option" id="tkOpt"> <span id="tkOptLbl">Option</span></label>
+      <label class="switch"><input type="radio" name="tkInst" value="stock" id="tkStk"> Stock</label></div>
+    <label for="tkEntry" id="tkEntryLbl">My entry price</label><input id="tkEntry" type="number" inputmode="decimal" step="any" required>
+    <label for="tkSl">My stop-loss <span style="font-weight:400;color:var(--muted)">(the price you exit at, no matter what)</span></label>
+    <input id="tkSl" type="number" inputmode="decimal" step="any">
     <label for="tkExit">My exit price <span style="font-weight:400;color:var(--muted)">(leave empty while the trade is open)</span></label>
     <input id="tkExit" type="number" inputmode="decimal" step="any">
     <label for="tkQty">Quantity <span style="font-weight:400;color:var(--muted)">(shares, or lots × lot size; for ₹ results)</span></label>
     <input id="tkQty" type="number" inputmode="numeric" step="1" min="1">
+    <div class="tkrisk" id="tkRisk"></div>
+    <label class="switch tkslp"><input type="checkbox" id="tkSlPlaced"> <b>Stop-loss order is placed in Dhan</b> (Super Order or SL order)</label>
     <div class="err" id="tkErr"></div>
     <div class="actions" style="justify-content:space-between"><button type="button" class="link" id="tkClear">Not taken</button>
       <span><button type="button" class="ghost" id="tkCancel">Cancel</button> <button type="submit" id="tkSave">Save</button></span></div>
@@ -1332,7 +1341,10 @@ function renderMine() {
       <div class="kpi">Your ₹<b style="color:${col(sm.real_rs)}">${sm.real_rs ? inr(sm.real_rs) : "—"}</b></div>
       <div class="kpi">Scanner on the same trades<b style="color:${col(sm.paper_r)}">${R(sm.paper_r)}</b></div>
       <div class="kpi">Won<b>${sm.wins} / ${sm.closed}</b></div>
-      <div class="kpi">Not taken (triggered)<b>${sm.missed} · <span style="color:${col(sm.missed_r)}">${R(sm.missed_r)}</span></b></div></div>
+      <div class="kpi">Not taken (triggered)<b>${sm.missed} · <span style="color:${col(sm.missed_r)}">${R(sm.missed_r)}</span></b></div>
+      <div class="kpi">Hope tax<b style="color:${sm.hope_tax ? css("--bear") : css("--bull")}">${sm.hope_tax ? "−₹" + sm.hope_tax.toLocaleString("en-IN") : "₹0"}</b>${sm.held_past_stop} held past the stop</div>
+      <div class="kpi">Stop order placed<b>${sm.sl_known ? Math.round(100 * sm.sl_placed / sm.sl_known) + "%" : "—"}</b>of marked trades</div></div>
+      ${sm.hope_tax ? `<div class="caution">Holding losers past your stop cost you <b>₹${sm.hope_tax.toLocaleString("en-IN")}</b> more than planned this month. Place the stop in Dhan every time.</div>` : ""}
       <div class="hint">"Scanner on the same trades" vs "Your result" shows the cost of your entries and exits. "Not taken" is what the triggered trades you skipped made on paper.</div>
       <table class="ptable"><tr><th class="l">Day</th><th class="l">Trade</th><th>Your entry → exit</th><th>You</th><th>Scanner</th></tr>
       ${d.trades.map(t => `<tr><td class="l">${fmtDay(t.day)}</td><td class="l">${kn[t.kind]} · ${esc(t.kind === "bnf" && t.option ? t.option : (t.side === "bull" ? "BUY " : "SELL ") + t.symbol)}</td>
@@ -1807,22 +1819,61 @@ function renderPulse() {
 
 // "I took this trade": your real prices, for Performance → Your trades.
 const TOOK = {};
+function optOf(kind, r) {                             // the option this trade suggested (same as trades.option_of)
+  if (kind === "bnf" && r.opt_strike) return { label: r.option, kind: r.opt_kind, strike: r.opt_strike, expiry: r.opt_expiry, lot: r.opt_lot, entry: r.opt_entry, sl: r.opt_sl };
+  const o = (r.option && typeof r.option === "object") ? r.option : r.opt_plan;
+  return o && o.strike ? o : null;
+}
 function tookBtn(kind, r) {
   const key = `${kind}|${r.picked_at}|${r.symbol}`; TOOK[key] = [kind, r];
   const m = r.mine;
-  return `<button type="button" class="took${m ? " on" : ""}" data-took="${esc(key)}">${m ? `✓ TOOK ${fmt(m.entry)}${m.exit != null ? "→" + fmt(m.exit) : ""}` : "TOOK IT?"}</button>`;
+  let live = "";
+  if (m && m.exit == null && m.ltp != null) {           // your open trade, watched every 2 minutes
+    const opt = m.inst === "option" || (m.inst == null && kind === "bnf"), sg = opt || r.side === "bull" ? 1 : -1;
+    const pnl = m.qty ? (m.ltp - m.entry) * sg * m.qty : null, hit = m.breach_at;
+    live = `<span class="optlive" style="color:${hit ? css("--bear") : pnl == null ? "" : pnl >= 0 ? css("--bull") : css("--bear")}">${hit ? "🔴 STOP HIT: EXIT · " : "you: "}${esc(opt ? (m.opt || {}).label || "option" : r.symbol)} ${fmt(m.entry)} → ${fmt(m.ltp)}${pnl != null ? ` · ${pnl >= 0 ? "+" : "−"}₹${Math.abs(Math.round(pnl)).toLocaleString("en-IN")}` : ""}${m.sl != null ? ` · stop ${fmt(m.sl)}` : ""}${m.sl_placed === false ? " · ⚠ no SL order" : ""}</span>`;
+  }
+  return `<button type="button" class="took${m ? " on" : ""}" data-took="${esc(key)}">${m ? `✓ TOOK ${fmt(m.entry)}${m.exit != null ? "→" + fmt(m.exit) : ""}` : "TOOK IT?"}</button>${live}`;
 }
+function tkFill(useOpt) {                                // prefill for the chosen instrument
+  const [kind, r] = TOOK[tookKey]; const m = r.mine || {}, o = optOf(kind, r), same = m.inst ? (m.inst === "option") === useOpt : false;
+  if (useOpt && o) {
+    const e = same ? m.entry : (kind === "bnf" && r.opt_fill) || o.entry;
+    $("tkEntry").value = e ?? ""; $("tkSl").value = same && m.sl != null ? m.sl : (e && o.entry && o.sl ? (e * o.sl / o.entry).toFixed(2) : e ? (e * .7).toFixed(2) : "");
+    $("tkQty").value = same && m.qty ? m.qty : (o.lot || "");
+    $("tkEntryLbl").textContent = `My entry price (option premium, ${o.label || "option"})`;
+  } else {
+    $("tkEntry").value = same ? m.entry : r.entry; $("tkSl").value = same && m.sl != null ? m.sl : r.sl;
+    $("tkQty").value = same && m.qty ? m.qty : (((r.card || {}).size || {}).qty || "");
+    $("tkEntryLbl").textContent = "My entry price (stock)";
+  }
+  tkRisk();
+}
+function tkRisk() {                                      // what this trade risks, against your rule
+  const e = +$("tkEntry").value, sl = +$("tkSl").value, q = +$("tkQty").value, rk = state.risk || {};
+  const el = $("tkRisk"); if (!e || !sl || !q) { el.innerHTML = ""; return; }
+  const risk = Math.abs(e - sl) * q, cap = rk.capital || 200000, lim = rk.risk_amt || cap / 100, pct = risk / cap * 100;
+  const opt = document.querySelector("input[name=tkInst]:checked")?.value === "option", lots = opt && TOOK[tookKey] ? (optOf(...TOOK[tookKey]) || {}).lot : null;
+  const maxQ = Math.floor(lim / Math.abs(e - sl)), maxL = lots ? Math.floor(maxQ / lots) : null;
+  el.className = "tkrisk " + (risk > lim * 1.25 ? "bad" : "ok");
+  el.innerHTML = `This trade risks <b>₹${Math.round(risk).toLocaleString("en-IN")}</b> (${pct.toFixed(1)}% of capital). Your rule: ₹${Math.round(lim).toLocaleString("en-IN")}.`
+    + (risk > lim * 1.25 ? `<br><b>Too big.</b> Max ${opt && maxL != null ? `${maxL} lot${maxL === 1 ? "" : "s"} (${maxL * lots} qty)` : `${maxQ} qty`} at this stop${opt && maxL === 0 ? ": even 1 lot is over your limit, skip it or take the stock" : ""}.` : "");
+}
+["tkEntry", "tkSl", "tkQty"].forEach(i => $(i).addEventListener("input", tkRisk));
+document.querySelectorAll("input[name=tkInst]").forEach(x => x.addEventListener("change", () => tkFill(x.value === "option")));
 let tookKey = null;
 document.addEventListener("click", ev => {
   const b = ev.target.closest("button.took"); if (!b) return;
   ev.stopPropagation(); ev.preventDefault();
   tookKey = b.dataset.took; const [kind, r] = TOOK[tookKey] || []; if (!r) return;
-  const m = r.mine || {}, opt = kind === "bnf";
-  $("tookTitle").textContent = `I took this: ${r.side === "bull" ? (opt ? "" : "BUY ") : (opt ? "" : "SELL ")}${opt ? (r.option || "Bank Nifty option") : r.symbol}`;
-  $("tookHint").textContent = opt ? "Enter the option prices you bought and sold at (premium), and quantity = lots × lot size. Performance shows your result next to the scanner's."
-    : `Enter your real prices. The plan was ${r.side === "bull" ? "buy above" : "sell below"} ${fmt(r.entry)}, stop ${fmt(r.sl)}.`;
-  $("tkEntry").value = m.entry ?? (opt ? (r.opt_fill ?? r.opt_entry ?? "") : r.entry);
-  $("tkExit").value = m.exit ?? ""; $("tkQty").value = m.qty ?? ""; $("tkErr").textContent = "";
+  const m = r.mine || {}, o = optOf(kind, r);
+  const useOpt = m.inst ? m.inst === "option" : !!o;     // you trade mostly options: the option first
+  $("tookTitle").textContent = `I took this: ${r.symbol}${kind === "bnf" ? "" : r.side === "bull" ? " (buy)" : " (sell)"}`;
+  $("tookHint").textContent = `Plan: ${r.side === "bull" ? "above" : "below"} ${fmt(r.entry)}, stop ${fmt(r.sl)}. Enter your real prices; the scanner watches your stop and alerts you the moment it is hit.`;
+  $("tkInstWrap").hidden = !o || kind === "bnf"; $("tkOptLbl").textContent = o ? `Option ${o.label || ""}` : "Option";
+  $("tkOpt").checked = useOpt && !!o; $("tkStk").checked = !(useOpt && o);
+  tkFill(useOpt && !!o);
+  $("tkExit").value = m.exit ?? ""; $("tkSlPlaced").checked = !!m.sl_placed; $("tkErr").textContent = "";
   $("tkClear").hidden = !r.mine;
   $("tookDlg").showModal();
 }, true);
@@ -1831,7 +1882,10 @@ async function tookSend(body) {
   try { await post("/api/took", Object.assign({ kind, picked_at: r.picked_at, symbol: r.symbol }, body)); $("tookDlg").close(); refresh(); if (mode === "perf") loadPerf(); }
   catch (err) { $("tkErr").textContent = err.message; }
 }
-$("tookForm").onsubmit = e => { e.preventDefault(); tookSend({ entry: $("tkEntry").value, exit: $("tkExit").value, qty: $("tkQty").value }); };
+$("tookForm").onsubmit = e => { e.preventDefault();
+  const inst = document.querySelector("input[name=tkInst]:checked")?.value || "stock", [kind, r] = TOOK[tookKey];
+  tookSend({ entry: $("tkEntry").value, exit: $("tkExit").value, qty: $("tkQty").value, sl: $("tkSl").value, sl_placed: $("tkSlPlaced").checked,
+             inst: (kind === "bnf" || ($("tkInstWrap").hidden ? false : inst === "option")) && optOf(kind, r) ? "option" : "stock" }); };
 $("tkClear").onclick = () => tookSend({ clear: true });
 $("tkCancel").onclick = () => $("tookDlg").close();
 
@@ -1871,6 +1925,9 @@ $("mstrip").onclick = ev => {
 function renderStrip(s) {
   const m = s.market || {}, n = m.nifty, g = m.gex, v = m.vix, r = s.risk;
   const out = [];
+  const gd = s.guard;
+  if (gd) out.push(gd.lock ? `<span class="dn">🛑 DONE FOR TODAY</span>` : gd.paper ? `<span class="wa">📝 PAPER ONLY</span>`
+    : gd.mult < 1 ? `<span class="wa">½ SIZE THIS WEEK</span>` : `<span class="up">DISCIPLINE · ${gd.periods.day.losses}/2 LOSSES TODAY</span>`);
   const mo = (s.pulse || {}).mood;
   if (mo) out.push(`<span class="${mo.score >= 15 ? "up" : mo.score <= -15 ? "dn" : "wa"}" data-act="pulse">MOOD ${mo.score > 0 ? "+" : ""}${mo.score} · ${esc(mo.label.toUpperCase())}</span>`);
   if (n) out.push(`<span class="${n.pct >= 0 ? "up" : "dn"}">NIFTY ${n.trend === "Bullish" ? "▲" : n.trend === "Bearish" ? "▼" : "◆"} ${pct(n.pct)}</span>`);
@@ -2000,7 +2057,7 @@ function sizeBox(c, btst) {
   if (!z && !o) return "";
   const inr = v => "₹" + Math.round(v).toLocaleString("en-IN");
   return `<div class="sizebox">${z ? `SIZE ${z.qty} shares <small>(${inr(z.value)}${z.capped ? `, capped at ${btst ? "1×" : "2×"} capital` : ""})</small> · risk ${inr(z.risk)} · T1 +${inr(z.t1_gain)}` : ""}
-    ${o ? `<br>OPTION ${o.lots > 0 ? `${o.lots} lot${o.lots > 1 ? "s" : ""} <small>(${inr(o.cost)})</small> · risk ${inr(o.risk)}` : `<small>${esc(o.note)}</small>`}` : ""}
+    ${o ? `<br>OPTION <b>max ${o.lots > 0 ? `${o.lots} lot${o.lots > 1 ? "s" : ""}` : "0 lots"}</b> ${o.lots > 0 ? `<small>(${inr(o.cost)} premium)</small> · risk ${inr(o.risk)} · <b>never more</b>, not your full capital` : `<small>${esc(o.note)}</small>`}` : ""}
     ${rk.capital ? `<br><small>Sized for ${inr(rk.capital)} capital, ${rk.risk_pct}% (${inr(rk.risk_amt)}) risk a trade</small>` : ""}</div>`;
 }
 function renderRiskBar() {

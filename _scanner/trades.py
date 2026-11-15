@@ -264,7 +264,8 @@ class SwingBook:
                           "basis": p.get("basis"), "entry": round(p["entry"], 2), "sl": round(p["sl"], 2),
                           "t1": round(p["t1"], 2), "t2": round(p["t2"], 2), "status": "Waiting for trigger",
                           "triggered_at": None, "t1_at": None, "exit_at": None, "exit": None, "result_r": None,
-                          "last": pick.get("price"), "zone_text": pick.get("zone_text"), "f": features(pick)})
+                          "last": pick.get("price"), "zone_text": pick.get("zone_text"), "f": features(pick),
+                          "opt_plan": pick.get("option") if isinstance(pick.get("option"), dict) else None})
         return True
 
     def update(self, daily_by_symbol, now_ts):
@@ -433,29 +434,51 @@ def option_marks(row, ltp):
 
 
 # ── Trades you took yourself ───────────────────────────────────────────────────────────────
+def option_of(row, kind):
+    """The option a trade suggested: {label, kind, strike, expiry, lot, entry, sl} or None."""
+    if kind == "bnf" and row.get("opt_strike"):
+        return {"label": row.get("option"), "kind": row.get("opt_kind"), "strike": row.get("opt_strike"),
+                "expiry": row.get("opt_expiry"), "lot": row.get("opt_lot"), "entry": row.get("opt_entry"), "sl": row.get("opt_sl")}
+    o = row.get("option") if isinstance(row.get("option"), dict) else row.get("opt_plan")
+    if isinstance(o, dict) and o.get("strike"):
+        return {k: o.get(k) for k in ("label", "kind", "strike", "expiry", "lot", "entry", "sl")}
+    return None
+
+
+def is_option(m, kind):
+    return m.get("inst") == "option" or (m.get("inst") is None and kind == "bnf" and m["entry"] < 10000)
+
+
 def mine_result(row, kind):
-    """Your real result for a trade you marked as taken: R against the planned risk, and ₹.
-    Bank Nifty: prices under 10,000 are option prices (risk = the option's planned entry - SL)."""
+    """Your real result for a trade you marked as taken: R against your planned risk, ₹, and the
+    "hope tax" (how much more than planned a loser cost because it was held past the stop).
+    Options: a buy, so up is good whatever the stock's side; risk = your entry - your option stop."""
     m = row.get("mine")
     if not m:
         return None
     entry, ex = m["entry"], m.get("exit")
-    opt = kind == "bnf" and entry < 10000
+    opt = is_option(m, kind)
     sign = 1 if (opt or row["side"] == "bull") else -1
-    if ex is None:                                     # not closed by you yet: the trade's own exit / price now
+    open_ = ex is None
+    if ex is None:                                     # still open for you: the latest price
         if opt:
-            ex = row.get("opt_exit") if row.get("opt_exit") is not None else row.get("opt_ltp")
+            ex = m.get("ltp") or (row.get("opt_exit") if row.get("opt_exit") is not None else row.get("opt_ltp"))
         else:
-            ex = row.get("exit") if row.get("exit") is not None else row.get("last")
-        open_ = m.get("exit") is None and row.get("exit_at") is None
+            ex = m.get("ltp") or (row.get("exit") if row.get("exit") is not None else row.get("last"))
+    if m.get("sl") is not None:
+        risk = abs(entry - m["sl"])
+    elif opt:
+        risk = (row.get("opt_entry") or 0) - (row.get("opt_sl") or 0)
     else:
-        open_ = False
-    risk = ((row.get("opt_entry") or 0) - (row.get("opt_sl") or 0)) if opt else abs(row["entry"] - row["sl"])
+        risk = abs(row["entry"] - row["sl"])
     if ex is None or not risk or risk <= 0:
         return {"r": None, "rs": None, "open": True}
     pts = (ex - entry) * sign
     qty = m.get("qty")
-    return {"r": round(pts / risk, 2), "rs": round(pts * qty) if qty else None, "open": open_, "exit": ex}
+    r = round(pts / risk, 2)
+    hope = round((-pts - risk) * qty) if (qty and not open_ and r < -1.1) else 0
+    return {"r": r, "rs": round(pts * qty) if qty else None, "open": open_, "exit": ex, "hope_tax": hope,
+            "planned_loss": round(risk * qty) if qty else None, "opt": opt}
 
 
 def mine_report(folder, month, swing_rows, bnf_rows, results_rows=()):
@@ -476,10 +499,12 @@ def mine_report(folder, month, swing_rows, bnf_rows, results_rows=()):
         day = datetime.fromtimestamp(r["picked_at"], IST).strftime("%Y-%m-%d")
         if r.get("mine"):
             res = mine_result(r, kind) or {}
-            taken.append({"kind": kind, "day": day, "symbol": r["symbol"], "side": r["side"], "option": r.get("option"),
+            taken.append({"kind": kind, "day": day, "symbol": r["symbol"], "side": r["side"],
+                          "option": (r["mine"].get("opt") or {}).get("label") or (r.get("option") if isinstance(r.get("option"), str) else None),
                           "picked_at": r["picked_at"], "mine": r["mine"], "real_r": res.get("r"), "real_rs": res.get("rs"),
-                          "open": res.get("open"), "paper_r": r.get("opt_r") if kind == "bnf" and r["mine"]["entry"] < 10000
-                          and r.get("opt_r") is not None else r.get("result_r"), "status": r.get("status")})
+                          "open": res.get("open"), "hope_tax": res.get("hope_tax") or 0, "opt": res.get("opt"),
+                          "paper_r": r.get("opt_r") if kind == "bnf" and res.get("opt") and r.get("opt_r") is not None
+                          else r.get("result_r"), "status": r.get("status")})
         elif r.get("triggered_at") and r.get("result_r") is not None:
             missed.append(r["result_r"])
     done = [t for t in taken if t["real_r"] is not None and not t["open"]]
@@ -490,7 +515,10 @@ def mine_report(folder, month, swing_rows, bnf_rows, results_rows=()):
                         "real_r": round(sum(t["real_r"] for t in done), 2),
                         "real_rs": sum(t["real_rs"] for t in done if t["real_rs"] is not None),
                         "paper_r": round(sum(paper), 2) if paper else None,
-                        "missed": len(missed), "missed_r": round(sum(missed), 2)}}
+                        "missed": len(missed), "missed_r": round(sum(missed), 2),
+                        "hope_tax": sum(t["hope_tax"] for t in done), "held_past_stop": sum(1 for t in done if t["hope_tax"] > 0),
+                        "sl_placed": sum(1 for t in taken if t["mine"].get("sl_placed")),
+                        "sl_known": sum(1 for t in taken if t["mine"].get("sl_placed") is not None)}}
 
 
 def set_mine(rows, picked_at, symbol, data):
@@ -498,6 +526,10 @@ def set_mine(rows, picked_at, symbol, data):
     for r in rows:
         if abs(r["picked_at"] - picked_at) < 1 and r["symbol"] == symbol:
             if data:
+                old = r.get("mine") or {}
+                for k in ("ltp", "ltp_at", "breach_at", "nags", "nag_at", "remind_sent", "t230", "t310", "opt", "via"):
+                    if k in old and k not in data:     # keep the watcher's state when you edit your prices
+                        data[k] = old[k]
                 r["mine"] = data
             else:
                 r.pop("mine", None)
