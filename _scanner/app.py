@@ -35,6 +35,7 @@ import backtest
 import breakout
 import bullion
 import bnf
+import discipline
 import earnings
 import notify
 import outlook
@@ -55,7 +56,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "14 Nov · Pulse Outlook: tomorrow & next week"
+VERSION = "15 Nov · Discipline guard: exit-now alarm, option sizing, circuit breakers"
 
 
 def load_env():
@@ -492,6 +493,24 @@ def tv_symbol(symbol):
     return "NSE:" + ("BANKNIFTY" if symbol == "BANKNIFTY" else symbol.replace("&", "_").replace("-", "_"))
 
 
+def fill_mine(kind, picked_at, sym):
+    """Complete a just-marked trade: which option, its lot, and the stop (keeping what you entered)."""
+    book = {"intra": TRADES, "swing": SWINGS, "bnf": BNFS, "results": RESULTS}[kind]
+    row = next((r for r in book.rows if abs(r["picked_at"] - picked_at) < 1 and r["symbol"] == sym), None)
+    if not row or not row.get("mine"):
+        return
+    m, o = row["mine"], trades.option_of(row, kind)
+    if m.get("inst") == "option":
+        m["opt"] = o or m.get("opt")
+        if m.get("sl") is None:
+            m["sl"] = discipline.default_option_stop(m["entry"], o)
+        if not m.get("qty") and o and o.get("lot"):
+            m["qty"] = o["lot"]
+    elif m.get("sl") is None:
+        m["sl"] = row["sl"]
+    book.save()
+
+
 def mood_now():
     return (((STATE.get("pulse") or {}).get("mood")) or {}).get("score")
 
@@ -501,10 +520,17 @@ def alert_extra(kind, row, stage):
     TradingView, and open Meridian."""
     acts = []
     if row is not None and stage in ("new", "trig") and PUBLIC_URL and not row.get("mine"):
-        body = {"kind": kind, "picked_at": row["picked_at"], "symbol": row["symbol"],
-                "sig": hook_sig(kind, row["picked_at"], row["symbol"])}
-        acts.append({"action": "http", "label": "✓ Took it", "url": PUBLIC_URL.rstrip("/") + "/api/hook/took",
-                     "method": "POST", "headers": {"Content-Type": "application/json"}, "body": json.dumps(body), "clear": True})
+        o = trades.option_of(row, kind)
+        for inst in (["option", "stock"] if o and kind != "bnf" else ["option"] if o else ["stock"]):
+            body = {"kind": kind, "picked_at": row["picked_at"], "symbol": row["symbol"], "inst": inst,
+                    "sig": hook_sig(kind, row["picked_at"], row["symbol"])}
+            acts.append({"action": "http", "label": ("✓ Took option" if o and kind != "bnf" else "✓ Took it") if inst == "option" else "✓ Took stock",
+                         "url": PUBLIC_URL.rstrip("/") + "/api/hook/took", "method": "POST",
+                         "headers": {"Content-Type": "application/json"}, "body": json.dumps(body), "clear": True})
+    if row is not None and stage == "exit" and PUBLIC_URL and row.get("mine") and row["mine"].get("exit") is None:
+        body = {"kind": kind, "picked_at": row["picked_at"], "symbol": row["symbol"], "sig": hook_sig(kind, row["picked_at"], row["symbol"])}
+        acts.append({"action": "http", "label": "✓ I exited", "url": PUBLIC_URL.rstrip("/") + "/api/hook/exited", "method": "POST",
+                     "headers": {"Content-Type": "application/json"}, "body": json.dumps(body), "clear": True})
     if row is not None:
         acts.append({"action": "view", "label": "TradingView",
                      "url": "https://www.tradingview.com/chart/?symbol=" + quote(tv_symbol(row["symbol"]))})
@@ -514,8 +540,134 @@ def alert_extra(kind, row, stage):
 
 
 def alert(kind, text, row=None, stage=None):
-    if not DEMO and alert_on(kind):
-        notify.send(text, notify.priority_of(text), alert_extra(kind, row, stage))
+    if DEMO or not alert_on(kind):
+        return
+    g = GUARD.get("state") or {}
+    if g.get("lock") and stage in ("new", "trig") and not (row and row.get("mine")):
+        return                                         # done for the day: no new trades (your open ones still alert)
+    if g.get("paper") and stage in ("new", "trig"):
+        text = "PAPER ONLY · " + text
+    notify.send(text, notify.priority_of(text), alert_extra(kind, row, stage))
+
+
+# ── Discipline guard: your real trades and your own rules ────────────────────────────────────
+GUARD = {"state": None, "alerted": set()}
+GUARD_WAKE = threading.Event()
+
+
+def real_books():
+    """(kind, book rows) of the trades you can mark as taken; intraday = today's book."""
+    return [("intra", TRADES.rows), ("swing", SWINGS.rows), ("bnf", BNFS.rows), ("results", RESULTS.rows)]
+
+
+def real_trades():
+    """Your marked trades with their results, for the circuit breakers."""
+    out = []
+    for kind, rows in real_books():
+        for r in rows:
+            if r.get("mine"):
+                res = trades.mine_result(r, kind) or {}
+                out.append({"kind": kind, "symbol": r["symbol"], "rs": res.get("rs"), "open": res.get("open"),
+                            "closed_at": r["mine"].get("exit_at") or r["mine"].get("at") or r["picked_at"]})
+    # earlier days' intraday trades (this month) from their files
+    today = datetime.now(IST)
+    for f in sorted(SETTINGS_DIR.glob(f"trades-{today.strftime('%Y-%m')}-*.json")):
+        if f.stem == f"trades-{TRADES.day}":
+            continue
+        try:
+            for r in json.loads(f.read_text(encoding="utf-8")):
+                if r.get("mine"):
+                    res = trades.mine_result(r, "intra") or {}
+                    out.append({"kind": "intra", "symbol": r["symbol"], "rs": res.get("rs"), "open": res.get("open"),
+                                "closed_at": r["mine"].get("exit_at") or r["mine"].get("at") or r["picked_at"]})
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def instrument_price(row, kind, m, opt, chains):
+    """The live price of what you hold: the option (from Dhan's option chain) or the stock."""
+    if opt:
+        o = m.get("opt") or {}
+        if not o.get("strike") or not o.get("expiry"):
+            return None
+        under = INDEXES["BANKNIFTY"] if kind == "bnf" else (STOCK_IDS.get(row["symbol"]) or ALL_EQUITY.get(row["symbol"]))
+        if not under:
+            return None
+        key = (under, o["expiry"])
+        if key not in chains:
+            chains[key] = option_chain(under, o["expiry"], ("IDX_I",) if kind == "bnf" else ("NSE_EQ", "NSE_FNO"))
+        q = options.from_chain(chains[key], o["kind"], o["strike"]) if chains[key] else None
+        return q["ltp"] if q else None
+    sid = STOCK_IDS.get(row["symbol"]) or ALL_EQUITY.get(row["symbol"])
+    if not sid:
+        return None
+    cs = dhan_candles(sid, "5")
+    time.sleep(0.25)
+    return cs[-1]["c"] if cs else None
+
+
+def guard_once():
+    """Watch your open real trades (prices, stop, time rules) and work out the circuit breakers."""
+    if DEMO:
+        return
+    now = datetime.now(IST)
+    hm, now_ts = now.strftime("%H:%M"), time.time()
+    chains, changed = {}, set()
+    if market_open(now):
+        for kind, rows in real_books():
+            for r in rows:
+                m = r.get("mine")
+                if not m or m.get("exit") is not None:
+                    continue
+                opt = trades.is_option(m, kind)
+                try:
+                    px = instrument_price(r, kind, m, opt, chains)
+                except DhanError as e:
+                    if e.fatal:
+                        raise
+                    px = None
+                if px is not None:
+                    m["ltp"], m["ltp_at"] = round(px, 2), now_ts
+                if m.get("sl") is None:
+                    m["sl"] = discipline.default_option_stop(m["entry"], m.get("opt")) if opt else r["sl"]
+                for text, exit_btn in discipline.watch(r, kind, opt, now_ts, hm):
+                    if alert_config():
+                        notify.send(text, 3, alert_extra(kind, r, "exit") if exit_btn else None)
+                changed.add(kind)
+    for kind, book in (("intra", TRADES), ("swing", SWINGS), ("bnf", BNFS), ("results", RESULTS)):
+        if kind in changed:
+            book.save()
+    rcfg = risk.config(dict(SETTINGS, guard_mult=1.0))
+    st = discipline.guard_state(real_trades(), rcfg["capital"], now)
+    if st["mult"] != float(SETTINGS.get("guard_mult") or 1.0):
+        save_settings(guard_mult=st["mult"])
+    day = now.date().isoformat()
+    for flag, text in (("lock", "🛑 Done for today\n" + " · ".join(st["why"]) + ". No new-trade alerts until tomorrow; "
+                                "your open trades are still watched. Close the app and step away."),
+                       ("paper", "📝 Paper only this month\n" + " · ".join(st["why"]) + ". Follow the picks on paper; "
+                                 "real money again next month."),
+                       ("half", "½ Half size this week\n" + " · ".join(st["why"]) + ". Risk per trade is halved.")):
+        on = st["mult"] < 1 if flag == "half" else st[flag]
+        key = (flag, day if flag == "lock" else now.strftime("%Y-%W") if flag == "half" else now.strftime("%Y-%m"))
+        if on and key not in GUARD["alerted"]:
+            GUARD["alerted"].add(key)
+            if alert_config():
+                notify.send(text, 3, alert_extra(None, None, None))
+    GUARD["state"] = st
+    set_state(guard=dict(st, at=now.strftime("%H:%M")))
+
+
+def guard_loop():
+    GUARD_WAKE.wait(30)
+    GUARD_WAKE.clear()
+    while True:
+        try:
+            guard_once()
+        except Exception as e:
+            warn("discipline guard", e)
+        GUARD_WAKE.wait(120 if market_open() else 900)
+        GUARD_WAKE.clear()
 
 
 def book_notify(book, kind):
@@ -2673,6 +2825,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.login(body)
         if path == "/api/hook/took":                   # "✓ Took it" on a phone notification (signed, no sign-in)
             return self.took_hook(body)
+        if path == "/api/hook/exited":                 # "✓ I exited" on an exit alarm
+            return self.exited_hook(body)
         if not self.signed_in():
             return self.send(401, {"error": "Sign in first."})
         if path == "/api/scan":
@@ -2765,7 +2919,14 @@ class Handler(BaseHTTPRequestHandler):
                     qty = int(float(body["qty"])) if body.get("qty") not in (None, "") else None
                     if entry <= 0 or (ex is not None and ex <= 0) or (qty is not None and qty <= 0):
                         raise ValueError
-                    data = {"entry": entry, "exit": ex, "qty": qty, "at": time.time()}
+                    inst = "option" if body.get("inst") == "option" else "stock"
+                    sl = float(body["sl"]) if body.get("sl") not in (None, "") else None
+                    if sl is not None and sl <= 0:
+                        raise ValueError
+                    data = {"entry": entry, "exit": ex, "qty": qty, "at": time.time(), "inst": inst, "sl": sl,
+                            "sl_placed": bool(body.get("sl_placed"))}
+                    if ex is not None:
+                        data["exit_at"] = time.time()
             except (TypeError, ValueError):
                 return self.send(400, {"error": "Enter your entry price (and exit price / quantity if you have them) as numbers."})
             if kind == "intra":
@@ -2786,10 +2947,13 @@ class Handler(BaseHTTPRequestHandler):
                 book = {"swing": SWINGS, "bnf": BNFS, "results": RESULTS}[kind]
                 ok = trades.set_mine(book.rows, picked_at, sym, data)
                 book.save()
+            if ok and data:
+                fill_mine(kind, picked_at, sym)
             else:
                 ok = False
             if not ok:
                 return self.send(404, {"error": "That trade wasn't found."})
+            GUARD_WAKE.set()                            # re-check the circuit breakers now
             with LOCK:
                 STATE["trades"] = TRADES.view()
                 if STATE.get("btst"):
@@ -2869,16 +3033,49 @@ class Handler(BaseHTTPRequestHandler):
         row = next((r for r in book.rows if abs(r["picked_at"] - at) < 1 and r["symbol"] == sym), None)
         if not row:
             return self.send(404, {"error": "That trade wasn't found."})
-        if kind == "bnf" and (row.get("opt_fill") or row.get("opt_entry")):
-            entry, qty = row.get("opt_fill") or row["opt_entry"], row.get("opt_lot")
+        o = trades.option_of(row, kind)
+        inst = "option" if (body.get("inst") == "option" and o) else "stock"
+        if inst == "option":
+            entry = (row.get("opt_fill") if kind == "bnf" else None) or o.get("entry")
+            qty = o.get("lot")
         else:
             entry, qty = row["entry"], ((row.get("card") or {}).get("size") or {}).get("qty")
+        if not entry:
+            return self.send(400, {"error": "no price"})
         if not row.get("mine"):
-            row["mine"] = {"entry": entry, "exit": None, "qty": qty, "at": time.time(), "via": "alert"}
+            row["mine"] = {"entry": entry, "exit": None, "qty": qty, "at": time.time(), "via": "alert",
+                           "inst": inst, "sl": None, "sl_placed": False}
             book.save()
-        what = row.get("option") if kind == "bnf" else row["symbol"]
-        notify.send(f"✓ Marked as taken · {what}\nAt {entry:,.2f}{f' × {qty}' if qty else ''}. "
-                    "Correct your prices with TOOK in Meridian.", 3)
+            fill_mine(kind, row["picked_at"], sym)
+        m = row["mine"]
+        what = (o or {}).get("label") if inst == "option" else row["symbol"]
+        notify.send(f"✓ Marked as taken · {what}\nAt {entry:,.2f}{f' × {qty}' if qty else ''} · your stop {m.get('sl') or 0:,.2f}. "
+                    "Place that stop in Dhan now (Super Order). Correct the prices with TOOK in Meridian.", 3)
+        GUARD_WAKE.set()
+        return self.send(200, {"ok": True})
+
+    def exited_hook(self, body):
+        kind, sym = body.get("kind"), str(body.get("symbol") or "")
+        try:
+            at = float(body.get("picked_at"))
+        except (TypeError, ValueError):
+            return self.send(400, {"error": "bad"})
+        if kind not in ALERT_KINDS or not hmac.compare_digest(str(body.get("sig") or ""), hook_sig(kind, at, sym)):
+            return self.send(403, {"error": "bad signature"})
+        book = {"intra": TRADES, "swing": SWINGS, "bnf": BNFS, "results": RESULTS}[kind]
+        row = next((r for r in book.rows if abs(r["picked_at"] - at) < 1 and r["symbol"] == sym), None)
+        if not row or not row.get("mine"):
+            return self.send(404, {"error": "That trade wasn't found."})
+        m = row["mine"]
+        if m.get("exit") is None:
+            m["exit"] = m.get("ltp") or m["entry"]
+            m["exit_at"] = time.time()
+            book.save()
+        res = trades.mine_result(row, kind) or {}
+        notify.send(f"✓ Closed · {discipline.name_of(m, row, trades.is_option(m, kind))}\nAt about {m['exit']:,.2f}"
+                    + (f" · {res['rs']:+,.0f} ₹" if res.get("rs") is not None else "")
+                    + ". Correct the exit price with TOOK in Meridian if it differs. Well done for exiting.", 3)
+        GUARD_WAKE.set()
         return self.send(200, {"ok": True})
 
     def login(self, body):
@@ -2932,6 +3129,7 @@ def main():
     threading.Thread(target=bullion_loop, daemon=True).start()
     threading.Thread(target=results_loop, daemon=True).start()
     threading.Thread(target=pulse_loop, daemon=True).start()
+    threading.Thread(target=guard_loop, daemon=True).start()
     notify.start(alert_config)
     threading.Thread(target=watchdog, daemon=True).start()
     try:

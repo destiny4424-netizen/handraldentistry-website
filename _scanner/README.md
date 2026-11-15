@@ -440,6 +440,27 @@ only buys when a move is likely soon and options are not expensive:
   estimated from index R minus time decay and costs.
 - The ⭐ variant (best total, both halves positive, 10+ trades) is used live. Without one, the card says "paper first".
 
+## Discipline guard (your real trades)
+`discipline.py`. **TOOK IT?** (or **✓ Took option / ✓ Took stock** on an alert) records what you actually
+traded: the option or the stock, your entry, **your stop**, the quantity, and whether the stop order is placed
+in Dhan. The dialog shows what the trade risks against your rule (1% of capital) and the maximum lots.
+
+Every 2 minutes in market hours the guard reads the live price of what you hold (the option from Dhan's option
+chain, or the stock) and sends:
+- **⚠ Place your stop-loss:** 2 minutes after marking a trade without an SL order.
+- **🔴 EXIT NOW:** when your stop is hit (the option's own price, or the stock plan stopping out). It repeats
+  every 5 minutes with the growing cost until you tap **✓ I exited**.
+- **⏱ 2:30 PM / 3:10 PM:** intraday trades that aren't working, and square-off.
+
+**Circuit breakers on your real results:**
+- 2 losing trades or −3% in a day: **done for the day.** New-trade alerts stop; your open trades are still
+  watched.
+- −6% in a week: **half size** (risk per trade halved).
+- −10% in a month: **paper only.**
+
+**Stats → Your trades** shows the **hope tax** (how much more than planned the losers cost because they were
+held past the stop) and how often a stop order was placed. The scanner never places or blocks orders itself.
+
 ## Problem alerts
 Every 5 minutes a watchdog checks for problems. When alerts are on, each problem sends one urgent notification,
 and a "back to normal" one when it is fixed. It checks for:

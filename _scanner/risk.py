@@ -10,7 +10,7 @@ Blocked picks are still shown (marked), but they are not taken into Today's trad
 """
 import math
 
-DEFAULTS = {"capital": 150000, "risk_pct": 1.0, "daily_loss_pct": 3.0,
+DEFAULTS = {"capital": 200000, "risk_pct": 1.0, "daily_loss_pct": 3.0,
             "max_open": 3, "max_trades": 5, "btst_max": 3,     # btst_max = most swing trades open
             "results_max": 3}                                 # most results-breakout trades open
 LIMITS = {"capital": (10000, 1e9), "risk_pct": (0.1, 5), "daily_loss_pct": (0.5, 20),
@@ -25,7 +25,9 @@ def config(settings):
         v = (settings or {}).get("risk_" + k)
         if v is not None:
             cfg[k] = v
-    cfg["risk_amt"] = round(cfg["capital"] * cfg["risk_pct"] / 100)
+    # The discipline guard halves the risk after a bad week (guard_mult 0.5).
+    cfg["guard_mult"] = float((settings or {}).get("guard_mult") or 1.0)
+    cfg["risk_amt"] = round(cfg["capital"] * cfg["risk_pct"] / 100 * cfg["guard_mult"])
     cfg["limit_r"] = round(-cfg["daily_loss_pct"] / cfg["risk_pct"], 2)
     return cfg
 
