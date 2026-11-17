@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1419">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Meridian Trade</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">◆</span> Meridian <b>Trade</b><span id="demo" class="pill warn hidden">DEMO</span></div>
+  <div class="top-right">
+    <span id="funds" class="funds" title="Available to trade"></span>
+    <span id="conn" class="dot" title="Dhan connection"></span>
+  </div>
+</header>
+<div id="banner" class="banner hidden"></div>
+<nav class="tabs" id="tabs">
+  <button data-tab="watch" class="on"><i>☰</i><span>Watchlist</span></button>
+  <button data-tab="chain"><i>⛓</i><span>Options</span></button>
+  <button data-tab="orders"><i>⇄</i><span>Orders</span><b id="ordersBadge" class="badge hidden"></b></button>
+  <button data-tab="positions"><i>◧</i><span>Positions</span></button>
+  <button data-tab="insights"><i>✦</i><span>Insights</span></button>
+  <button data-tab="account"><i>◉</i><span>Account</span></button>
+</nav>
+<main id="main">
+  <section id="tab-watch" class="tab on">
+    <div class="search"><input id="q" type="search" placeholder="Search stocks, indices, futures, options  (e.g. nifty 26000 ce)" autocomplete="off" spellcheck="false"></div>
+    <div id="results" class="results hidden"></div>
+    <div class="wl-head"><div id="wlTabs" class="chips"></div><button id="wlEdit" class="ghost sm">Edit</button></div>
+    <div id="wl" class="list"></div>
+    <div id="wlEmpty" class="empty hidden">This list is empty. Search above and tap ＋ to add stocks, indices, futures or options.</div>
+  </section>
+  <section id="tab-chain" class="tab">
+    <div class="chain-head">
+      <select id="ul"></select>
+      <div id="expiries" class="chips scroll"></div>
+    </div>
+    <div id="chainInfo" class="chain-info"></div>
+    <div class="chain-wrap"><table id="chain" class="chain"></table></div>
+  </section>
+  <section id="tab-orders" class="tab">
+    <div class="chips" id="orderFilter"><button data-f="open" class="on">Open</button><button data-f="done">Executed</button><button data-f="all">All</button></div>
+    <div id="orders" class="list"></div>
+  </section>
+  <section id="tab-positions" class="tab">
+    <div id="pnlCard" class="pnl-card"></div>
+    <div id="positions" class="list"></div>
+    <div class="row-end"><button id="exitAll" class="danger ghost">Exit all positions</button></div>
+  </section>
+  <section id="tab-insights" class="tab">
+    <div class="ins-head"><div class="chips" id="insDays"><button data-d="30">30 days</button><button data-d="90" class="on">90 days</button><button data-d="365">1 year</button><button data-d="0">All</button></div>
+      <button id="syncBtn" class="ghost sm">↻ Import trades</button></div>
+    <div id="syncNote" class="muted small"></div>
+    <div id="insights"></div>
+  </section>
+  <section id="tab-account" class="tab">
+    <div id="account"></div>
+  </section>
+</main>
+
+<div id="sheet" class="sheet hidden" role="dialog" aria-modal="true"><div class="sheet-bg"></div><div class="sheet-body" id="sheetBody"></div></div>
+<div id="toasts" class="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

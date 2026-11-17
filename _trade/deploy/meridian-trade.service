@@ -1,0 +1,32 @@
+[Unit]
+Description=Meridian Trade (trading app on your Dhan account)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=trade
+Group=trade
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=MT_CLOUD=1
+Environment=MT_HOST=127.0.0.1
+# 3050: the clinic server uses 3030, Handral Books 3020 and the scanner 3040.
+Environment=MT_PORT=3050
+Environment=MT_DATA_DIR=/var/lib/meridian-trade
+# MT_PASSWORD, MT_PUBLIC_URL and MT_PUBLIC_IP are written here by web.sh; the file survives updates.
+EnvironmentFile=-/etc/default/meridian-trade
+ExecStart=/usr/bin/python3 /opt/meridian-trade/repo/_trade/trade.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/meridian-trade
+
+[Install]
+WantedBy=multi-user.target

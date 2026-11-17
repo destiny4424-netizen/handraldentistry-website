@@ -1,0 +1,888 @@
+"""Meridian Trade: a personal trading app on your own Dhan account. Watchlists, every stock,
+index, future and option, option chains, charts, real orders (with a confirm step and safety
+checks), positions, holdings, funds, and insights into your own trading.
+
+Run:  python3 trade.py            (Python 3.9+, nothing else to install)
+      python3 trade.py --demo     with a pretend Dhan account (nothing real is touched)
+"""
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import sys
+import threading
+import time
+import traceback
+from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import dhan as dhanlib                                  # noqa: E402
+import insights                                         # noqa: E402
+from instruments import Instruments, MASTER_URL, public  # noqa: E402
+
+VERSION = "17 Nov 2026 · first version"
+IST = timezone(timedelta(hours=5, minutes=30))
+DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
+CLOUD = os.environ.get("MT_CLOUD") == "1"
+PASSWORD = os.environ.get("MT_PASSWORD", "")
+PUBLIC_IP = os.environ.get("MT_PUBLIC_IP", "")
+HOST = os.environ.get("MT_HOST", "127.0.0.1")
+PORT = int(os.environ.get("MT_PORT", "3050"))
+DATA = Path(os.environ.get("MT_DATA_DIR") or (HERE / ".data-demo" if DEMO else Path.home() / ".meridian-trade"))
+API_BASE = os.environ.get("MT_DHAN_API", "https://api.dhan.co/v2")
+MASTER = os.environ.get("MT_MASTER_URL", MASTER_URL)
+
+DATA.mkdir(parents=True, exist_ok=True)
+SETTINGS_FILE = DATA / "settings.json"
+AUDIT = DATA / "orders-log.jsonl"
+LOCK = threading.RLock()
+
+DEFAULT_LIMITS = {"max_order_value": 1000000, "daily_loss_limit": 0, "max_trades_day": 5,
+                  "lots_warn": 10}
+DEFAULT_WATCH = [{"name": "Indices", "keys": []}, {"name": "My stocks", "keys": []}]
+
+
+def now():
+    return datetime.now(IST)
+
+
+def load_settings():
+    try:
+        return json.loads(SETTINGS_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(**kw):
+    with LOCK:
+        s = load_settings()
+        s.update(kw)
+        tmp = SETTINGS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(s, indent=1))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, SETTINGS_FILE)
+        SETTINGS.clear()
+        SETTINGS.update(s)
+
+
+SETTINGS = load_settings()
+if not SETTINGS.get("session_key"):
+    save_settings(session_key=secrets.token_hex(32))
+
+D = dhanlib.Dhan(base=API_BASE)
+INST = Instruments(str(DATA), MASTER)
+STORE = insights.Store(str(DATA / "trades.db"))
+STATUS = {"token_source": "", "token_note": "", "sync": "", "sync_at": None, "feed_error": ""}
+
+
+# ---- Dhan login ------------------------------------------------------------------------------
+def pick_token():
+    if SETTINGS.get("client_id") and SETTINGS.get("access_token"):
+        D.client_id, D.token = SETTINGS["client_id"], SETTINGS["access_token"]
+        STATUS["token_source"] = "own"
+    else:
+        D.client_id = D.token = ""
+        STATUS["token_source"] = ""
+
+
+def keep_token():
+    """Renew the token when less than 4 hours are left: a token pasted once keeps going."""
+    while True:
+        try:
+            pick_token()
+            if STATUS["token_source"] == "own" and not DEMO:
+                exp = dhanlib.token_expiry(D.token)
+                left = exp - time.time() if exp else None
+                if left is not None and 0 < left < 4 * 3600:
+                    new = D.renew()
+                    if new:
+                        save_settings(access_token=new, saved_at=now().strftime("%d %b %Y %H:%M"))
+                        D.token = new
+                        STATUS["token_note"] = "Renewed " + now().strftime("%d %b %H:%M")
+                elif left is not None and left <= 0:
+                    STATUS["token_note"] = "The token has expired. Paste a new one in Settings."
+        except dhanlib.DhanError as e:
+            STATUS["token_note"] = f"Renewing failed: {e}"
+        except Exception as e:                         # never let this thread die
+            STATUS["token_note"] = f"Token check failed: {e}"
+        time.sleep(600)
+
+
+# ---- live prices -----------------------------------------------------------------------------
+QUOTES = {}                                            # key -> quote dict
+WANT = {}                                              # key -> last time a screen asked for it
+_flip = [0]
+
+
+def want(keys):
+    t = time.time()
+    for k in keys:
+        if k in INST.by_key:
+            WANT[k] = t
+
+
+def feed():
+    while True:
+        time.sleep(1.05)
+        try:
+            if not D.ready:
+                continue
+            t = time.time()
+            keys = [k for k, w in list(WANT.items()) if t - w < 20]
+            for k in [k for k, w in list(WANT.items()) if t - w > 120]:
+                WANT.pop(k, None)
+            if not keys:
+                continue
+            idx = [k for k in keys if k.startswith("IDX_I:")]
+            rest = [k for k in keys if not k.startswith("IDX_I:")]
+            _flip[0] ^= 1
+            # One request a second: the rest (full quotes) most seconds, indices (OHLC) every other.
+            if idx and (not rest or _flip[0]):
+                got = D.quote({"IDX_I": [k.split(":")[1] for k in idx]}, "ohlc")
+            else:
+                by = {}
+                for k in rest[:1000]:
+                    seg, sid = k.split(":")
+                    by.setdefault(seg, []).append(sid)
+                got = D.quote(by, "quote")
+            for (seg, sid), q in got.items():
+                QUOTES[f"{seg}:{sid}"] = shape_quote(q)
+            STATUS["feed_error"] = ""
+        except dhanlib.DhanError as e:
+            STATUS["feed_error"] = str(e)
+            time.sleep(3)
+        except Exception as e:
+            STATUS["feed_error"] = f"Price feed problem: {e}"
+            time.sleep(3)
+
+
+def shape_quote(q):
+    ltp = float(q.get("last_price") or 0)
+    o = q.get("ohlc") or {}
+    prev = float(o.get("close") or 0)
+    chg = float(q["net_change"]) if q.get("net_change") not in (None, "") else (ltp - prev if prev else 0)
+    base = prev or (ltp - chg)
+    d = q.get("depth") or {}
+    return {"ltp": ltp, "chg": round(chg, 2), "pct": round(100 * chg / base, 2) if base else 0,
+            "open": o.get("open"), "high": o.get("high"), "low": o.get("low"), "prev": prev,
+            "vol": q.get("volume"), "oi": q.get("oi"), "avg": q.get("average_price"),
+            "uc": q.get("upper_circuit_limit"), "lc": q.get("lower_circuit_limit"),
+            "bids": [[b.get("price"), b.get("quantity"), b.get("orders")] for b in (d.get("buy") or [])][:5],
+            "asks": [[a.get("price"), a.get("quantity"), a.get("orders")] for a in (d.get("sell") or [])][:5],
+            "t": time.time()}
+
+
+# ---- orders: checks before anything goes to Dhan ----------------------------------------------
+RECENT = {}                                            # order signature -> time (double-tap guard)
+EQ_PRODUCTS = ("CNC", "INTRADAY", "MTF")
+FNO_PRODUCTS = ("INTRADAY", "MARGIN")
+
+
+def limits():
+    return dict(DEFAULT_LIMITS, **(SETTINGS.get("limits") or {}))
+
+
+def round_tick(p, tick):
+    if not p:
+        return 0.0
+    tick = tick or 0.05
+    return round(round(float(p) / tick) * tick, 2)
+
+
+def today_pnl(positions):
+    return sum(float(p.get("realizedProfit") or 0) + float(p.get("unrealizedProfit") or 0) for p in positions)
+
+
+def build_order(b):
+    """Check an order from the ticket and turn it into Dhan's fields. Returns (order, instrument,
+    problems that stop it, warnings to show on the confirm screen)."""
+    stop, warn = [], []
+    it = INST.get(str(b.get("key") or ""))
+    if not it:
+        return None, None, ["Pick an instrument first."], []
+    if it["kind"] == "INDEX":
+        return None, it, ["An index itself can't be traded. Trade its futures or options."], []
+    side = str(b.get("side") or "").upper()
+    product = str(b.get("product") or "").upper()
+    otype = str(b.get("type") or "").upper()
+    if side not in dhanlib.SIDES:
+        stop.append("Choose Buy or Sell.")
+    eq = it["seg"] in ("NSE_EQ", "BSE_EQ")
+    if product not in (EQ_PRODUCTS if eq else FNO_PRODUCTS):
+        stop.append("Choose " + ("Delivery, Intraday or MTF." if eq else "Intraday or Carry forward (NRML)."))
+    if otype not in dhanlib.ORDER_TYPES:
+        stop.append("Choose the order type.")
+    try:
+        qty = int(b.get("qty") or 0)
+    except (TypeError, ValueError):
+        qty = 0
+    lot = it["lot"] if not eq else 1
+    if qty <= 0:
+        stop.append("Enter the quantity.")
+    elif lot > 1 and qty % lot:
+        stop.append(f"Quantity must be a multiple of the lot size ({lot}).")
+    tick = it["tick"]
+    price = round_tick(b.get("price"), tick)
+    trig = round_tick(b.get("trigger"), tick)
+    if otype in ("LIMIT", "STOP_LOSS") and price <= 0:
+        stop.append("Enter the limit price.")
+    if otype in ("STOP_LOSS", "STOP_LOSS_MARKET") and trig <= 0:
+        stop.append("Enter the trigger price.")
+    if otype == "STOP_LOSS" and price > 0 and trig > 0:
+        if side == "BUY" and trig > price:
+            stop.append("For a buy stop-loss the trigger must be at or below the limit price.")
+        if side == "SELL" and trig < price:
+            stop.append("For a sell stop-loss the trigger must be at or above the limit price.")
+    validity = "IOC" if str(b.get("validity") or "").upper() == "IOC" else "DAY"
+    q = QUOTES.get(it["key"]) or {}
+    ltp = float(q.get("ltp") or 0)
+    ref = price or trig or ltp
+    o = {"securityId": it["id"], "exchangeSegment": it["seg"], "transactionType": side, "quantity": qty,
+         "orderType": otype, "productType": product, "price": price if otype in ("LIMIT", "STOP_LOSS") else 0,
+         "triggerPrice": trig if otype in ("STOP_LOSS", "STOP_LOSS_MARKET") else 0, "validity": validity,
+         "afterMarketOrder": bool(b.get("amo")), "amoTime": str(b.get("amo_time") or "OPEN"),
+         "slice": bool(b.get("slice")), "correlationId": str(b.get("cid") or "")[:25]}
+    sup = b.get("super") or None
+    if sup and (sup.get("target") or sup.get("sl")):
+        if otype not in ("LIMIT", "MARKET"):
+            stop.append("A super order's entry must be Limit or Market.")
+        entry = price if otype == "LIMIT" else round_tick(ltp, tick)
+        if entry <= 0:
+            stop.append("No live price yet for the market entry; use a limit price.")
+        tgt, sl = round_tick(sup.get("target"), tick), round_tick(sup.get("sl"), tick)
+        if side == "BUY" and ((tgt and tgt <= entry) or (sl and sl >= entry)):
+            stop.append("For a buy: target above the entry, stop-loss below it.")
+        if side == "SELL" and ((tgt and tgt >= entry) or (sl and sl <= entry)):
+            stop.append("For a sell: target below the entry, stop-loss above it.")
+        o["super"] = {"price": entry, "targetPrice": tgt, "stopLossPrice": sl,
+                      "trailingJump": round_tick(sup.get("trail"), tick)}
+        if not sl:
+            warn.append("This super order has no stop-loss leg.")
+    value = qty * ref * (1 if eq else 1)
+    lim = limits()
+    if lim.get("max_order_value") and value > float(lim["max_order_value"]) and not b.get("big_ok"):
+        stop.append(f"This order is worth {insights.rupees(value)}, above your limit of "
+                    f"{insights.rupees(float(lim['max_order_value']))}. Tick 'I'm sure' to send it anyway.")
+        o["_needs_big_ok"] = True
+    if lot > 1 and lim.get("lots_warn") and qty // lot >= int(lim["lots_warn"]):
+        warn.append(f"{qty // lot} lots: a big position.")
+    if otype == "MARKET" and not eq and it["opt"]:
+        warn.append("Market orders on options can fill far from the last price when the spread is wide. A limit order is safer.")
+    if ltp and price and otype == "LIMIT" and abs(price - ltp) / ltp > 0.05:
+        warn.append(f"Your limit price is {abs(price - ltp) / ltp * 100:.1f}% away from the last price ₹{ltp:,.2f}.")
+    if ltp and q.get("uc") and q.get("lc") and price and not (float(q["lc"]) <= price <= float(q["uc"])):
+        stop.append(f"The price is outside today's circuit limits (₹{q['lc']} – ₹{q['uc']}).")
+    o["_value"] = round(value, 2)
+    return o, it, stop, warn
+
+
+def reduces_position(o, positions):
+    for p in positions:
+        if str(p.get("securityId")) == o["securityId"] and p.get("exchangeSegment") == o["exchangeSegment"]:
+            net = int(p.get("netQty") or 0)
+            if (net > 0 and o["transactionType"] == "SELL" and o["quantity"] <= net) or \
+                    (net < 0 and o["transactionType"] == "BUY" and o["quantity"] <= -net):
+                return True
+    return False
+
+
+def audit(event, **kw):
+    try:
+        with open(AUDIT, "a") as f:
+            f.write(json.dumps(dict(kw, event=event, at=now().strftime("%Y-%m-%d %H:%M:%S"))) + "\n")
+    except OSError:
+        pass
+
+
+def place(b):
+    o, it, stop, warn = build_order(b)
+    if stop:
+        return 400, {"error": " ".join(stop), "problems": stop, "needs_big_ok": bool(o and o.get("_needs_big_ok"))}
+    lim = limits()
+    positions = []
+    try:
+        positions = D.positions()
+    except dhanlib.DhanError:
+        pass
+    loss_lim = float(lim.get("daily_loss_limit") or 0)
+    pnl = today_pnl(positions)
+    if loss_lim and pnl <= -loss_lim and not reduces_position(o, positions):
+        return 400, {"error": f"Today's P&L is {insights.rupees(pnl)}, past your daily loss limit of "
+                              f"{insights.rupees(loss_lim)}. Only orders that close a position are allowed today."}
+    sig = (o["securityId"], o["transactionType"], o["quantity"], o["price"], o["orderType"])
+    t = time.time()
+    if t - RECENT.get(sig, 0) < 4 and not b.get("repeat_ok"):
+        return 409, {"error": "You sent this exact order a moment ago. It wasn't sent again (double tap?)."}
+    RECENT[sig] = t
+    clean = {k: v for k, v in o.items() if not k.startswith("_")}
+    try:
+        if o.get("super"):
+            s = o["super"]
+            r = D.place_super_order(dict(clean, price=s["price"], targetPrice=s["targetPrice"],
+                                         stopLossPrice=s["stopLossPrice"], trailingJump=s["trailingJump"]))
+        else:
+            r = D.place_order(clean)
+    except dhanlib.DhanError as e:
+        audit("order_failed", order=clean, sym=it["sym"], error=str(e), code=e.code)
+        RECENT.pop(sig, None)
+        msg = str(e)
+        if e.code == "DH-903" or "static" in msg.lower() or " ip" in msg.lower():
+            msg += f" If Dhan says the IP isn't allowed, set this server's IP ({PUBLIC_IP or 'see Settings'}) as your static IP on web.dhan.co → DhanHQ Trading APIs."
+        return 400, {"error": msg, "code": e.code}
+    rows = r if isinstance(r, list) else [r]
+    audit("order_sent", order=clean, sym=it["sym"], reply=rows)
+    return 200, {"ok": True, "orders": rows, "sym": it["name"], "warnings": warn}
+
+
+def preview(b):
+    o, it, stop, warn = build_order(dict(b, big_ok=True))
+    out = {"problems": stop, "warnings": warn}
+    if not o:
+        return out
+    out.update(value=o["_value"], instrument=public(it) if it else None)
+    big = limits().get("max_order_value")
+    out["needs_big_ok"] = bool(big and o["_value"] > float(big))
+    if not stop:
+        try:
+            m = D.margin({**o, "price": o["price"] or (o.get("super") or {}).get("price") or
+                          float((QUOTES.get(it["key"]) or {}).get("ltp") or 0)})
+            out["margin"] = {k: m.get(k) for k in ("totalMargin", "availableBalance", "insufficientBalance",
+                                                   "brokerage", "leverage", "spanMargin", "exposureMargin")}
+            if float(m.get("insufficientBalance") or 0) > 0:
+                out["warnings"].append(f"Not enough funds: {insights.rupees(float(m['insufficientBalance']))} short.")
+        except dhanlib.DhanError as e:
+            out["margin_error"] = str(e)
+        kind = it["kind"]
+        out["charges"] = insights.estimate_charges(kind, o["productType"], o["transactionType"], o["quantity"],
+                                                   o["price"] or float((QUOTES.get(it["key"]) or {}).get("ltp") or 0))
+        sup = o.get("super")
+        if sup and sup.get("stopLossPrice"):
+            risk = abs(sup["price"] - sup["stopLossPrice"]) * o["quantity"]
+            out["risk"] = round(risk, 2)
+            if sup.get("targetPrice"):
+                out["reward"] = round(abs(sup["targetPrice"] - sup["price"]) * o["quantity"], 2)
+        try:
+            positions = D.positions()
+            lim = float(limits().get("daily_loss_limit") or 0)
+            pnl = today_pnl(positions)
+            out["day_pnl"] = round(pnl, 2)
+            if lim and pnl <= -lim and not reduces_position(o, positions):
+                out["problems"].append("You're past today's loss limit: only closing orders are allowed.")
+        except dhanlib.DhanError:
+            pass
+    return out
+
+
+# ---- insights sync ---------------------------------------------------------------------------
+SYNC_LOCK = threading.Lock()
+
+
+def sync(full=False):
+    if not D.ready or not SYNC_LOCK.acquire(blocking=False):
+        return
+    try:
+        today = now().date()
+        STATUS["sync"] = "Reading today's trades"
+        STORE.put_day(D.trades_today(), today.isoformat())
+        done = STORE.meta("history_until")
+        start = (today - timedelta(days=int(SETTINGS.get("history_days") or 365)))
+        if done and not full:
+            start = max(start, datetime.strptime(done, "%Y-%m-%d").date() - timedelta(days=3))
+        end = today - timedelta(days=1)
+        d = start
+        total = 0
+        while d <= end:
+            chunk_end = min(end, d + timedelta(days=30))
+            for page in range(500):
+                STATUS["sync"] = f"Importing your trades: {d:%d %b %Y} – {chunk_end:%d %b %Y}"
+                rows = D.trade_history(d.isoformat(), chunk_end.isoformat(), page)
+                if not rows:
+                    break
+                total += STORE.put_history(rows)
+                if len(rows) < 20:
+                    break
+            d = chunk_end + timedelta(days=1)
+        if end >= start:
+            STORE.set_meta("history_until", end.isoformat())
+        STATUS["sync"] = ""
+        STATUS["sync_at"] = now().strftime("%d %b %H:%M")
+    except dhanlib.DhanError as e:
+        STATUS["sync"] = f"Couldn't read your trades: {e}"
+    except Exception as e:
+        STATUS["sync"] = f"Trade import failed: {e}"
+        traceback.print_exc()
+    finally:
+        SYNC_LOCK.release()
+
+
+def sync_loop():
+    time.sleep(5)
+    while True:
+        t = now()
+        market = t.weekday() < 5 and (9, 0) <= (t.hour, t.minute) <= (16, 0)
+        sync()
+        time.sleep(120 if market else 1800)
+
+
+def instruments_loop():
+    while True:
+        try:
+            INST.load()
+        except Exception as e:
+            INST.error = f"Instrument list failed: {e}"
+        time.sleep(3600 * 6)
+
+
+# ---- option chain ----------------------------------------------------------------------------
+CHAIN_CACHE = {}
+
+
+def chain(ul, expiry):
+    expiries = INST.chain_info(ul)
+    if not expiries:
+        return {"error": f"No options found for {ul}."}
+    expiry = expiry if expiry in expiries else expiries[0]
+    keys = INST.chain_keys(ul, expiry)
+    under = INST.underlying(ul)
+    spot, data = 0.0, {}
+    ck = (ul, expiry)
+    hit = CHAIN_CACHE.get(ck)
+    if hit and time.time() - hit[0] < 3:
+        spot, data = hit[1], hit[2]
+    elif under:
+        try:
+            d = D.option_chain(under[1], under[0], expiry)
+            spot, data = float(d.get("last_price") or 0), d.get("oc") or {}
+            CHAIN_CACHE[ck] = (time.time(), spot, data)
+        except dhanlib.DhanError as e:
+            if hit:
+                spot, data = hit[1], hit[2]
+            else:
+                return {"error": str(e), "expiries": expiries, "expiry": expiry}
+    strikes = sorted({k[0] for k in keys})
+    by_strike = {}
+    for k, v in data.items():
+        try:
+            by_strike[round(float(k), 2)] = v
+        except ValueError:
+            continue
+    rows = []
+    for s in strikes:
+        row = {"strike": s}
+        d = by_strike.get(round(s, 2)) or {}
+        for opt in ("CE", "PE"):
+            key = keys.get((s, opt))
+            x = d.get(opt.lower()) or {}
+            g = x.get("greeks") or {}
+            oi, poi = x.get("oi") or 0, x.get("previous_oi") or 0
+            row[opt] = {"key": key, "ltp": x.get("last_price"), "oi": oi, "chg_oi": (oi - poi) if poi else None,
+                        "iv": x.get("implied_volatility"), "delta": g.get("delta"), "theta": g.get("theta"),
+                        "bid": x.get("top_bid_price"), "ask": x.get("top_ask_price"), "vol": x.get("volume"),
+                        "prev": x.get("previous_close_price")} if key else None
+        rows.append(row)
+    ce_oi = sum((r["CE"] or {}).get("oi") or 0 for r in rows)
+    pe_oi = sum((r["PE"] or {}).get("oi") or 0 for r in rows)
+    lot = next((INST.by_key[k]["lot"] for k in keys.values()), 1)
+    ukey = INST.under.get(ul)
+    if ukey:
+        want([ukey])
+        if not spot:
+            spot = float((QUOTES.get(ukey) or {}).get("ltp") or 0)
+    return {"ul": ul, "expiry": expiry, "expiries": expiries, "spot": spot, "rows": rows, "lot": lot,
+            "pcr": round(pe_oi / ce_oi, 2) if ce_oi else None, "ukey": ukey,
+            "futures": [k for _, k in (INST.futs.get(ul) or [])][:3]}
+
+
+# ---- charts ----------------------------------------------------------------------------------
+def candles(key, tf):
+    it = INST.get(key)
+    if not it:
+        return {"error": "Unknown instrument"}
+    t = now()
+    inst = it["kind"]
+    try:
+        if tf == "D":
+            d = D.daily(it["id"], it["seg"], inst, (t - timedelta(days=365)).strftime("%Y-%m-%d"),
+                        (t + timedelta(days=1)).strftime("%Y-%m-%d"))
+        else:
+            back = {"1": 3, "5": 6, "15": 20, "60": 60}.get(tf, 6)
+            d = D.intraday(it["id"], it["seg"], inst, tf, (t - timedelta(days=back)).strftime("%Y-%m-%d 09:15:00"),
+                           t.strftime("%Y-%m-%d %H:%M:%S"))
+    except dhanlib.DhanError as e:
+        return {"error": str(e)}
+    ks = ("timestamp", "open", "high", "low", "close", "volume")
+    if not all(isinstance(d.get(k), list) for k in ks):
+        return {"rows": []}
+    return {"rows": [[int(a), o, h, l, c, v] for a, o, h, l, c, v in zip(*(d[k] for k in ks))]}
+
+
+# ---- web server ------------------------------------------------------------------------------
+FAILED = {}
+
+
+def session_token():
+    key = bytes.fromhex(SETTINGS["session_key"])
+    return hmac.new(key, b"mt:" + hashlib.sha256(PASSWORD.encode()).digest(), "sha256").hexdigest()
+
+
+def needs_login():
+    return bool(PASSWORD)
+
+
+def mask(cid):
+    return (cid[:2] + "•••" + cid[-3:]) if cid and len(cid) > 5 else cid
+
+
+def status():
+    exp = dhanlib.token_expiry(D.token) if D.token else None
+    return {"version": VERSION, "demo": DEMO, "connected": D.ready, "client": mask(D.client_id),
+            "token_source": STATUS["token_source"], "token_note": STATUS["token_note"],
+            "token_expires": datetime.fromtimestamp(exp, IST).strftime("%d %b %H:%M") if exp else None,
+            "ip": PUBLIC_IP, "limits": limits(), "instruments": len(INST.by_key), "inst_error": INST.error,
+            "sync": STATUS["sync"], "sync_at": STATUS["sync_at"], "feed_error": STATUS["feed_error"],
+            "fills": STORE.count()[0], "time": now().strftime("%H:%M:%S"),
+            "watchlists": SETTINGS.get("watchlists") or default_watch()}
+
+
+def default_watch():
+    wl = [dict(w) for w in DEFAULT_WATCH]
+    wl[0]["keys"] = [INST.under[u] for u in ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "INDIAVIX") if u in INST.under]
+    wl[1]["keys"] = [INST.under[u] for u in ("RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "SBIN", "TCS") if u in INST.under]
+    return wl
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "MeridianTrade"
+    sys_version = ""
+
+    def log_message(self, fmt, *a):
+        if "/api/quotes" in (a[0] if a else ""):
+            return
+        sys.stderr.write("%s %s\n" % (now().strftime("%H:%M:%S"), fmt % a))
+
+    # -- plumbing
+    def send(self, code, obj, ctype="application/json", extra=None):
+        data = obj if isinstance(obj, bytes) else (obj.encode() if isinstance(obj, str) else json.dumps(obj, default=str).encode())
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                                                    "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def signed_in(self):
+        if not needs_login():
+            return True
+        c = SimpleCookie(self.headers.get("Cookie", "")).get("mt")
+        return bool(c) and hmac.compare_digest(c.value, session_token())
+
+    def client_ip(self):
+        return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
+
+    def body(self):
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            raise ValueError("JSON only")
+        if self.headers.get("X-Requested-With") != "meridian-trade":
+            raise PermissionError("bad origin")
+        n = min(int(self.headers.get("Content-Length") or 0), 100000)
+        return json.loads(self.rfile.read(n) or b"{}")
+
+    def static(self, name):
+        p = (HERE / "static" / name).resolve()
+        if not str(p).startswith(str((HERE / "static").resolve())) or not p.is_file():
+            return self.send(404, "Not found", "text/plain")
+        ctype = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
+                 ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
+                 ".webmanifest": "application/manifest+json"}.get(p.suffix, "application/octet-stream")
+        self.send(200, p.read_bytes(), ctype)
+
+    # -- routes
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        u = urlparse(self.path)
+        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        path = u.path
+        if path == "/healthz":
+            return self.send(200, "ok", "text/plain")
+        if path in ("/", "/index.html"):
+            return self.static("index.html" if self.signed_in() else "login.html")
+        if path.startswith("/static/"):
+            return self.static(path[len("/static/"):])
+        if path in ("/manifest.webmanifest", "/icon.svg"):
+            return self.static(path[1:])
+        if not path.startswith("/api/"):
+            return self.send(404, "Not found", "text/plain")
+        if not self.signed_in():
+            return self.send(401, {"error": "Sign in first."})
+        try:
+            return self.api_get(path, q)
+        except dhanlib.DhanError as e:
+            return self.send(502, {"error": str(e), "code": e.code})
+        except Exception as e:
+            traceback.print_exc()
+            return self.send(500, {"error": f"Something went wrong: {e}"})
+
+    def api_get(self, path, q):
+        if path == "/api/status":
+            return self.send(200, status())
+        if path == "/api/search":
+            return self.send(200, {"results": INST.search(q.get("q", ""))})
+        if path == "/api/instrument":
+            it = INST.get(q.get("key", ""))
+            return self.send(200, public(it) if it else {"error": "Unknown"})
+        if path == "/api/quotes":
+            keys = [k for k in q.get("keys", "").split(",") if k][:400]
+            want(keys)
+            info = {}
+            if q.get("info"):
+                info = {k: public(INST.by_key[k]) for k in keys if k in INST.by_key}
+            return self.send(200, {"quotes": {k: QUOTES.get(k) for k in keys}, "info": info, "error": STATUS["feed_error"]})
+        if path == "/api/chain":
+            r = chain(q.get("ul", "NIFTY"), q.get("expiry", ""))
+            return self.send(200, r)
+        if path == "/api/underlyings":
+            return self.send(200, {"list": INST.option_underlyings()})
+        if path == "/api/chart":
+            return self.send(200, candles(q.get("key", ""), q.get("tf", "5")))
+        if path == "/api/orders":
+            orders = D.orders()
+            try:
+                sup = D.super_orders()
+            except dhanlib.DhanError:
+                sup = []
+            for o in orders + sup:
+                k = f"{o.get('exchangeSegment')}:{o.get('securityId')}"
+                it = INST.get(k)
+                o["_key"] = k
+                o["_name"] = it["name"] if it else o.get("tradingSymbol")
+                o["_lot"] = it["lot"] if it else 1
+                o["_tick"] = it["tick"] if it else 0.05
+            orders.sort(key=lambda o: str(o.get("updateTime") or o.get("createTime") or ""), reverse=True)
+            return self.send(200, {"orders": orders, "super": sup})
+        if path == "/api/trades":
+            return self.send(200, {"trades": D.trades_today()})
+        if path == "/api/positions":
+            pos = D.positions()
+            keys = []
+            for p in pos:
+                k = f"{p.get('exchangeSegment')}:{p.get('securityId')}"
+                it = INST.get(k)
+                p["_key"] = k
+                p["_name"] = it["name"] if it else p.get("tradingSymbol")
+                p["_lot"] = it["lot"] if it else 1
+                if int(p.get("netQty") or 0):
+                    keys.append(k)
+                    lq = QUOTES.get(k)
+                    if lq and lq.get("ltp"):           # live P&L between Dhan's own updates
+                        net = int(p["netQty"])
+                        cost = float(p.get("buyAvg") or 0) if net > 0 else float(p.get("sellAvg") or 0)
+                        mult = float(p.get("multiplier") or 1) or 1
+                        p["_ltp"] = lq["ltp"]
+                        p["_unreal"] = round(net * (lq["ltp"] - cost) * mult, 2) if cost else p.get("unrealizedProfit")
+            want(keys)
+            return self.send(200, {"positions": pos, "pnl": round(today_pnl(pos), 2), "limits": limits()})
+        if path == "/api/holdings":
+            h = D.holdings()
+            keys = []
+            for x in h:
+                k = INST.under.get(str(x.get("tradingSymbol") or ""))
+                x["_key"] = k
+                if k:
+                    keys.append(k)
+                    lq = QUOTES.get(k) or {}
+                    x["_ltp"] = lq.get("ltp")
+                    x["_pct"] = lq.get("pct")
+            want(keys)
+            return self.send(200, {"holdings": h})
+        if path == "/api/funds":
+            return self.send(200, D.funds())
+        if path == "/api/insights":
+            days = int(q.get("days") or 0) or None
+            r = insights.report(STORE.fills(), days=days, max_trades_day=int(limits().get("max_trades_day") or 5))
+            c = STORE.count()
+            r["fills"], r["first"], r["last"] = c
+            r["sync"], r["sync_at"] = STATUS["sync"], STATUS["sync_at"]
+            return self.send(200, r)
+        if path == "/api/killswitch":
+            return self.send(200, D.kill_switch_status())
+        if path == "/api/audit":
+            try:
+                lines = AUDIT.read_text().splitlines()[-100:]
+            except OSError:
+                lines = []
+            return self.send(200, {"log": [json.loads(x) for x in reversed(lines)]})
+        return self.send(404, {"error": "No such page"})
+
+    def do_POST(self):
+        self.mutate("POST")
+
+    def mutate(self, method):
+        path = urlparse(self.path).path
+        try:
+            b = self.body()
+        except PermissionError:
+            return self.send(403, {"error": "Refused."})
+        except (ValueError, json.JSONDecodeError):
+            return self.send(400, {"error": "Bad request."})
+        if path == "/api/login":
+            return self.login(b)
+        if path == "/api/logout":
+            return self.send(200, {"ok": True}, extra={"Set-Cookie": "mt=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict"})
+        if not self.signed_in():
+            return self.send(401, {"error": "Sign in first."})
+        try:
+            return self.api_post(path, b)
+        except dhanlib.DhanError as e:
+            audit("dhan_error", path=path, error=str(e))
+            return self.send(502, {"error": str(e), "code": e.code})
+        except (KeyError, ValueError, TypeError) as e:
+            return self.send(400, {"error": f"Missing or wrong value: {e}"})
+        except Exception as e:
+            traceback.print_exc()
+            return self.send(500, {"error": f"Something went wrong: {e}"})
+
+    def api_post(self, path, b):
+        if path == "/api/order/preview":
+            return self.send(200, preview(b))
+        if path == "/api/order":
+            code, r = place(b)
+            return self.send(code, r)
+        if path == "/api/order/modify":
+            oid = str(b["order_id"])
+            tick = float(b.get("tick") or 0.05)
+            if b.get("super_leg"):
+                leg = b["super_leg"]
+                r = D.modify_super_leg(oid, leg, {"targetPrice": round_tick(b.get("price"), tick),
+                                                  "stopLossPrice": round_tick(b.get("price"), tick),
+                                                  "trailingJump": round_tick(b.get("trail"), tick),
+                                                  "orderType": b.get("type") or "LIMIT", "quantity": b.get("qty") or 0,
+                                                  "price": round_tick(b.get("price"), tick)})
+            else:
+                otype = str(b["type"]).upper()
+                if otype not in dhanlib.ORDER_TYPES:
+                    return self.send(400, {"error": "Order type"})
+                r = D.modify_order(oid, {"orderType": otype, "quantity": int(b["qty"]),
+                                         "price": round_tick(b.get("price"), tick) if otype in ("LIMIT", "STOP_LOSS") else 0,
+                                         "triggerPrice": round_tick(b.get("trigger"), tick) if otype.startswith("STOP") else 0,
+                                         "validity": b.get("validity") or "DAY", "legName": b.get("leg") or ""})
+            audit("order_modified", order_id=oid, change=b, reply=r)
+            return self.send(200, {"ok": True, "reply": r})
+        if path == "/api/order/cancel":
+            oid = str(b["order_id"])
+            r = D.cancel_super(oid, b.get("leg") or "ENTRY_LEG") if b.get("super") else D.cancel_order(oid)
+            audit("order_cancelled", order_id=oid, reply=r)
+            return self.send(200, {"ok": True, "reply": r})
+        if path == "/api/exit-all":
+            if b.get("confirm") != "EXIT ALL":
+                return self.send(400, {"error": "Type EXIT ALL to confirm."})
+            r = D.exit_all()
+            audit("exit_all", reply=r)
+            return self.send(200, {"ok": True, "reply": r})
+        if path == "/api/position/convert":
+            r = D.convert_position(b)
+            audit("convert", body=b, reply=r)
+            return self.send(200, {"ok": True})
+        if path == "/api/killswitch":
+            on = bool(b.get("on"))
+            if on and b.get("confirm") != "STOP":
+                return self.send(400, {"error": "Type STOP to confirm."})
+            r = D.kill_switch(on)
+            audit("kill_switch", on=on, reply=r)
+            return self.send(200, {"ok": True, "reply": r})
+        if path == "/api/settings/dhan":
+            cid, tok = str(b.get("client_id") or "").strip(), str(b.get("token") or "").strip()
+            if not cid or len(tok) < 20:
+                return self.send(400, {"error": "Enter your Client ID and the access token."})
+            test = dhanlib.Dhan(cid, tok, API_BASE)
+            try:
+                test.funds()
+            except dhanlib.DhanError as e:
+                return self.send(400, {"error": f"Dhan didn't accept these: {e}"})
+            save_settings(client_id=cid, access_token=tok, saved_at=now().strftime("%d %b %Y %H:%M"))
+            pick_token()
+            threading.Thread(target=sync, daemon=True).start()
+            return self.send(200, {"ok": True})
+        if path == "/api/settings/limits":
+            lim = limits()
+            for k in DEFAULT_LIMITS:
+                if k in b:
+                    lim[k] = max(0, float(b[k] or 0))
+            save_settings(limits=lim)
+            return self.send(200, {"ok": True, "limits": lim})
+        if path == "/api/watchlists":
+            wl = b.get("watchlists")
+            if not isinstance(wl, list) or len(wl) > 20:
+                return self.send(400, {"error": "Bad watchlists"})
+            clean = [{"name": str(w.get("name") or "List")[:30], "keys": [k for k in (w.get("keys") or [])
+                                                                          if isinstance(k, str) and k in INST.by_key][:100]}
+                     for w in wl]
+            save_settings(watchlists=clean)
+            return self.send(200, {"ok": True})
+        if path == "/api/insights/sync":
+            threading.Thread(target=sync, kwargs={"full": bool(b.get("full"))}, daemon=True).start()
+            return self.send(200, {"ok": True})
+        return self.send(404, {"error": "No such action"})
+
+    def do_PUT(self):
+        self.mutate("PUT")
+
+    def login(self, b):
+        ip, t = self.client_ip(), time.time()
+        n, until = FAILED.get(ip, (0, 0))
+        if until > t:
+            return self.send(429, {"error": f"Too many wrong passwords. Try again in {int(until - t) // 60 + 1} min."})
+        given = str(b.get("password") or "").strip().lower().replace(" ", "")
+        ok = bool(PASSWORD) and hmac.compare_digest(hashlib.sha256(given.encode()).digest(),
+                                                    hashlib.sha256(PASSWORD.lower().replace(" ", "").encode()).digest())
+        if not ok:
+            n += 1
+            FAILED[ip] = (n, t + 900 if n >= 5 else 0)
+            time.sleep(1)
+            return self.send(401, {"error": "Wrong password."})
+        FAILED.pop(ip, None)
+        secure = "; Secure" if CLOUD else ""
+        return self.send(200, {"ok": True}, extra={
+            "Set-Cookie": f"mt={session_token()}; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict{secure}"})
+
+
+def main():
+    global API_BASE, MASTER
+    if DEMO:
+        import mockdhan
+        mockdhan.serve(3099)
+        API_BASE = "http://127.0.0.1:3099/v2"
+        D.base = API_BASE
+        INST.url = "http://127.0.0.1:3099/scrip-master.csv"
+        if not SETTINGS.get("access_token"):
+            save_settings(client_id=mockdhan.CLIENT, access_token=mockdhan.TOKEN)
+    pick_token()
+    INST.load(force=DEMO)
+    for fn in (keep_token, feed, sync_loop, instruments_loop):
+        threading.Thread(target=fn, daemon=True).start()
+    srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    srv.daemon_threads = True
+    print(f"Meridian Trade {VERSION} on http://{HOST}:{PORT}" + ("  (DEMO: pretend Dhan account)" if DEMO else ""))
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()
