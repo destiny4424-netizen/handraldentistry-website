@@ -8,6 +8,8 @@
 - `ortho/` — only a redirect: Ortho Assess lives in its own repository, destiny4424-netizen/ortho-assess
   (https://destiny4424-netizen.github.io/ortho-assess/), separate from the clinic website, app and server.
 - `_clinic/` — the cloud server for the clinic app (runs on the droplet; not published)
+- `_trade/` — Meridian Trade, a trading app on your Dhan account: watchlists, option chains, real orders,
+  positions, and insights into your own trading (runs on the droplet; not published). See `_trade/README.md`.
 - `photos/` — Clinic Photos: organise clinic and patient photos on the iPhone (handraldentistry.com/photos).
   Open it in Safari, Share → Add to Home Screen. Photos are picked from the Photo Library and kept only on
   that phone (nothing is uploaded); use ⋯ → Save backup to keep a copy in Files / iCloud Drive.
@@ -291,3 +293,21 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
 
 If something ever looks wrong: `systemctl status orderblock-scanner` or
 `journalctl -u orderblock-scanner -u orderblock-scanner-update -n 50`.
+
+## Meridian Trade (trading app on the droplet)
+
+`_trade/` is a personal trading app on your Dhan account, in its own service, separate from the scanner.
+It covers every stock, index, future and option. It has option chains and **places real orders**, always after a
+confirm screen and safety checks. It shows your positions, holdings and funds, and **Insights**: your own trading
+history from Dhan, your real P&L after charges, and the habits that cost you money. Details: `_trade/README.md`.
+
+### One-time setup on the droplet
+```
+curl -fsSL https://raw.githubusercontent.com/destiny4424-netizen/handraldentistry-website/main/_trade/deploy/install.sh | sudo bash
+```
+It prints the address (`https://trade.<droplet-ip>.sslip.io`, or `trade.handraldentistry.com` with a DNS **A**
+record `trade`), the password, and the droplet's IP. Set that IP as your **static IP** on web.dhan.co → Access
+DhanHQ APIs (Dhan accepts API orders only from it). Then paste your Client ID and access token under Account →
+Dhan login. To see the address and password again: `sudo cat /etc/meridian-trade/login.txt`.
+
+If something ever looks wrong: `journalctl -u meridian-trade -u meridian-trade-update -n 50`.

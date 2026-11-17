@@ -19,3 +19,6 @@ The Clinic Photos app (`photos/`) keeps photos only on the phone; Ortho Assess (
 - `ortho/` — redirect to Ortho Assess (destiny4424-netizen/ortho-assess); its cases sync through `_clinic/server.py`
 - `_books/` — bookkeeping app that runs on the droplet (not published; see README)
 - `_scanner/` — OrderBlock Scanner, F&O scanner on Dhan data that runs on the droplet (not published; see README)
+- `_trade/` — Meridian Trade, trading app that places real orders on the owner's Dhan account; runs on the droplet
+  (not published). Test with `python3 -m unittest discover tests` and, with `python3 trade.py --demo` running,
+  `node tests/e2e.js` (pretend Dhan, headless Chromium). Never commit the Dhan token, trades or the order log.

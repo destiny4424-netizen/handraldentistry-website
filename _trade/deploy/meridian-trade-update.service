@@ -1,0 +1,8 @@
+[Unit]
+Description=Meridian Trade: pull updates from GitHub and keep the server healthy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/meridian-trade-update
