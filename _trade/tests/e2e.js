@@ -17,7 +17,7 @@ function check(ok, what) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', m => { if (m.type() === 'error' && !/status of 40[09]/.test(m.text())) errors.push(m.text()); });   // refusals the test asks for
   page.on('dialog', d => d.accept(d.type() === 'prompt' ? 'EXIT ALL' : undefined));
   const shot = async name => { if (SHOTS) await page.screenshot({path: `${SHOTS}/${name}.png`}); };
 
@@ -156,6 +156,37 @@ function check(ok, what) {
   await page.click('#lmLoss', {clickCount: 3});
   await page.fill('#lmLoss', '0');
   await page.click('#lmSave');
+
+  // auto-trader: the edge check runs, the bot starts on paper, and hands-off blocks a manual buy
+  await page.click('#tabs button[data-tab="auto"]');
+  await page.waitForSelector('#auto .pnl-card');
+  check((await page.textContent('#auto')).includes('PAPER'), 'auto-trader starts in paper mode');
+  await page.waitForFunction(() => /PASSED|NO EDGE YET/.test(document.querySelector('#auto').textContent), null, {timeout: 60000});
+  check(true, 'backtest edge check ran');
+  check(await page.$eval('#auLive', b => b.disabled), 'go live is locked until the paper sessions are done');
+  await shot('14-auto');
+  await page.click('#auStart');
+  await page.waitForSelector('#auPause');
+  check((await page.textContent('#auto')).includes('RUNNING'), 'bot started');
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await shot('15-auto-more');
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#wlTabs button[data-i="1"]');
+  await page.click('#wl .item');
+  await page.waitForSelector('#shBuy');
+  await page.click('#shBuy');
+  await page.waitForSelector('#tkReview');
+  await page.click('#tkType button[data-v="MARKET"]');
+  await page.click('#tkReview');
+  await page.waitForSelector('#cfGo');
+  await page.click('#cfGo');
+  await page.waitForFunction(() => (document.querySelector('#cfMsg') || {}).textContent?.includes('Hands off'));
+  check(true, 'hands-off refuses a manual buy while the bot runs');
+  await page.click('.sh-close');
+  await page.click('#tabs button[data-tab="auto"]');
+  await page.waitForSelector('#auPause');
+  await page.click('#auPause');
+  await page.waitForSelector('#auStart');
 
   // desktop layout
   const desk = await browser.newPage({viewport: {width: 1280, height: 800}});

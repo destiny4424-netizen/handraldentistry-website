@@ -13,10 +13,11 @@ os.environ["MT_DATA_DIR"] = tempfile.mkdtemp()
 
 import mockdhan                                          # noqa: E402
 
-PORT = 3097
-mockdhan.serve(PORT, tick_every=3600)
-os.environ["MT_DHAN_API"] = f"http://127.0.0.1:{PORT}/v2"
-os.environ["MT_MASTER_URL"] = f"http://127.0.0.1:{PORT}/scrip-master.csv"
+PORT = int(os.environ.setdefault("MT_TEST_PORT", "3097"))
+if mockdhan.M is None:                                   # one pretend Dhan for all test files
+    mockdhan.serve(PORT, tick_every=3600)
+os.environ.setdefault("MT_DHAN_API", f"http://127.0.0.1:{PORT}/v2")
+os.environ.setdefault("MT_MASTER_URL", f"http://127.0.0.1:{PORT}/scrip-master.csv")
 import trade                                             # noqa: E402
 import insights                                          # noqa: E402
 import dhan                                              # noqa: E402

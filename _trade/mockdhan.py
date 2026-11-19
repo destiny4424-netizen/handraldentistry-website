@@ -13,6 +13,7 @@ import re
 import sys
 import threading
 import time
+import zlib
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -74,6 +75,7 @@ class Market:
         self.used = 0.0
         self.kill = False
         self.calls = []                                # (method, path, body) for tests
+        self.forever = {}                              # Forever (GTT) orders
         self.order_seq = 1000
         self.build()
         self.seed_history()
@@ -164,6 +166,21 @@ class Market:
                     days = max((e - datetime.now(IST).date()).days, 0) + 0.5
                     i["px"] = max(0.05, _bs(ul["px"], i["strike"], days / 365, 0.13 if i["kind"] == "OPTIDX" else 0.25, i["opt"]))
             self.match()
+            self.check_forever()
+
+    def check_forever(self):
+        for f in self.forever.values():
+            if f["orderStatus"] != "PENDING":
+                continue
+            i = self.inst[(f["exchangeSegment"], f["securityId"])]
+            px = self.q(i)
+            hit = px <= f["triggerPrice"] if f["transactionType"] == "SELL" and f["triggerPrice"] < f["_ref"] else \
+                px >= f["triggerPrice"]
+            if hit:
+                f["orderStatus"] = "TRIGGERED"
+                self.new_order({"transactionType": f["transactionType"], "exchangeSegment": f["exchangeSegment"],
+                                "productType": f["productType"], "orderType": "LIMIT", "securityId": f["securityId"],
+                                "quantity": f["quantity"], "price": f["price"], "validity": "DAY"})
 
     def q(self, i):
         px = round(i["px"] / i["tick"]) * i["tick"]
@@ -483,6 +500,25 @@ class Handler(BaseHTTPRequestHandler):
                         if "stopLossPrice" in b:
                             x["triggerPrice"] = b["stopLossPrice"]
                 return 200, {"orderId": o["orderId"], "orderStatus": o["orderStatus"]}
+        if path == "/forever/orders" and method == "POST":
+            i = m.inst.get((b["exchangeSegment"], str(b["securityId"])))
+            if not i:
+                return 400, err("DH-905", "Input_Exception", "Invalid SecurityId")
+            if b["productType"] not in ("CNC", "MTF"):
+                return 400, err("DH-906", "Order_Error", "Forever orders are for CNC and MTF")
+            m.order_seq += 1
+            oid = f"F{m.order_seq}"
+            m.forever[oid] = dict(b, orderId=oid, orderStatus="PENDING", _ref=m.q(i), tradingSymbol=i["sym"])
+            return 200, {"orderId": oid, "orderStatus": "PENDING"}
+        if path == "/forever/orders" and method == "GET":
+            return 200, [pub(f) for f in m.forever.values()]
+        mfo = re.fullmatch(r"/forever/orders/(\w+)", path)
+        if mfo and method == "DELETE":
+            f = m.forever.get(mfo.group(1))
+            if not f or f["orderStatus"] != "PENDING":
+                return 400, err("DH-906", "Order_Error", "Order not pending")
+            f["orderStatus"] = "CANCELLED"
+            return 200, {"orderId": f["orderId"], "orderStatus": "CANCELLED"}
         if path == "/trades" and method == "GET":
             return 200, m.trades
         mt = re.fullmatch(r"/trades/(\d{4}-\d\d-\d\d)/(\d{4}-\d\d-\d\d)/(\d+)", path)
@@ -586,12 +622,17 @@ class Handler(BaseHTTPRequestHandler):
                         "top_ask_quantity": 750, "top_bid_price": round(max(px - 0.05, 0.05), 2), "top_bid_quantity": 600,
                         "volume": 50000}
             return 200, {"data": {"last_price": m.q(ul), "oc": oc}, "status": "success"}
-        if path in ("/charts/intraday", "/charts/historical"):
+        if path == "/charts/historical":
+            i = m.inst.get((b["exchangeSegment"], str(b["securityId"])))
+            if not i:
+                return 400, err("DH-907", "Data_Error", "No data")
+            return 200, daily_series(i, b["fromDate"][:10], b["toDate"][:10])
+        if path == "/charts/intraday":
             i = m.inst.get((b["exchangeSegment"], str(b["securityId"])))
             if not i:
                 return 400, err("DH-907", "Data_Error", "No data")
             n = 75
-            step = int(b.get("interval") or 5) * 60 if path.endswith("intraday") else 86400
+            step = int(b.get("interval") or 5) * 60
             end = int(time.time()) // step * step
             px = i["px"]
             rng = random.Random(int(i["id"]))
@@ -606,6 +647,42 @@ class Handler(BaseHTTPRequestHandler):
                          "high": [round(r[2] * scale, 2) for r in rows], "low": [round(r[3] * scale, 2) for r in rows],
                          "close": [round(r[4] * scale, 2) for r in rows], "volume": [r[5] for r in rows]}
         return 404, err("DH-905", "Input_Exception", f"No such endpoint {method} {path}")
+
+
+DAILY = {}
+
+
+def daily_series(i, frm, to):
+    """Made-up daily candles (weekdays) that end at the instrument's starting price. Trends come and go,
+    so swing setups appear, but there is no real edge in them: a fair test for the bot's edge check."""
+    key = (i["seg"], i["id"])
+    if key not in DAILY:
+        rng = random.Random(zlib.crc32(("%s:%s" % key).encode()))
+        days = []
+        d = datetime.now(IST).date() - timedelta(days=700)
+        today = datetime.now(IST).date()
+        while d < today:
+            if d.weekday() < 5:
+                days.append(d)
+            d += timedelta(days=1)
+        px, drift, out = 100.0, 0.0, []
+        vol = 0.012 if i["kind"] == "INDEX" else 0.018
+        for d in days:
+            if rng.random() < 0.04:
+                drift = rng.gauss(0, 0.004)
+            o = px * (1 + rng.gauss(0, vol / 3))
+            c = o * (1 + drift + rng.gauss(0, vol))
+            h = max(o, c) * (1 + abs(rng.gauss(0, vol / 2)))
+            l = min(o, c) * (1 - abs(rng.gauss(0, vol / 2)))
+            out.append([d, o, h, l, c, rng.randint(200000, 2000000)])
+            px = c
+        scale = i["px"] / px
+        DAILY[key] = [[r[0]] + [x * scale for x in r[1:5]] + [r[5]] for r in out]
+    rows = [r for r in DAILY[key] if frm <= r[0].isoformat() < to]
+    ts = lambda d: int(datetime(d.year, d.month, d.day, tzinfo=IST).timestamp())
+    return {"timestamp": [ts(r[0]) for r in rows], "open": [round(r[1], 2) for r in rows],
+            "high": [round(r[2], 2) for r in rows], "low": [round(r[3], 2) for r in rows],
+            "close": [round(r[4], 2) for r in rows], "volume": [r[5] for r in rows]}
 
 
 def check_order(b, super_=False):

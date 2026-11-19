@@ -110,6 +110,7 @@ function showTab(t) {
   if (t === 'chain') loadChain(true);
   if (t === 'insights') loadInsights();
   if (t === 'account') loadAccount();
+  if (t === 'auto') loadAuto();
   window.scrollTo(0, 0);
 }
 $('#tabs').onclick = e => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); };
@@ -816,6 +817,94 @@ async function loadAccount() {
   el.querySelectorAll('.item[data-key]').forEach(i => { if (i.dataset.key) i.onclick = () => openInstrument(i.dataset.key); });
 }
 
+// ---- auto-trader ----------------------------------------------------------------------------------------------
+async function autoAct(act, body) {
+  try { const r = await api('/api/auto/' + act, body || {}); renderAuto(r.auto); return true; }
+  catch (e) { toast(e.message, 'bad', 7000); return false; }
+}
+async function loadAuto() {
+  try { renderAuto(await api('/api/auto')); } catch (e) { $('#auto').innerHTML = `<div class="badbox">${esc(e.message)}</div>`; }
+}
+function renderAuto(a) {
+  S.auto = a;
+  const c = a.settings, bt = a.backtest, live = a.mode === 'live';
+  const status = a.halted ? `<span class="pill bad">STOPPED</span> ${esc(a.halted)}` : a.armed ? '<span class="pill ok">RUNNING</span>' : '<span class="pill">PAUSED</span>';
+  const pos = a.positions.map(p => {
+    const pl = p.booked + p.left * ((p.ltp || p.entry) - p.entry);
+    return `<div class="item" style="cursor:default;align-items:flex-start"><div class="grow">
+      <div class="name">${esc(p.sym)} <span class="tag">MTF</span><span class="tag">${p.mode.toUpperCase()}</span></div>
+      <div class="sub">${p.left}/${p.qty} @ ${px(p.entry)} · LTP ${px(p.ltp)} · day ${p.sessions + 1} of 10</div>
+      <div class="sub">Stop ${px(p.sl)}${p.half ? ' (at cost)' : ''} · T1 ${px(p.t1)}${p.half ? ' ✓' : ''} · T2 ${px(p.t2)}
+        ${p.mode === 'live' ? (p.stop_kind === 'gtt' ? ' · stop held at Dhan (GTT)' : p.stop_kind === 'day' ? ' · day stop order at Dhan' : ' · <b class="down">no stop order at Dhan</b>') : ''}</div>
+    </div><div class="right"><div class="ltp ${cls(pl)}">${inr(pl)}</div></div></div>`;
+  }).join('');
+  const setups = a.setups.map(s => `<div class="item" style="cursor:default"><div class="grow"><div class="name">${esc(s.sym)} <span class="tag">score ${s.score}</span></div>
+      <div class="sub">Buy above ${px(s.entry)} · stop ${px(s.sl)} · T1 ${px(s.t1)} · T2 ${px(s.t2)} · from ${esc(s.made)}${s.order ? ' · order #' + esc(s.order) : s.qty ? ' · paper order ' + s.qty : ''}</div>
+      <div class="sub">${esc((s.why || []).slice(0, 3).join(' · '))}</div></div></div>`).join('');
+  const closed = a.closed.slice(0, 25).map(t => `<div class="item" style="cursor:default;padding:8px 14px"><div class="grow">
+      <div class="name">${esc(t.sym)} <span class="tag">${t.mode.toUpperCase()}</span></div>
+      <div class="sub">${esc(t.opened.slice(0, 10))} → ${esc(t.closed.slice(0, 10))} · ${t.qty} @ ${px(t.entry)} → ${px(t.exit)} · ${esc(t.why)}</div></div>
+      <div class="right"><div class="${cls(t.net)}">${inr(t.net)}</div><div class="small muted">${t.r}R</div></div></div>`).join('');
+  const btRows = bt && bt.rows ? `<table class="bars"><tr class="small muted"><td>Min score</td><td class="r">Trades</td><td class="r">Won</td><td class="r">After costs</td><td class="r">Later days</td><td class="r">t</td></tr>
+      ${bt.rows.map(r => `<tr${r.score === bt.score ? ' style="font-weight:700"' : ''}><td>${r.score || 'any'}${r.score === bt.score ? ' ★' : ''}</td><td class="r">${r.all.trades}</td><td class="r">${r.all.win_rate}%</td>
+        <td class="r ${cls(r.all.net)}">${inrShort(r.all.net)}</td><td class="r ${cls(r.late.net)}">${inrShort(r.late.net)}</td><td class="r">${r.late.t_stat}</td></tr>`).join('')}</table>` : '';
+  const dis = a.locked ? 'disabled' : '';
+  $('#auto').innerHTML = `
+    <div class="pnl-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div><span class="pill ${live ? 'bad' : 'warn'}" style="font-size:13px">${live ? 'LIVE · real orders' : 'PAPER · no real orders'}</span> ${status}</div>
+        <div class="ord-actions" style="margin:0">
+          ${a.armed ? '<button id="auPause">Pause</button>' : `<button id="auStart" class="primary" style="padding:6px 14px">${a.halted ? 'Restart' : 'Start'}</button>`}
+        </div></div>
+      <div class="kpis" style="margin:12px 0 0"><div class="kpi"><div class="l">${live ? 'Live' : 'Paper'} result</div><div class="v ${cls(a.summary.net)}">${inrShort(a.summary.net)}</div><div class="s">${a.summary.trades} trades · ${a.summary.win_rate}% won</div></div>
+        <div class="kpi"><div class="l">Capital · risk a trade</div><div class="v">${inrShort(c.capital)}</div><div class="s">${c.risk_pct}% = ${inr(c.capital * c.risk_pct / 100)} at the stop</div></div></div>
+      ${c.hands_off ? '<div class="muted small" style="margin-top:8px">Hands off: while the bot is on, manual orders can only close positions.</div>' : ''}
+      ${a.locked ? '<div class="muted small">Market open: settings and mode are locked until 3:30 PM. Pause works any time.</div>' : ''}
+    </div>
+    <div class="card"><h3>The setup</h3><p class="muted small" style="margin:0">Swing buys from the scanner's daily-chart rules (trend + imbalance zone + price-action trigger), held up to 10 sessions on <b>MTF</b>.
+      At 3:10 PM it keeps only the <b>top ${c.max_new_per_day}</b> setup${c.max_new_per_day > 1 ? 's' : ''} scoring <b>${c.min_score}+</b>; at most ${c.max_positions} open.
+      Buy above the trigger high (not chased on a gap), stop-loss sent to Dhan as a GTT order, half sold at T1 and the stop moved to cost, the rest at T2.
+      Size: ${c.risk_pct}% risk per trade; each position ≤ ${c.per_trade_cap_x}× capital, all ≤ ${c.total_cap_x}× (MTF margin). Stops itself after a ${c.max_drawdown_pct}% drawdown.</p></div>
+    <div class="card"><h3>Edge check (backtest) ${bt ? (bt.passed ? '<span class="pill ok">PASSED</span>' : '<span class="pill bad">NO EDGE YET</span>') : ''}</h3>
+      ${bt ? `<p class="small" style="margin:0 0 8px">${esc(bt.why)}</p><div class="muted small">${bt.stocks || ''} stocks · ${esc(bt.from || '')} to ${esc(bt.to || '')} · chosen on days before ${esc(bt.split || '')}, checked on the days after · costs 0.25% + MTF interest · ran ${esc(bt.ran_at || '')}</div>${btRows}` :
+        '<p class="muted small">Not run yet. It needs about 2 years of daily candles for every F&amp;O stock (a few minutes).</p>'}
+      <div class="ord-actions"><button id="auBt" ${a.job.running ? 'disabled' : ''}>${a.job.running ? 'Running… ' + esc(a.job.msg) : 'Run backtest now'}</button></div></div>
+    <div class="card"><h3>Going live</h3>
+      ${live ? '<p class="small">Live: real MTF orders on your Dhan account.</p><div class="ord-actions"><button id="auPaper" ' + dis + '>Back to paper</button></div>' :
+        `<p class="small" style="margin:0">Paper sessions: <b>${a.paper_days} of ${c.paper_sessions_required}</b>.
+          ${a.live_blockers.length ? 'Not yet: ' + esc(a.live_blockers.join('; ')) + '.' : '<b class="up">Ready.</b> Start with the same small capital and watch the first trades in Dhan.'}</p>
+          <div class="ord-actions"><button id="auLive" class="danger" ${a.live_blockers.length || a.locked ? 'disabled' : ''}>Go live (real orders)</button></div>`}
+    </div>
+    <div class="section-title">Setups waiting to trigger</div><div class="list">${setups || '<div class="item muted">None. New ones are picked at 3:10 PM.</div>'}</div>
+    <div class="section-title">Open positions</div><div class="list">${pos || '<div class="item muted">None.</div>'}</div>
+    ${a.positions.length ? '<div class="row-end"><button id="auClose" class="danger ghost">Close all bot positions</button></div>' : ''}
+    <div class="section-title">Finished trades</div><div class="list">${closed || '<div class="item muted">None yet.</div>'}</div>
+    <div class="section-title">Settings</div>
+    <div class="box"><div class="formrow">
+      ${[['capital', 'Capital (₹)'], ['risk_pct', 'Risk per trade (% of capital)'], ['max_positions', 'Open positions at most (1–2)'], ['max_new_per_day', 'New setups a day (1–2)'],
+         ['min_score', 'Minimum score (empty = backtest’s choice)'], ['per_trade_cap_x', 'One position at most (× capital)'], ['total_cap_x', 'All positions at most (× capital)'],
+         ['max_drawdown_pct', 'Stop the bot after a drawdown of (%)'], ['paper_sessions_required', 'Paper sessions before live']]
+        .map(([k, l]) => `<div class="field"><label>${l}</label><input data-set="${k}" inputmode="decimal" value="${k === 'min_score' && !(S.auto.settings_raw || {}).min_score ? '' : c[k] ?? ''}" ${dis}></div>`).join('')}
+      </div>
+      <label class="toggle"><input type="checkbox" id="auHands" ${c.hands_off ? 'checked' : ''} ${dis}> Hands off: while the bot is on, I can only close positions by hand</label>
+      <button class="ghost" id="auSave" ${dis}>Save settings</button></div>
+    <div class="section-title">Bot log</div>
+    <div class="box small" style="max-height:300px;overflow:auto">${a.log.map(l => `<div class="kv"><span>${esc(l.at)}</span><span class="${l.kind === 'error' ? 'down' : l.kind === 'warn' ? '' : ''}" style="text-align:right;max-width:75%">${esc(l.msg)}</span></div>`).join('') || '<span class="muted">Nothing yet.</span>'}</div>`;
+  const on = (id, f) => { const el = $('#' + id); if (el) el.onclick = f; };
+  on('auStart', () => autoAct('arm', {on: true}));
+  on('auPause', () => autoAct('arm', {on: false}));
+  on('auBt', () => autoAct('backtest').then(() => setTimeout(loadAuto, 1500)));
+  on('auPaper', () => autoAct('mode', {mode: 'paper'}));
+  on('auLive', () => { const v = prompt('The bot will place REAL MTF orders on your Dhan account.\nType LIVE to confirm.'); if (v === 'LIVE') autoAct('mode', {mode: 'live', confirm: 'LIVE'}); });
+  on('auClose', () => { const v = prompt('Sell every bot position at market now?\nType CLOSE to confirm.'); if (v === 'CLOSE') autoAct('close-all', {confirm: 'CLOSE'}); });
+  on('auSave', () => {
+    const b = {hands_off: $('#auHands').checked};
+    $$('[data-set]').forEach(i => { b[i.dataset.set] = i.value.trim() === '' ? (i.dataset.set === 'min_score' ? null : undefined) : +i.value; });
+    autoAct('settings', b).then(ok => ok && toast('Settings saved', 'ok'));
+  });
+  if (a.job.running) setTimeout(() => S.tab === 'auto' && loadAuto(), 2500);
+}
+
 // ---- start --------------------------------------------------------------------------------------------------
 try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) { /* ignore */ }
 (async function start() {
@@ -827,6 +916,7 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   setInterval(loadFunds, 20000);
   setInterval(() => { if (document.hidden) return; if (S.tab === 'orders') loadOrders(); if (S.tab === 'positions') loadPositions(); }, 2500);
   setInterval(() => { if (!document.hidden && S.tab === 'chain') loadChain(false); }, 3500);
+  setInterval(() => { if (!document.hidden && S.tab === 'auto') loadAuto(); }, 15000);
   setInterval(() => { if (!document.hidden && S.tab !== 'orders') loadOrders(); }, 10000);
   pollQuotes();
 })();

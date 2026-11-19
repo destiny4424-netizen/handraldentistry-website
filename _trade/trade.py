@@ -24,6 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import dhan as dhanlib                                  # noqa: E402
 import insights                                         # noqa: E402
+from autotrader import AutoTrader                       # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
 VERSION = "17 Nov 2026 · first version"
@@ -315,6 +316,9 @@ def place(b):
     if loss_lim and pnl <= -loss_lim and not reduces_position(o, positions):
         return 400, {"error": f"Today's P&L is {insights.rupees(pnl)}, past your daily loss limit of "
                               f"{insights.rupees(loss_lim)}. Only orders that close a position are allowed today."}
+    if BOT and BOT.hands_off() and not reduces_position(o, positions):
+        return 400, {"error": "Hands off: the auto-trader is on, so by hand you can only close positions. "
+                              "Pause the bot (or turn Hands off off after the market closes) to trade yourself."}
     sig = (o["securityId"], o["transactionType"], o["quantity"], o["price"], o["orderType"])
     t = time.time()
     if t - RECENT.get(sig, 0) < 4 and not b.get("repeat_ok"):
@@ -522,6 +526,22 @@ def candles(key, tf):
     return {"rows": [[int(a), o, h, l, c, v] for a, o, h, l, c, v in zip(*(d[k] for k in ks))]}
 
 
+# ---- auto-trader ------------------------------------------------------------------------------
+BOT = None
+
+
+def bot_loop():
+    time.sleep(8)
+    while True:
+        try:
+            if D.ready and INST.by_key:
+                want([p["key"] for p in BOT.s["positions"]] + [x["key"] for x in BOT.s["setups"]])
+                BOT.tick()
+        except Exception:
+            traceback.print_exc()
+        time.sleep(20)
+
+
 # ---- web server ------------------------------------------------------------------------------
 FAILED = {}
 
@@ -721,6 +741,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, r)
         if path == "/api/killswitch":
             return self.send(200, D.kill_switch_status())
+        if path == "/api/auto":
+            return self.send(200, BOT.view())
         if path == "/api/audit":
             try:
                 lines = AUDIT.read_text().splitlines()[-100:]
@@ -834,6 +856,31 @@ class Handler(BaseHTTPRequestHandler):
                      for w in wl]
             save_settings(watchlists=clean)
             return self.send(200, {"ok": True})
+        if path.startswith("/api/auto/"):
+            act = path[len("/api/auto/"):]
+            err = ""
+            if act == "arm":
+                err = BOT.arm(bool(b.get("on")))
+            elif act == "mode":
+                err = BOT.set_mode(str(b.get("mode")), str(b.get("confirm") or ""))
+            elif act == "settings":
+                err = BOT.update_settings(b)
+            elif act == "backtest":
+                if BOT.job["running"]:
+                    err = "The backtest is already running."
+                else:
+                    threading.Thread(target=BOT.run_backtest, daemon=True).start()
+            elif act == "close-all":
+                if b.get("confirm") != "CLOSE":
+                    err = "Type CLOSE to confirm."
+                else:
+                    err = BOT.close_all()
+            else:
+                return self.send(404, {"error": "No such action"})
+            if err:
+                return self.send(400, {"error": err})
+            audit("auto_action", action=act, body={k: v for k, v in b.items() if k != "confirm"})
+            return self.send(200, {"ok": True, "auto": BOT.view()})
         if path == "/api/insights/sync":
             threading.Thread(target=sync, kwargs={"full": bool(b.get("full"))}, daemon=True).start()
             return self.send(200, {"ok": True})
@@ -873,7 +920,9 @@ def main():
             save_settings(client_id=mockdhan.CLIENT, access_token=mockdhan.TOKEN)
     pick_token()
     INST.load(force=DEMO)
-    for fn in (keep_token, feed, sync_loop, instruments_loop):
+    global BOT
+    BOT = AutoTrader(str(DATA), D, INST, QUOTES, now, audit, demo=DEMO)
+    for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True
