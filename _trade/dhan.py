@@ -171,6 +171,30 @@ class Dhan:
     def orders(self):
         return _list(self.call("GET", "/orders"))
 
+    def order(self, order_id):
+        d = self.call("GET", f"/orders/{order_id}")
+        if isinstance(d, list):
+            d = d[0] if d else {}
+        return d or {}
+
+    # Forever (GTT) orders: stay at Dhan until triggered or cancelled, across days.
+    def place_forever(self, o):
+        body = {"orderFlag": o.get("orderFlag", "SINGLE"), "transactionType": o["transactionType"],
+                "exchangeSegment": o["exchangeSegment"], "productType": o["productType"], "orderType": o["orderType"],
+                "validity": o.get("validity", "DAY"), "securityId": str(o["securityId"]), "quantity": int(o["quantity"]),
+                "disclosedQuantity": 0, "price": float(o["price"]), "triggerPrice": float(o["triggerPrice"]),
+                "price1": float(o.get("price1") or 0), "triggerPrice1": float(o.get("triggerPrice1") or 0),
+                "quantity1": int(o.get("quantity1") or 0)}
+        if o.get("correlationId"):
+            body["correlationId"] = o["correlationId"]
+        return self.call("POST", "/forever/orders", body)
+
+    def cancel_forever(self, order_id):
+        return self.call("DELETE", f"/forever/orders/{order_id}")
+
+    def forever_orders(self):
+        return _list(self.call("GET", "/forever/orders"))
+
     def super_orders(self):
         return _list(self.call("GET", "/super/orders"))
 

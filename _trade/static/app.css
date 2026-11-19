@@ -221,3 +221,4 @@ body.login { display: grid; place-items: center; min-height: 100vh; padding: 16p
 .formrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (max-width: 480px) { .formrow { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
 code { background: var(--line); padding: 1px 5px; border-radius: 4px; }
+button:disabled { opacity: .45; cursor: not-allowed; }

@@ -33,6 +33,65 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
+## Auto-trader (the Auto tab)
+It trades for you, within hard limits. It is built for ₹1.5 lakh of capital, the top one or two setups only,
+and MTF.
+
+**The setup** is the scanner's Swing rule set (`_scanner/swing.py`, imported as is):
+- a daily-chart uptrend
+- price back in an imbalance zone (FVG, inverse FVG, BPR or gap) and holding it
+- a price-action trigger: a hammer, a bullish engulfing or a strong close
+
+The bot only buys, because MTF can't be sold short.
+
+**Each trading day:**
+- **3:10 PM:** it scores every liquid F&O stock on today's forming daily candle and keeps only the best 1–2 that
+  reach the minimum score. The backtest chooses that score. A setup stays valid for 3 sessions.
+- **9:16 AM:** it places a buy stop-limit order on MTF, just above the trigger day's high. It doesn't chase: if the
+  stock opened more than half the risk above the entry, it waits.
+- **When a buy fills:** a stop-loss for the whole position goes to Dhan at once, as a **Forever (GTT)** order. It
+  stays at the exchange even if the server is down. If Dhan refuses the GTT, a day stop-loss order is used instead
+  and placed again every morning.
+- **Every 20 seconds while the market is open:**
+  - At T1, half is sold and the stop moves to cost. At T2, the rest is sold.
+  - After 10 sessions, anything left is sold at 3:15 PM.
+  - Before it sells, it cancels the stop and checks whether the stop had already filled, so a position is never
+    sold twice.
+  - If you sell a bot position yourself, the bot notices and books it.
+
+**Size and limits:**
+- 1% of capital is at risk per trade: shares = risk ÷ distance to the stop.
+- Each position is at most 1× capital, and all positions together at most 2×. That's where MTF's margin is used.
+  The leverage doesn't change the risk: the stop does.
+- At most 2 open positions.
+- After a drawdown of 8% of capital, the bot stops itself.
+- **Settings and mode are locked while the market is open (9:15–3:30).** Pause and Close all always work.
+- **Hands off** (on by default): while the bot is on, manual orders in this app can only close positions. Pausing
+  mid-day doesn't lift it until the close.
+
+**Edge check (backtest):**
+- Once a week (Saturday), and at the very start, it downloads about 2 years of daily candles for every liquid F&O
+  stock. It replays the bot exactly: same entries, stop first when a day touches both stop and target, 0.25%
+  delivery costs plus MTF interest (0.04% a day).
+- It tries minimum scores 0–70 on the earlier two thirds of the days and picks the best by ₹ a day. Then it checks
+  that pick on the last third, which wasn't used to choose. The pick passes only if all of these hold:
+  - the later days made money
+  - at least 20 trades on the later days
+  - a profit factor of 1.15 or more on the later days
+  - the later days' profit per trade is clearly above zero (t-stat ≥ 1.65)
+  - most of the other scores also made money on the later days
+- On 10 sets of pure random prices (no edge exists), it rejected all 10.
+
+**Paper first:** the bot starts in PAPER mode: live prices, no orders. **Go live** unlocks only when:
+- the edge check has passed
+- 10 paper sessions are done
+- you type `LIVE`, after the close
+
+If a later weekly backtest shows no edge, the bot goes back to paper once it has no open positions.
+
+The bot's state and log are in `autotrader.json` in the data folder. Its daily candles are in
+`daily-history.json`.
+
 ## Safety checks (before anything reaches Dhan)
 - The instrument, side, product, order type and quantity must make sense. F&O quantity must be a whole number of
   lots. Prices are rounded to the tick. A stop-loss trigger must be on the right side of its price. A super order
@@ -125,5 +184,6 @@ insights maths.
 - `dhan.py`: Dhan v2 REST client (orders, super orders, portfolio, funds, quotes, option chain, charts)
 - `instruments.py`: Dhan's scrip master, search, option-chain lookups
 - `insights.py`: round trips, statistics, habits
+- `autotrader.py`: the auto-trader (swing on MTF), its backtest and edge check
 - `static/`: the app (HTML, CSS, JavaScript)
 - `deploy/`: droplet installer, updater, web address (Caddy) and systemd units

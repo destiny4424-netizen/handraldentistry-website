@@ -299,7 +299,9 @@ If something ever looks wrong: `systemctl status orderblock-scanner` or
 `_trade/` is a personal trading app on your Dhan account, in its own service, separate from the scanner.
 It covers every stock, index, future and option. It has option chains and **places real orders**, always after a
 confirm screen and safety checks. It shows your positions, holdings and funds, and **Insights**: your own trading
-history from Dhan, your real P&L after charges, and the habits that cost you money. Details: `_trade/README.md`.
+history from Dhan, your real P&L after charges, and the habits that cost you money. The **Auto** tab trades for you:
+swing buys on MTF, the top one or two setups only, 1% risk each, with the stop held at Dhan. It starts on paper, and
+goes live only after its backtest shows an edge on unseen days and 10 paper sessions. Details: `_trade/README.md`.
 
 ### One-time setup on the droplet
 ```
