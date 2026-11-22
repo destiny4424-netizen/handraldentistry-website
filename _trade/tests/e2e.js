@@ -98,8 +98,10 @@ function check(ok, what) {
   await page.fill('#mdPrice', newPrice);
   await page.click('#mdGo');
   await page.waitForSelector('.toast.ok');
-  await page.waitForTimeout(700);
-  check((await page.textContent('#orders')).includes(Number(newPrice).toLocaleString('en-IN', {minimumFractionDigits: 2})), 'order modified');
+  const want = Number(newPrice).toLocaleString('en-IN', {minimumFractionDigits: 2});
+  const modified = await page.waitForFunction(w => document.querySelector('#orders').textContent.includes(w), want, {timeout: 10000})
+    .then(() => true, () => false);
+  check(modified, 'order modified');
   await page.click('[data-cancel]');
   await page.waitForFunction(() => !document.querySelector('[data-cancel]'), null, {timeout: 8000});
   check(true, 'order cancelled');
@@ -169,6 +171,32 @@ function check(ok, what) {
   await page.click('#lmLoss', {clickCount: 3});
   await page.fill('#lmLoss', '0');
   await page.click('#lmSave');
+
+  // Market tab: gainers, losers, 15-min breakouts, sectors; tap a stock to trade it
+  await page.click('#tabs button[data-tab="market"]');
+  await page.waitForSelector('#mkList .item[data-key]', {timeout: 30000});
+  check((await page.$$('#mkIdx .mk-card')).length >= 4, 'market: index cards');
+  const g = await page.$$eval('#mkList .chg', xs => xs.map(x => parseFloat(x.textContent)));
+  check(g.length > 3 && g.every((v, i) => i === 0 || v <= g[i - 1]), 'market: top gainers in order');
+  await shot('24-market-gainers');
+  await page.click('#mkTabs button[data-m="losers"]');
+  const l = await page.$$eval('#mkList .chg', xs => xs.map(x => parseFloat(x.textContent)));
+  check(l.every((v, i) => i === 0 || v >= l[i - 1]), 'market: top losers in order');
+  await page.click('#mkTabs button[data-m="breakouts"]');
+  await page.waitForFunction(async () => {
+    if (/BREAK/.test(document.querySelector('#mkList').textContent)) return true;
+    await loadMarket(); return false;
+  }, null, {timeout: 120000, polling: 3000});
+  check(true, 'market: 15-minute breakouts listed');
+  await shot('25-market-breakouts');
+  await page.click('#mkTabs button[data-m="sectors"]');
+  check((await page.textContent('#mkList')).includes('Banks'), 'market: sectors');
+  await page.click('#mkTabs button[data-m="buildup"]');
+  await page.click('#mkTabs button[data-m="gainers"]');
+  await page.click('#mkList .item[data-key]');
+  await page.waitForSelector('#shBuy');
+  check(true, 'market: tapping a stock opens it to trade');
+  await page.click('.sh-close');
 
   // Rules mode: level first, wait for the reaction, risk first, the daily plan and journal
   await apiPost('/api/rules/settings', {on: true, confirm_default: true});

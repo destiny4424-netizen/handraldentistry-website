@@ -28,9 +28,10 @@ from autotrader import AutoTrader                       # noqa: E402
 from rules import Rules                                 # noqa: E402
 from webpush import Push                                # noqa: E402
 from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
+from movers import Movers                               # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "22 Nov 2026 · phone notifications, PIN lock"
+VERSION = "23 Nov 2026 · Market tab"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -626,6 +627,7 @@ def bot_loop():
 # ---- phone notifications --------------------------------------------------------------------
 PUSH = None
 ALERTS = None
+MOVERS = None
 
 
 def alerts_loop():
@@ -876,6 +878,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, BOT.view())
         if path == "/api/pin":
             return self.send(200, {"set": pin_set(), "hours": PIN_HOURS})
+        if path == "/api/market":
+            return self.send(200, MOVERS.snapshot())
         if path == "/api/push":
             return self.send(200, {"available": PUSH.available(), "key": PUSH.public_key(),
                                    "phones": [{"device": x["device"], "since": x["since"], "endpoint": x["endpoint"]}
@@ -1165,6 +1169,9 @@ def main():
     PUSH = Push(str(DATA), lambda: SETTINGS, save_settings,
                 os.environ.get("MT_PUBLIC_URL") or "https://localhost")
     ALERTS = Alerts(str(DATA), PUSH, now)
+    global MOVERS
+    MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {})
+    threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()
     for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)

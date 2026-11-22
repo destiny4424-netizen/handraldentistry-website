@@ -36,6 +36,25 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
+## Market tab
+What's moving among the liquid F&O stocks (about 200, those with futures). Tap any stock to open it and trade.
+- **Indices** (NIFTY, BANK NIFTY, FIN NIFTY, MIDCAP SELECT, SENSEX, VIX) and **breadth** (how many are up or down).
+- **Top gainers / top losers:** 15 each by % change today, with volume against usual.
+- **15-min breakouts:** the first 15-minute candle (9:15–9:30) is the range. A later 15-minute candle closing above
+  its high (or below its low) is a breakout (breakdown), and so is a close through yesterday's high or low. Each
+  shows the time, how far beyond the level, and the candle's volume against the day's average. Newest first.
+  Re-checked 20 seconds after every 15-minute candle closes; outside market hours it shows the last session.
+- **Volume shockers:** today's volume against the 20-day average, adjusted for how much of the session has gone
+  (2× or more).
+- **52-week high / low:** new ones today, and stocks within 2% of one.
+- **OI build-up:** current-month futures, price and open interest against yesterday: long build-up, short
+  build-up, short covering, long unwinding.
+- **Sectors:** the average % change of each sector's F&O stocks (the scanner's sector list).
+
+Prices come in one request per kind, refreshed every 20 seconds while the tab is open. The 15-minute candles take
+about a minute for all stocks. Yesterday's futures OI is read once a day. The daily candles (20-day volume, 52-week)
+are the auto-trader's, downloaded each morning. `movers.py`.
+
 ## Phone notifications and the PIN lock (Account, at the top)
 **Notifications** reach the phone even when the app is closed. They use Web Push: iPhone (iOS 16.4+) only in the
 home-screen app, so first Safari → Share → Add to Home Screen, open the app from that icon, then Account → Turn on
@@ -250,6 +269,7 @@ insights maths.
 - `insights.py`: round trips, statistics, habits
 - `autotrader.py`: the auto-trader (swing on MTF), its backtest and edge check
 - `rules.py`: Rules mode: key levels, the order checks, confirmation, plan and journal
+- `movers.py`: the Market tab (gainers, losers, breakouts, volume, 52-week, OI, sectors)
 - `webpush.py`: Web Push (VAPID + aes128gcm); `alerts.py`: what gets notified; `static/sw.js`: the service worker
 - `static/`: the app (HTML, CSS, JavaScript)
 - `deploy/`: droplet installer, updater, web address (Caddy) and systemd units
