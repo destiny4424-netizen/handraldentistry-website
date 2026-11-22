@@ -108,6 +108,9 @@ function check(ok, what) {
   await page.waitForSelector('[data-exit]');
   await page.waitForTimeout(1500);
   await shot('7-positions');
+  const posText = await page.textContent('#tab-positions');
+  check(/₹[\d,]+\.\d\d/.test(await page.textContent('#pnlCard')) && /@ ₹[\d,]+\.\d\d · LTP ₹[\d,]+\.\d\d/.test(posText),
+    'positions show rupees and paise (P&L, average, LTP)');
   await page.click('[data-exit]');
   await page.waitForSelector('#tkReview');
   check((await page.textContent('#sheetBody')).includes('Closing your position'), 'exit opens a closing ticket');
