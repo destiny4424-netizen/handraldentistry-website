@@ -693,9 +693,17 @@ def daily_series(i, frm, to):
         DAILY[key] = [[r[0]] + [x * scale for x in r[1:5]] + [r[5]] for r in out]
     rows = [r for r in DAILY[key] if frm <= r[0].isoformat() < to]
     ts = lambda d: int(datetime(d.year, d.month, d.day, tzinfo=IST).timestamp())
-    return {"timestamp": [ts(r[0]) for r in rows], "open": [round(r[1], 2) for r in rows],
-            "high": [round(r[2], 2) for r in rows], "low": [round(r[3], 2) for r in rows],
-            "close": [round(r[4], 2) for r in rows], "volume": [r[5] for r in rows]}
+    out = {"timestamp": [ts(r[0]) for r in rows], "open": [round(r[1], 2) for r in rows],
+           "high": [round(r[2], 2) for r in rows], "low": [round(r[3], 2) for r in rows],
+           "close": [round(r[4], 2) for r in rows], "volume": [r[5] for r in rows]}
+    if i["kind"].startswith("FUT"):                      # futures: open interest that drifts day to day
+        rng = random.Random(zlib.crc32(i["id"].encode()))
+        oi, ois = 2_000_000, []
+        for _ in rows:
+            oi = max(100_000, oi * (1 + rng.gauss(0, 0.04)))
+            ois.append(int(oi))
+        out["open_interest"] = ois
+    return out
 
 
 def check_order(b, super_=False):

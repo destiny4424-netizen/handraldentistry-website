@@ -23,6 +23,7 @@
 <div id="banner" class="banner hidden"></div>
 <nav class="tabs" id="tabs">
   <button data-tab="watch" class="on"><i>☰</i><span>Watchlist</span></button>
+  <button data-tab="market"><i>▲</i><span>Market</span></button>
   <button data-tab="chain"><i>⛓</i><span>Options</span></button>
   <button data-tab="orders"><i>⇄</i><span>Orders</span><b id="ordersBadge" class="badge hidden"></b></button>
   <button data-tab="positions"><i>◧</i><span>Positions</span></button>
@@ -38,6 +39,18 @@
     <div class="wl-head"><div id="wlTabs" class="chips"></div><button id="wlEdit" class="ghost sm">Edit</button></div>
     <div id="wl" class="list"></div>
     <div id="wlEmpty" class="empty hidden">This list is empty. Search above and tap ＋ to add stocks, indices, futures or options.</div>
+  </section>
+  <section id="tab-market" class="tab">
+    <div id="mkIdx" class="mk-idx"></div>
+    <div id="mkBreadth"></div>
+    <div class="chips scroll" id="mkTabs">
+      <button data-m="gainers" class="on">Top gainers</button><button data-m="losers">Top losers</button>
+      <button data-m="breakouts">15-min breakouts</button><button data-m="volume">Volume shockers</button>
+      <button data-m="highs">52-week high</button><button data-m="lows">52-week low</button>
+      <button data-m="buildup">OI build-up</button><button data-m="sectors">Sectors</button>
+    </div>
+    <div id="mkNote" class="muted small" style="margin:8px 0"></div>
+    <div id="mkList" class="list"></div>
   </section>
   <section id="tab-chain" class="tab">
     <div class="chain-head">

@@ -211,6 +211,7 @@ function showTab(t) {
   if (t === 'insights') loadInsights();
   if (t === 'account') loadAccount();
   if (t === 'auto') loadAuto();
+  if (t === 'market') loadMarket();
   window.scrollTo(0, 0);
 }
 $('#tabs').onclick = e => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); };
@@ -1115,6 +1116,66 @@ async function openJournal(day) {
   };
 }
 
+// ---- market: gainers, losers, breakouts, volume, 52-week, OI, sectors -------------------------------------
+S.mk = 'gainers';
+$('#mkTabs').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.mk = b.dataset.m; $$('#mkTabs button').forEach(x => x.classList.toggle('on', x === b)); renderMarket(); };
+async function loadMarket() {
+  try { S.market = await api('/api/market'); } catch (e) { $('#mkList').innerHTML = `<div class="item muted">${esc(e.message)}</div>`; return; }
+  renderMarket();
+}
+function pctSpan(v) { return v === null || v === undefined ? '–' : `<span class="${cls(v)}">${v > 0 ? '+' : ''}${Number(v).toFixed(2)}%</span>`; }
+function renderMarket() {
+  const m = S.market; if (!m) return;
+  if (m.error) { $('#mkList').innerHTML = `<div class="item muted">${esc(m.error)}</div>`; return; }
+  $('#mkIdx').innerHTML = m.indices.map(i => `<div class="mk-card" data-key="${esc(i.key)}"><div class="small muted">${esc(i.name)}</div>
+    <b>${px(i.ltp)}</b><div class="small">${pctSpan(i.pct)}</div></div>`).join('');
+  const b = m.breadth, tot = b.up + b.down + b.flat || 1;
+  $('#mkBreadth').innerHTML = `<div class="mk-breadth"><div class="small"><span class="up">▲ ${b.up} up</span> · <span class="down">▼ ${b.down} down</span> · ${b.flat} flat <span class="muted">(${m.count} F&amp;O stocks · ${esc(m.at)})</span></div>
+    <div class="mk-bar"><i class="u" style="width:${100 * b.up / tot}%"></i><i class="d" style="width:${100 * b.down / tot}%"></i></div></div>`;
+  const row = (r, right, sub) => `<div class="item" data-key="${esc(r.key)}"><div class="grow"><div class="name">${esc(r.sym)} <span class="tag">${esc(r.sector)}</span></div>
+      <div class="sub">${sub || ''}</div></div><div class="right"><div class="ltp">₹${px(r.ltp)}</div><div class="chg">${right}</div></div></div>`;
+  let html = '', note = '';
+  const k = S.mk;
+  if (k === 'gainers' || k === 'losers') {
+    html = m[k].map(r => row(r, pctSpan(r.pct), `${r.chg > 0 ? '+' : ''}₹${px(r.chg)}${r.rvol ? ` · volume ${r.rvol}× usual` : ''}`)).join('');
+  } else if (k === 'volume') {
+    html = m.volume.map(r => row(r, `<b>${r.rvol}×</b> volume`, `${pctSpan(r.pct)} · ${big(r.vol)} traded`)).join('');
+    note = 'Today\'s volume against the 20-day average, adjusted for how much of the day has gone. 2× or more.';
+    if (!m.daily_ready) note = 'Waiting for the daily candles (the auto-trader downloads them; a few minutes after the first start).';
+  } else if (k === 'highs' || k === 'lows') {
+    const hi = k === 'highs';
+    html = m[k].map(r => row(r, pctSpan(r.pct), (hi ? r.new_high : r.new_low) ? `<b class="${hi ? 'up' : 'down'}">New 52-week ${hi ? 'high' : 'low'} today</b>` :
+      `${Math.abs(hi ? r.from_high_pct : r.from_low_pct).toFixed(2)}% from the 52-week ${hi ? 'high' : 'low'} ₹${px(hi ? r.hi52 : r.lo52)}`)).join('');
+    note = `New 52-week ${hi ? 'highs' : 'lows'} today, and stocks within 2% of one.`;
+    if (!m.daily_ready) note = 'Waiting for the daily candles (a few minutes after the first start).';
+  } else if (k === 'breakouts') {
+    html = (m.breakouts || []).map(x => `<div class="item" data-key="${esc(x.key)}"><div class="grow">
+      <div class="name">${esc(x.sym)} <span class="pill ${x.side === 'up' ? 'ok' : 'bad'}">${x.side === 'up' ? '▲ BREAKOUT' : '▼ BREAKDOWN'}</span></div>
+      <div class="sub">${esc(x.at)} candle closed ${x.side === 'up' ? 'above' : 'below'} ${esc(x.level_name)} ₹${px(x.level)} · ${x.vol_x}× the day's average volume</div></div>
+      <div class="right"><div class="ltp">₹${px(x.close)}</div><div class="chg ${x.side === 'up' ? 'up' : 'down'}">${x.beyond_pct > 0 ? '+' : ''}${x.beyond_pct}% beyond</div></div></div>`).join('');
+    note = `The first 15-minute candle (9:15–9:30) is the range; a later 15-minute close above its high (or below its low) is a breakout. Also closes through yesterday's high or low. Newest first.${m.breakouts_at ? ' Checked at ' + m.breakouts_at + '.' : ''}${m.job ? ' ' + m.job + '…' : ''}`;
+  } else if (k === 'buildup') {
+    const order = ['Long build-up', 'Short build-up', 'Short covering', 'Long unwinding'];
+    const what = {'Long build-up': 'price ↑ OI ↑ (fresh buying)', 'Short build-up': 'price ↓ OI ↑ (fresh selling)',
+      'Short covering': 'price ↑ OI ↓ (shorts exiting)', 'Long unwinding': 'price ↓ OI ↓ (longs exiting)'};
+    html = order.filter(o => (m.buildup[o] || []).length).map(o => `<div class="item" style="cursor:default;background:var(--bg2)"><b>${o}</b> <span class="muted small">${what[o]}</span></div>` +
+      m.buildup[o].map(r => row(r, pctSpan(r.pct), `futures OI ${r.oi_pct > 0 ? '+' : ''}${r.oi_pct}% · ${big(r.oi)}`)).join('')).join('');
+    note = 'Current-month futures: price and open interest against yesterday.';
+    if (!m.oi_ready) note = 'Reading yesterday\'s futures open interest (about a minute after the start).' + (m.job ? ' ' + m.job + '…' : '');
+  } else if (k === 'sectors') {
+    const mx = Math.max(0.5, ...m.sectors.map(s => Math.abs(s.pct)));
+    html = `<div class="item" style="cursor:default;display:block"><table class="bars">${m.sectors.map(s => `<tr><td class="l">${esc(s.name)}<div class="small muted">${s.up}/${s.n} up</div></td>
+      <td class="bar"><div class="wrap"><div class="half neg">${s.pct < 0 ? `<div class="b" style="width:${Math.abs(s.pct) / mx * 100}%;background:var(--down)"></div>` : ''}</div>
+      <div class="half">${s.pct > 0 ? `<div class="b" style="width:${s.pct / mx * 100}%;background:var(--up)"></div>` : ''}</div></div></td>
+      <td class="r">${pctSpan(s.pct)}</td></tr>`).join('')}</table></div>`;
+    note = 'Average % change of each sector\'s F&O stocks today.';
+  }
+  $('#mkNote').innerHTML = note;
+  $('#mkList').innerHTML = html || '<div class="item muted">Nothing here right now.</div>';
+}
+$('#mkList').onclick = e => { const r = e.target.closest('[data-key]'); if (r && r.dataset.key) openInstrument(r.dataset.key); };
+$('#mkIdx').onclick = e => { const r = e.target.closest('[data-key]'); if (r) openInstrument(r.dataset.key); };
+
 // ---- auto-trader ----------------------------------------------------------------------------------------------
 async function autoAct(act, body) {
   try { const r = await api('/api/auto/' + act, body || {}); renderAuto(r.auto); return true; }
@@ -1210,7 +1271,7 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   if (S.pinSet && !pinToken()) showLock();
   swReg();
   const h = location.hash.replace('#', '');
-  if (['watch', 'chain', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
+  if (['watch', 'market', 'chain', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
   if (h === 'journal') setTimeout(() => openJournal(), 800);
   await loadStatus();
   renderWlTabs(); renderWl();
@@ -1222,6 +1283,7 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   setInterval(() => { if (document.hidden) return; if (S.tab === 'orders') loadOrders(); if (S.tab === 'positions') loadPositions(); }, 2500);
   setInterval(() => { if (!document.hidden && S.tab === 'chain') loadChain(false); }, 3500);
   setInterval(() => { if (!document.hidden && S.tab === 'auto') loadAuto(); }, 15000);
+  setInterval(() => { if (!document.hidden && S.tab === 'market') loadMarket(); }, 20000);
   setInterval(() => { if (!document.hidden && S.tab !== 'orders') loadOrders(); }, 10000);
   pollQuotes();
 })();
