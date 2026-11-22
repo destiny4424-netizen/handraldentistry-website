@@ -1,4 +1,4 @@
-"""Dhan v2 REST client for Meridian Trade (orders, portfolio, funds, quotes, option chain).
+"""Dhan v2 REST client for Handral Trading Desk (orders, portfolio, funds, quotes, option chain).
 
 Request formats follow Dhan's official Python library (dhanhq 2.3): every request body
 carries dhanClientId, headers are access-token and client-id. Errors come back as

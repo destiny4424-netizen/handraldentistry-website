@@ -1,5 +1,5 @@
 'use strict';
-/* Meridian Trade: the app in the browser. Talks only to its own server (/api/...), which talks to Dhan. */
+/* Handral Trading Desk: the app in the browser. Talks only to its own server (/api/...), which talks to Dhan. */
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];

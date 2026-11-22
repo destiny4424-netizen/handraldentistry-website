@@ -32,6 +32,8 @@ function check(ok, what) {
   await page.waitForSelector('#wl .item');
   await page.waitForFunction(() => [...document.querySelectorAll('#wl .ltp')].some(e => /\d/.test(e.textContent)), null, {timeout: 10000});
   check(true, 'watchlist shows live prices');
+  await page.waitForTimeout(3000);                         // the plan card has loaded by now
+  check(!(await page.textContent('#wl')).includes('NaN'), 'watchlist changes are numbers (no NaN)');
   await shot('1-watchlist');
 
   // search and add to the watchlist
