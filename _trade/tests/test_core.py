@@ -162,6 +162,24 @@ class Orders(unittest.TestCase):
         self.assertEqual(e.exception.code, "DH-901")
 
 
+class Positions(unittest.TestCase):
+    def test_pnl_is_dhans_own(self):
+        """The owner's case (22 Nov): ASIANPAINT 2640 CE, 1,750 @ 87.96, LTP 69.80. Dhan said −₹31,774.99;
+        working it out from the multiplier field showed −₹3,17,74,995."""
+        k = trade.INST.search("nifty 26000 ce")[0]["key"]
+        seg, sid = k.split(":")
+        trade.QUOTES[k] = {"ltp": 69.80, "t": time.time()}
+        pos = [{"exchangeSegment": seg, "securityId": sid, "netQty": 1750, "buyAvg": 87.95714, "sellAvg": 0,
+                "multiplier": 1000, "realizedProfit": 0.0, "unrealizedProfit": -31774.99},
+               {"exchangeSegment": "MCX_COMM", "securityId": "440000", "netQty": 10, "buyAvg": 1523, "multiplier": 10,
+                "realizedProfit": 0.0, "unrealizedProfit": -600.0}]
+        out, keys = trade.positions_view(pos)
+        self.assertEqual(out[0]["unrealizedProfit"], -31774.99)
+        self.assertNotIn("_unreal", out[0])
+        self.assertEqual(out[0]["_ltp"], 69.80)
+        self.assertEqual(round(trade.today_pnl(out), 2), -32374.99)      # Dhan's "Overall P&L"
+
+
 def fill(t, side, qty, price, sid="1", kind="OPTIDX", product="INTRADAY", seg="NSE_FNO"):
     return {"uid": f"{t}{side}{qty}{price}{sid}", "order_id": "", "time": t, "date": t[:10], "seg": seg, "sid": sid,
             "sym": "X" + sid, "kind": kind, "product": product, "side": side, "qty": qty, "price": price,

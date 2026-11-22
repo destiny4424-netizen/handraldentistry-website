@@ -636,15 +636,14 @@ async function loadPositions() {
   S.positions = r.positions;
   S.posKeys = r.positions.filter(p => +p.netQty).map(p => p._key);
   const open = r.positions.filter(p => +p.netQty), closed = r.positions.filter(p => !+p.netQty);
-  let live = 0;
-  r.positions.forEach(p => { live += (+p.realizedProfit || 0) + (+(p._unreal ?? p.unrealizedProfit) || 0); });
+  const live = +r.pnl || 0;                                 // Dhan's own figure (booked + open)
   const lim = +r.limits.daily_loss_limit || 0;
   $('#pnlCard').innerHTML = `<div class="muted small">Today's P&amp;L</div><div class="big ${cls(live)}">${inr(live, 2)}</div>
     <div class="muted small">${open.length} open · ${closed.length} closed today</div>
     ${lim ? `<div class="meter"><i style="width:${Math.min(100, Math.max(0, -live / lim * 100))}%"></i></div>
       <div class="muted small">Daily loss limit ${inr(lim, 2)}: ${live <= -lim ? '<b class="down">reached. Only closing orders allowed.</b>' : inr(lim + Math.min(0, live), 2) + ' left'}</div>` : ''}`;
   const row = p => {
-    const net = +p.netQty, unreal = +(p._unreal ?? p.unrealizedProfit) || 0, pl = (+p.realizedProfit || 0) + unreal;
+    const net = +p.netQty, unreal = +p.unrealizedProfit || 0, pl = (+p.realizedProfit || 0) + unreal;
     const avg = net > 0 ? p.buyAvg : net < 0 ? p.sellAvg : null;
     return `<div class="item" style="cursor:default;align-items:flex-start"><div class="grow">
       <div class="name">${esc(p._name || p.tradingSymbol)} <span class="tag">${esc(p.productType)}</span></div>

@@ -284,6 +284,25 @@ def build_order(b):
     return o, it, stop, warn
 
 
+def positions_view(pos):
+    """Dhan's positions with names and the live price for display. The P&L is Dhan's own
+    (realizedProfit + unrealizedProfit): Dhan applies each contract's multiplier (MCX, currency) itself.
+    Working it out here from the "multiplier" field gave options P&L 1,000 times too big."""
+    keys = []
+    for p in pos:
+        k = f"{p.get('exchangeSegment')}:{p.get('securityId')}"
+        it = INST.get(k)
+        p["_key"] = k
+        p["_name"] = it["name"] if it else p.get("tradingSymbol")
+        p["_lot"] = it["lot"] if it else 1
+        if int(p.get("netQty") or 0):
+            keys.append(k)
+            lq = QUOTES.get(k)
+            if lq and lq.get("ltp"):
+                p["_ltp"] = lq["ltp"]
+    return pos, keys
+
+
 def reduces_position(o, positions):
     for p in positions:
         if str(p.get("securityId")) == o["securityId"] and p.get("exchangeSegment") == o["exchangeSegment"]:
@@ -761,23 +780,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/trades":
             return self.send(200, {"trades": D.trades_today()})
         if path == "/api/positions":
-            pos = D.positions()
-            keys = []
-            for p in pos:
-                k = f"{p.get('exchangeSegment')}:{p.get('securityId')}"
-                it = INST.get(k)
-                p["_key"] = k
-                p["_name"] = it["name"] if it else p.get("tradingSymbol")
-                p["_lot"] = it["lot"] if it else 1
-                if int(p.get("netQty") or 0):
-                    keys.append(k)
-                    lq = QUOTES.get(k)
-                    if lq and lq.get("ltp"):           # live P&L between Dhan's own updates
-                        net = int(p["netQty"])
-                        cost = float(p.get("buyAvg") or 0) if net > 0 else float(p.get("sellAvg") or 0)
-                        mult = float(p.get("multiplier") or 1) or 1
-                        p["_ltp"] = lq["ltp"]
-                        p["_unreal"] = round(net * (lq["ltp"] - cost) * mult, 2) if cost else p.get("unrealizedProfit")
+            pos, keys = positions_view(D.positions())
             want(keys)
             return self.send(200, {"positions": pos, "pnl": round(today_pnl(pos), 2), "limits": limits()})
         if path == "/api/holdings":
