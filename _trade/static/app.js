@@ -639,21 +639,21 @@ async function loadPositions() {
   let live = 0;
   r.positions.forEach(p => { live += (+p.realizedProfit || 0) + (+(p._unreal ?? p.unrealizedProfit) || 0); });
   const lim = +r.limits.daily_loss_limit || 0;
-  $('#pnlCard').innerHTML = `<div class="muted small">Today's P&amp;L</div><div class="big ${cls(live)}">${inr(live)}</div>
+  $('#pnlCard').innerHTML = `<div class="muted small">Today's P&amp;L</div><div class="big ${cls(live)}">${inr(live, 2)}</div>
     <div class="muted small">${open.length} open · ${closed.length} closed today</div>
     ${lim ? `<div class="meter"><i style="width:${Math.min(100, Math.max(0, -live / lim * 100))}%"></i></div>
-      <div class="muted small">Daily loss limit ${inr(lim)}: ${live <= -lim ? '<b class="down">reached. Only closing orders allowed.</b>' : inr(lim + Math.min(0, live)) + ' left'}</div>` : ''}`;
+      <div class="muted small">Daily loss limit ${inr(lim, 2)}: ${live <= -lim ? '<b class="down">reached. Only closing orders allowed.</b>' : inr(lim + Math.min(0, live), 2) + ' left'}</div>` : ''}`;
   const row = p => {
     const net = +p.netQty, unreal = +(p._unreal ?? p.unrealizedProfit) || 0, pl = (+p.realizedProfit || 0) + unreal;
     const avg = net > 0 ? p.buyAvg : net < 0 ? p.sellAvg : null;
     return `<div class="item" style="cursor:default;align-items:flex-start"><div class="grow">
       <div class="name">${esc(p._name || p.tradingSymbol)} <span class="tag">${esc(p.productType)}</span></div>
-      <div class="sub">${net ? `${net > 0 ? 'Long' : 'Short'} ${Math.abs(net).toLocaleString('en-IN')} @ ${px(avg)} · LTP <span data-q="${esc(p._key)}">${px(p._ltp)}</span>` :
-        `Closed · bought ${(+p.buyQty).toLocaleString('en-IN')} @ ${px(p.buyAvg)}, sold @ ${px(p.sellAvg)}`}</div>
+      <div class="sub">${net ? `${net > 0 ? 'Long' : 'Short'} ${Math.abs(net).toLocaleString('en-IN')} @ ₹${px(avg)} · LTP ₹<span data-q="${esc(p._key)}">${px(p._ltp)}</span>` :
+        `Closed · bought ${(+p.buyQty).toLocaleString('en-IN')} @ ₹${px(p.buyAvg)}, sold @ ₹${px(p.sellAvg)}`}</div>
       ${net ? `<div class="ord-actions"><button data-exit="${esc(p._key)}" data-net="${net}" data-prod="${esc(p.productType)}">Exit</button>
         <button data-add="${esc(p._key)}" data-net="${net}" data-prod="${esc(p.productType)}">Add</button>
         <button data-conv="${esc(p._key)}">Convert</button></div>` : ''}
-    </div><div class="right"><div class="ltp ${cls(pl)}">${inr(pl, 2)}</div>${net && p.realizedProfit ? `<div class="small muted">booked ${inr(p.realizedProfit)}</div>` : ''}</div></div>`;
+    </div><div class="right"><div class="ltp ${cls(pl)}">${inr(pl, 2)}</div>${net && p.realizedProfit ? `<div class="small muted">booked ${inr(p.realizedProfit, 2)}</div>` : ''}</div></div>`;
   };
   $('#positions').innerHTML = r.positions.length ? [...open, ...closed].map(row).join('') : '<div class="item muted">No positions today.</div>';
   $('#exitAll').classList.toggle('hidden', !open.length);
@@ -982,10 +982,10 @@ function renderAuto(a) {
     const pl = p.booked + p.left * ((p.ltp || p.entry) - p.entry);
     return `<div class="item" style="cursor:default;align-items:flex-start"><div class="grow">
       <div class="name">${esc(p.sym)} <span class="tag">MTF</span><span class="tag">${p.mode.toUpperCase()}</span></div>
-      <div class="sub">${p.left}/${p.qty} @ ${px(p.entry)} · LTP ${px(p.ltp)} · day ${p.sessions + 1} of 10</div>
-      <div class="sub">Stop ${px(p.sl)}${p.half ? ' (at cost)' : ''} · T1 ${px(p.t1)}${p.half ? ' ✓' : ''} · T2 ${px(p.t2)}
+      <div class="sub">${p.left}/${p.qty} @ ₹${px(p.entry)} · LTP ₹${px(p.ltp)} · day ${p.sessions + 1} of 10</div>
+      <div class="sub">Stop ₹${px(p.sl)}${p.half ? ' (at cost)' : ''} · T1 ₹${px(p.t1)}${p.half ? ' ✓' : ''} · T2 ₹${px(p.t2)}
         ${p.mode === 'live' ? (p.stop_kind === 'gtt' ? ' · stop held at Dhan (GTT)' : p.stop_kind === 'day' ? ' · day stop order at Dhan' : ' · <b class="down">no stop order at Dhan</b>') : ''}</div>
-    </div><div class="right"><div class="ltp ${cls(pl)}">${inr(pl)}</div></div></div>`;
+    </div><div class="right"><div class="ltp ${cls(pl)}">${inr(pl, 2)}</div></div></div>`;
   }).join('');
   const setups = a.setups.map(s => `<div class="item" style="cursor:default"><div class="grow"><div class="name">${esc(s.sym)} <span class="tag">score ${s.score}</span></div>
       <div class="sub">Buy above ${px(s.entry)} · stop ${px(s.sl)} · T1 ${px(s.t1)} · T2 ${px(s.t2)} · from ${esc(s.made)}${s.order ? ' · order #' + esc(s.order) : s.qty ? ' · paper order ' + s.qty : ''}</div>
