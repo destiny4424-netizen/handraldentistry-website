@@ -222,3 +222,9 @@ body.login { display: grid; place-items: center; min-height: 100vh; padding: 16p
 @media (max-width: 480px) { .formrow { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
 code { background: var(--line); padding: 1px 5px; border-radius: 4px; }
 button:disabled { opacity: .45; cursor: not-allowed; }
+.rules { border-color: var(--buy); }
+.rules .rtitle { font-weight: 700; font-size: 13px; color: var(--buy); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.rules .rstep { margin: 6px 0 4px; font-size: 13px; }
+.chips.lvl button { font-size: 12px; padding: 5px 10px; }
+.chips.lvl button:disabled { opacity: .4; }
+.toggle span { line-height: 1.35; }

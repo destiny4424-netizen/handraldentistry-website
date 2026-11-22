@@ -25,9 +25,10 @@ sys.path.insert(0, str(HERE))
 import dhan as dhanlib                                  # noqa: E402
 import insights                                         # noqa: E402
 from autotrader import AutoTrader                       # noqa: E402
+from rules import Rules                                 # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "17 Nov 2026 · first version"
+VERSION = "22 Nov 2026 · Rules mode, auto-trader"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -301,7 +302,28 @@ def audit(event, **kw):
         pass
 
 
-def place(b):
+def is_closing(o, positions):
+    """An order that only reduces what you already hold: an open position, or delivery shares you own."""
+    if reduces_position(o, positions):
+        return True
+    if o["transactionType"] == "SELL" and o["exchangeSegment"] in ("NSE_EQ", "BSE_EQ") and o["productType"] in ("CNC", "MTF"):
+        it = INST.get(f"{o['exchangeSegment']}:{o['securityId']}") or {}
+        try:
+            for h in D.holdings():
+                if str(h.get("securityId")) == o["securityId"] or (it and h.get("tradingSymbol") == it.get("sym")):
+                    return int(h.get("availableQty") or h.get("totalQty") or 0) >= o["quantity"]
+        except dhanlib.DhanError:
+            pass
+    return False
+
+
+def rules_level(info):
+    lv, level = info.get("levels") or {}, info.get("level")
+    return dict(level, _ukey=lv.get("ukey"), _under=lv.get("under"), _tol=lv.get("tol")) if level else None
+
+
+def place(b, internal=False, level=None):
+    """internal: an order the rules engine sends itself after a confirmation (level already checked)."""
     o, it, stop, warn = build_order(b)
     if stop:
         return 400, {"error": " ".join(stop), "problems": stop, "needs_big_ok": bool(o and o.get("_needs_big_ok"))}
@@ -311,14 +333,26 @@ def place(b):
         positions = D.positions()
     except dhanlib.DhanError:
         pass
+    opening = not is_closing(o, positions)
     loss_lim = float(lim.get("daily_loss_limit") or 0)
     pnl = today_pnl(positions)
-    if loss_lim and pnl <= -loss_lim and not reduces_position(o, positions):
+    if loss_lim and pnl <= -loss_lim and opening:
         return 400, {"error": f"Today's P&L is {insights.rupees(pnl)}, past your daily loss limit of "
                               f"{insights.rupees(loss_lim)}. Only orders that close a position are allowed today."}
-    if BOT and BOT.hands_off() and not reduces_position(o, positions):
+    if BOT and BOT.hands_off() and opening:
         return 400, {"error": "Hands off: the auto-trader is on, so by hand you can only close positions. "
                               "Pause the bot (or turn Hands off off after the market closes) to trade yourself."}
+    if RULES and opening:
+        probs, info = RULES.check(b, o, it, lim.get("max_trades_day"), internal=internal)
+        if probs:
+            return 400, {"error": " ".join(probs), "problems": probs, "rules": info}
+        level = level or info.get("level")
+        if info.get("rules") and b.get("confirm") and not internal:
+            bull = (o["transactionType"] == "BUY") != (it.get("opt") == "PE")
+            a = RULES.arm(b, o, it, rules_level(info), bull)
+            return 200, {"ok": True, "armed": a, "sym": it["name"],
+                         "message": f"Waiting for a 15-minute candle to react at {a['level']['name']} "
+                                    f"{a['level']['price']:,} on {a['under']}. Nothing is sent to Dhan until then."}
     sig = (o["securityId"], o["transactionType"], o["quantity"], o["price"], o["orderType"])
     t = time.time()
     if t - RECENT.get(sig, 0) < 4 and not b.get("repeat_ok"):
@@ -340,7 +374,9 @@ def place(b):
             msg += f" If Dhan says the IP isn't allowed, set this server's IP ({PUBLIC_IP or 'see Settings'}) as your static IP on web.dhan.co → DhanHQ Trading APIs."
         return 400, {"error": msg, "code": e.code}
     rows = r if isinstance(r, list) else [r]
-    audit("order_sent", order=clean, sym=it["sym"], reply=rows)
+    audit("order_sent", order=clean, sym=it["sym"], reply=rows, opening=opening, internal=internal)
+    if RULES:
+        RULES.record_sent(o, it, rows, level, opening, confirmed=internal)
     return 200, {"ok": True, "orders": rows, "sym": it["name"], "warnings": warn}
 
 
@@ -376,8 +412,15 @@ def preview(b):
             lim = float(limits().get("daily_loss_limit") or 0)
             pnl = today_pnl(positions)
             out["day_pnl"] = round(pnl, 2)
-            if lim and pnl <= -lim and not reduces_position(o, positions):
+            opening = not is_closing(o, positions)
+            out["opening"] = opening
+            if lim and pnl <= -lim and opening:
                 out["problems"].append("You're past today's loss limit: only closing orders are allowed.")
+            if RULES and opening:
+                probs, info = RULES.check(b, o, it, limits().get("max_trades_day"))
+                out["problems"] += probs
+                info.pop("levels", None)
+                out["rules"] = info
         except dhanlib.DhanError:
             pass
     return out
@@ -526,6 +569,23 @@ def candles(key, tf):
     return {"rows": [[int(a), o, h, l, c, v] for a, o, h, l, c, v in zip(*(d[k] for k in ks))]}
 
 
+# ---- rules mode -----------------------------------------------------------------------------
+RULES = None
+
+
+def rules_loop():
+    time.sleep(10)
+    while True:
+        try:
+            if D.ready and RULES and RULES.market_open():
+                waiting = [a for a in RULES.s["armed"] if a["status"] == "waiting"]
+                want([a["key"] for a in waiting] + [a["ukey"] for a in waiting])
+                RULES.tick()
+        except Exception:
+            traceback.print_exc()
+        time.sleep(30)
+
+
 # ---- auto-trader ------------------------------------------------------------------------------
 BOT = None
 
@@ -602,7 +662,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(data)
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                pass                                   # the browser left before the answer was ready
 
     def signed_in(self):
         if not needs_login():
@@ -743,6 +806,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, D.kill_switch_status())
         if path == "/api/auto":
             return self.send(200, BOT.view())
+        if path == "/api/rules/levels":
+            return self.send(200, dict(RULES.levels_for(q.get("key", "")), cfg=RULES.cfg()))
+        if path == "/api/rules":
+            day = RULES.today()
+            return self.send(200, {"cfg": RULES.cfg(), "armed": [a for a in RULES.s["armed"] if a["day"] == day],
+                                   "log": RULES.s["log"][:20], "locked": RULES.locked()})
+        if path == "/api/rules/plan":
+            try:
+                pos = D.positions()
+            except dhanlib.DhanError:
+                pos = []
+            wl = SETTINGS.get("watchlists") or default_watch()
+            keys = [k for w in wl for k in w.get("keys", [])]
+            return self.send(200, RULES.plan(keys, BOT.view() if BOT else None, pos, limits(), today_pnl(pos)))
+        if path == "/api/rules/journal":
+            day = q.get("day") or RULES.today()
+            card = insights.day_card(insights.round_trips(STORE.fills(since=day))[0], day)
+            v = RULES.journal_view(day, card["trades"])
+            v["summary"], v["notes"] = card["summary"], card["notes"]
+            return self.send(200, v)
         if path == "/api/audit":
             try:
                 lines = AUDIT.read_text().splitlines()[-100:]
@@ -856,6 +939,19 @@ class Handler(BaseHTTPRequestHandler):
                      for w in wl]
             save_settings(watchlists=clean)
             return self.send(200, {"ok": True})
+        if path.startswith("/api/rules/"):
+            act = path[len("/api/rules/"):]
+            if act == "settings":
+                err = RULES.update_settings(b)
+            elif act == "cancel":
+                err = "" if RULES.cancel(str(b.get("id"))) else "That order is no longer waiting."
+            elif act == "journal":
+                err = RULES.save_journal(str(b.get("day") or RULES.today())[:10], b)
+            else:
+                return self.send(404, {"error": "No such action"})
+            if err:
+                return self.send(400, {"error": err})
+            return self.send(200, {"ok": True, "cfg": RULES.cfg()})
         if path.startswith("/api/auto/"):
             act = path[len("/api/auto/"):]
             err = ""
@@ -922,7 +1018,10 @@ def main():
     INST.load(force=DEMO)
     global BOT
     BOT = AutoTrader(str(DATA), D, INST, QUOTES, now, audit, demo=DEMO)
-    for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop):
+    global RULES
+    RULES = Rules(str(DATA), D, INST, QUOTES, now, audit, demo=DEMO)
+    RULES.place_fn = place
+    for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True

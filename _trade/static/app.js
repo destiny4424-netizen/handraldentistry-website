@@ -106,6 +106,7 @@ function showTab(t) {
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   $$('.tab').forEach(s => s.classList.toggle('on', s.id === 'tab-' + t));
   if (t === 'orders') loadOrders();
+  if (t === 'watch') loadPlan();
   if (t === 'positions') loadPositions();
   if (t === 'chain') loadChain(true);
   if (t === 'insights') loadInsights();
@@ -351,16 +352,45 @@ async function openTicket(key, side, preset = {}) {
     superOn: false, target: '', sl: '', trail: '', validity: 'DAY', amo: false, slice: false, exit: !!preset.exit, priceTouched: !!preset.price};
   renderTicket();
   pollQuotes();
+  if (!preset.exit) loadTicketRules(S.ticket);
+}
+async function loadTicketRules(t) {
+  let lv;
+  try { lv = await api('/api/rules/levels?key=' + encodeURIComponent(t.key)); } catch (e) { return; }
+  if (S.ticket !== t || !lv.cfg || !lv.cfg.on) return;
+  readTicket();
+  t.rules = lv;
+  t.superOn = true;
+  if (!['LIMIT', 'MARKET'].includes(t.type)) t.type = 'LIMIT';
+  t.confirm = lv.cfg.confirm_default;
+  const near = (lv.levels || []).filter(x => x.near);
+  t.level = near.length ? near[0].id : '';
+  renderTicket();
+}
+function rulesBox(t) {
+  const lv = t.rules, c = lv.cfg;
+  if (lv.error) return `<div class="box rules"><b>Rules mode</b><div class="badbox">${esc(lv.error)}</div></div>`;
+  const near = (lv.levels || []).filter(x => x.near);
+  const maxRisk = c.capital * c.risk_pct / 100;
+  return `<div class="box rules"><div class="rtitle">Rules mode</div>
+    <div class="rstep"><b>① Level</b> <span class="muted small">on ${esc(lv.under)}${lv.on_underlying ? ' (the underlying)' : ''} · ${px(lv.ltp)} · near = within ${px(lv.tol)}</span></div>
+    <div class="chips lvl" id="tkLevels">${(lv.levels || []).slice(0, 8).map(x => `<button data-lv="${esc(x.id)}" class="${x.id === t.level ? 'on' : ''}" ${x.near ? '' : 'disabled'} title="${esc(x.detail || x.name)}">
+      ${esc(x.name)} <b>${px(x.price)}</b> <span class="small">${x.dist_pct > 0 ? '+' : ''}${x.dist_pct}%</span></button>`).join('')}</div>
+    ${near.length ? '' : '<div class="badbox">No level near the price: no trade. Wait for price to come to one of these.</div>'}
+    <label class="toggle"><input type="checkbox" id="tkConfirm" ${t.confirm ? 'checked' : ''}> <span><b>② Wait for the reaction:</b> send only after a 15-minute candle touches the level and closes back beyond it</span></label>
+    <div class="rstep"><b>③ Risk first:</b> <span id="tkRisk" class="small">set your stop-loss below; the size is worked out from it (max ₹${Math.round(maxRisk).toLocaleString('en-IN')} at risk)</span></div>
+  </div>`;
 }
 function renderTicket() {
   const t = S.ticket, it = t.it;
   const products = t.eq ? [['INTRADAY', 'Intraday'], ['CNC', 'Delivery'], ['MTF', 'MTF']] : [['INTRADAY', 'Intraday'], ['MARGIN', 'Carry (NRML)']];
-  const types = [['LIMIT', 'Limit'], ['MARKET', 'Market'], ['STOP_LOSS', 'SL'], ['STOP_LOSS_MARKET', 'SL-M']];
+  const types = t.rules ? [['LIMIT', 'Limit'], ['MARKET', 'Market']] : [['LIMIT', 'Limit'], ['MARKET', 'Market'], ['STOP_LOSS', 'SL'], ['STOP_LOSS_MARKET', 'SL-M']];
   openSheet(`<div class="ticket">
     <div class="sh-head"><div><h2>${esc(shortName(it))} ${kindTag(it)}</h2>
       <div class="muted small"><span id="tkLtp">${px(S.quotes[t.key]?.ltp)}</span> · ${esc(it.name)}</div></div>
       <button class="sh-close" aria-label="Close">✕</button></div>
     ${t.exit ? '<div class="okbox">Closing your position. Check the quantity and price, then review.</div>' : ''}
+    ${t.rules ? rulesBox(t) : ''}
     <div class="side"><button data-side="BUY" class="buy ${t.side === 'BUY' ? 'on' : ''}">BUY</button><button data-side="SELL" class="sell ${t.side === 'SELL' ? 'on' : ''}">SELL</button></div>
     <div class="seg" id="tkProd">${products.map(([v, l]) => `<button data-v="${v}" class="${t.product === v ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="seg" id="tkType">${types.map(([v, l]) => `<button data-v="${v}" class="${t.type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
@@ -372,10 +402,10 @@ function renderTicket() {
         <div class="hint">Tick ₹${it.tick}</div></div>
       <div class="field" id="fTrig"><label>Trigger price</label><input id="tkTrig" inputmode="decimal" value="${t.trigger}"></div>
     </div>
-    <label class="toggle"><input type="checkbox" id="tkSuper" ${t.superOn ? 'checked' : ''}> Add target &amp; stop-loss (Super order)</label>
+    <label class="toggle ${t.rules ? 'hidden' : ''}"><input type="checkbox" id="tkSuper" ${t.superOn ? 'checked' : ''}> Add target &amp; stop-loss (Super order)</label>
     <div id="superBox" class="fields ${t.superOn ? '' : 'hidden'}">
-      <div class="field"><label>Target price</label><input id="tkTgt" inputmode="decimal" value="${t.target}"></div>
-      <div class="field"><label>Stop-loss price</label><input id="tkSl" inputmode="decimal" value="${t.sl}"></div>
+      <div class="field"><label>Stop-loss price${t.rules ? ' <b class="down">required</b>' : ''}</label><input id="tkSl" inputmode="decimal" value="${t.sl}"></div>
+      <div class="field"><label>Target price${t.rules ? ' (optional)' : ''}</label><input id="tkTgt" inputmode="decimal" value="${t.target}"></div>
       <div class="field"><label>Trailing jump (₹, optional)</label><input id="tkTrail" inputmode="decimal" value="${t.trail}"></div>
     </div>
     <details class="box"><summary class="muted">More options</summary>
@@ -391,9 +421,11 @@ function renderTicket() {
   body.querySelector('.side').onclick = e => { const b = e.target.closest('button'); if (!b) return; readTicket(); t.side = b.dataset.side; renderTicket(); };
   $('#tkProd').onclick = e => { const b = e.target.closest('button'); if (!b) return; readTicket(); t.product = b.dataset.v; renderTicket(); };
   $('#tkType').onclick = e => { const b = e.target.closest('button'); if (!b) return; readTicket(); t.type = b.dataset.v; if (t.type !== 'LIMIT' && t.type !== 'MARKET') t.superOn = false; renderTicket(); };
-  body.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { readTicket(); t.lots = Math.max(1, (parseInt(t.lots) || 1) + +b.dataset.step); $('#tkLots').value = t.lots; syncTicketFields(); });
+  body.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { readTicket(); t.lotsTouched = true; t.lots = Math.max(1, (parseInt(t.lots) || 1) + +b.dataset.step); $('#tkLots').value = t.lots; syncTicketFields(); });
+  if ($('#tkLevels')) $('#tkLevels').onclick = e => { const b = e.target.closest('button[data-lv]'); if (!b || b.disabled) return; readTicket(); t.level = b.dataset.lv; renderTicket(); };
+  if ($('#tkConfirm')) $('#tkConfirm').onchange = () => { t.confirm = $('#tkConfirm').checked; };
   $('#tkSuper').onchange = () => { readTicket(); t.superOn = $('#tkSuper').checked; if (t.superOn && !['LIMIT', 'MARKET'].includes(t.type)) t.type = 'LIMIT'; renderTicket(); };
-  ['tkLots', 'tkPrice', 'tkTrig', 'tkTgt', 'tkSl'].forEach(id => { const el = $('#' + id); if (el) el.oninput = () => { if (id === 'tkPrice') t.priceTouched = true; readTicket(); syncTicketFields(); }; });
+  ['tkLots', 'tkPrice', 'tkTrig', 'tkTgt', 'tkSl'].forEach(id => { const el = $('#' + id); if (el) el.oninput = () => { if (id === 'tkPrice') t.priceTouched = true; if (id === 'tkLots') t.lotsTouched = true; readTicket(); syncTicketFields(); }; });
   $('#tkReview').onclick = reviewOrder;
 }
 function readTicket() {
@@ -407,8 +439,22 @@ function syncTicketFields() {
   const t = S.ticket;
   $('#fPrice').classList.toggle('hidden', t.type === 'MARKET' || t.type === 'STOP_LOSS_MARKET');
   $('#fTrig').classList.toggle('hidden', !(t.type === 'STOP_LOSS' || t.type === 'STOP_LOSS_MARKET'));
-  const qty = (parseInt(t.lots) || 0) * t.lot;
   const p = parseFloat(t.price) || S.quotes[t.key]?.ltp || 0;
+  if (t.rules && t.rules.cfg && $('#tkRisk')) {
+    const c = t.rules.cfg, sl = parseFloat(t.sl) || 0, entry = t.type === 'MARKET' ? (S.quotes[t.key]?.ltp || p) : p;
+    const maxRisk = c.capital * c.risk_pct / 100;
+    if (sl && entry && Math.abs(entry - sl) > 0) {
+      const maxLots = Math.floor(Math.floor(maxRisk / Math.abs(entry - sl)) / t.lot);
+      t.maxLots = maxLots;
+      if (!t.lotsTouched || (parseInt(t.lots) || 0) > maxLots) { t.lots = Math.max(0, maxLots); $('#tkLots').value = t.lots; }
+      const risk = (parseInt(t.lots) || 0) * t.lot * Math.abs(entry - sl);
+      $('#tkRisk').innerHTML = maxLots < 1 ? `<span class="down">Even ${t.lot > 1 ? '1 lot' : '1 share'} risks more than ₹${Math.round(maxRisk).toLocaleString('en-IN')} with this stop. Use a closer stop or skip.</span>` :
+        `risk <b>${inr(risk)}</b> of ₹${Math.round(maxRisk).toLocaleString('en-IN')} allowed · at most ${(maxLots * t.lot).toLocaleString('en-IN')} ${t.lot > 1 ? 'units' : 'shares'}`;
+    } else {
+      $('#tkRisk').textContent = `set your stop-loss below; the size is worked out from it (max ₹${Math.round(maxRisk).toLocaleString('en-IN')} at risk)`;
+    }
+  }
+  const qty = (parseInt(t.lots) || 0) * t.lot;
   $('#tkQtyHint').textContent = (t.lot > 1 ? `${qty.toLocaleString('en-IN')} units · ` : '') + (p ? `≈ ${inrShort(qty * p)}` : '');
 }
 function updateTicketQuote() {
@@ -420,7 +466,8 @@ function ticketBody(extra = {}) {
   const t = S.ticket;
   return Object.assign({key: t.key, side: t.side, qty: (parseInt(t.lots) || 0) * t.lot, product: t.product, type: t.type,
     price: parseFloat(t.price) || 0, trigger: parseFloat(t.trigger) || 0, validity: t.validity, amo: t.amo, slice: t.slice,
-    super: t.superOn ? {target: parseFloat(t.target) || 0, sl: parseFloat(t.sl) || 0, trail: parseFloat(t.trail) || 0} : null}, extra);
+    super: t.superOn ? {target: parseFloat(t.target) || 0, sl: parseFloat(t.sl) || 0, trail: parseFloat(t.trail) || 0} : null,
+    level: t.rules ? t.level : undefined, confirm: !!(t.rules && t.confirm)}, extra);
 }
 async function reviewOrder() {
   readTicket();
@@ -452,6 +499,8 @@ function showConfirm(r) {
       ${r.risk !== undefined ? `<div class="kv"><span>Money at risk to stop</span><b class="down">${inr(r.risk)}</b></div>` : ''}
       ${r.reward !== undefined ? `<div class="kv"><span>Profit at target</span><b class="up">${inr(r.reward)}${r.risk ? ` · ${(r.reward / r.risk).toFixed(1)}R` : ''}</b></div>` : ''}
     </div>
+    ${r.rules && r.rules.rules && r.rules.level ? `<div class="okbox">✓ Level: ${esc(r.rules.level.name)} ${px(r.rules.level.price)} · ✓ Stop-loss set · ✓ Size within ₹${Math.round(r.rules.risk_allowed).toLocaleString('en-IN')} risk
+      ${t.confirm ? '<br>② It waits at the server for a 15-minute candle to react at the level, then sends at market. Expires at 3 PM.' : ''}</div>` : ''}
     <div class="box">
       <div class="kv"><span>Margin needed</span><b>${m.totalMargin !== undefined ? inr(m.totalMargin) : '–'}</b></div>
       <div class="kv"><span>Available</span><b>${m.availableBalance !== undefined ? inr(m.availableBalance) : '–'}</b></div>
@@ -463,7 +512,7 @@ function showConfirm(r) {
     ${r.needs_big_ok ? `<label class="toggle"><input type="checkbox" id="bigOk"> I'm sure: this order is above my order-size limit</label>` : ''}
     ${live ? '<div class="muted small">This sends a real order to your Dhan account.</div>' : '<div class="muted small">Demo: this goes to a pretend account.</div>'}
     <div class="bs"><button class="ghost" id="cfBack" style="color:var(--text)">Edit</button>
-      <button class="go ${t.side === 'BUY' ? 'b-buy' : 'b-sell'}" id="cfGo" ${r.needs_big_ok ? 'disabled' : ''}>Place ${t.side} order</button></div>
+      <button class="go ${t.side === 'BUY' ? 'b-buy' : 'b-sell'}" id="cfGo" ${r.needs_big_ok ? 'disabled' : ''}>${r.rules && r.rules.rules && t.confirm && r.opening ? 'Wait for confirmation' : `Place ${t.side} order`}</button></div>
     <div id="cfMsg"></div>`);
   if ($('#bigOk')) $('#bigOk').onchange = () => { $('#cfGo').disabled = !$('#bigOk').checked; };
   $('#cfBack').onclick = () => renderTicket();
@@ -474,6 +523,7 @@ async function placeOrder() {
   const cid = 'mt' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   try {
     const r = await api('/api/order', ticketBody({big_ok: !!$('#bigOk')?.checked, cid}));
+    if (r.armed) { closeSheet(); toast(r.message, 'ok', 8000); showTab('orders'); return; }
     const o = (r.orders || [])[0] || {};
     closeSheet();
     toast(`Order sent: ${r.sym} · ${o.orderStatus || 'sent'}${o.orderId ? ' · #' + o.orderId : ''}`, 'ok', 6000);
@@ -488,7 +538,26 @@ async function placeOrder() {
 // ---- orders ---------------------------------------------------------------------------------------------
 const OPEN = ['PENDING', 'TRANSIT', 'TRIGGERED', 'PART_TRADED', 'PARTIALLY_FILLED', 'CONFIRM'];
 $('#orderFilter').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.orderFilter = b.dataset.f; $$('#orderFilter button').forEach(x => x.classList.toggle('on', x === b)); renderOrders(); };
+async function loadArmed() {
+  let r;
+  try { r = await api('/api/rules'); } catch (e) { return; }
+  const wait = r.armed.filter(a => a.status === 'waiting'), done = r.armed.filter(a => a.status !== 'waiting');
+  $('#armed').innerHTML = wait.length || done.length ? `<div class="section-title">Waiting for confirmation (rule ②)</div><div class="list">` +
+    wait.map(a => `<div class="item" style="cursor:default;align-items:flex-start"><div class="grow">
+      <div class="name"><span class="pill ${a.side === 'BUY' ? 'buy' : 'sell'}">${a.side}</span> ${esc(a.name)}</div>
+      <div class="sub">${a.qty.toLocaleString('en-IN')} · stop ${px(a.stop)} · at ${esc(a.level.name)} ${px(a.level.price)} on ${esc(a.under)} · since ${esc(a.at)}</div>
+      ${a.note ? `<div class="sub">${esc(a.note)}</div>` : ''}
+      <div class="ord-actions"><button class="danger" data-unarm="${esc(a.id)}">Cancel</button></div></div><div class="right"><span class="pill warn">WAITING</span></div></div>`).join('') +
+    done.slice(-5).map(a => `<div class="item" style="cursor:default"><div class="grow"><div class="name">${esc(a.name)} <span class="tag">${esc(a.status.toUpperCase())}</span></div>
+      <div class="sub">${esc(a.note || '')}</div></div></div>`).join('') + '</div>' : '';
+}
+$('#armed').onclick = async e => {
+  const b = e.target.closest('[data-unarm]'); if (!b) return;
+  try { await api('/api/rules/cancel', {id: b.dataset.unarm}); toast('Cancelled', 'ok'); } catch (er) { toast(er.message, 'bad'); }
+  loadArmed();
+};
 async function loadOrders() {
+  if (S.tab === 'orders') loadArmed();
   try { const r = await api('/api/orders'); S.lastOrders = r.orders; S.superOrders = r.super || []; renderOrders(); }
   catch (e) { $('#orders').innerHTML = `<div class="item muted">${esc(e.message)}</div>`; }
 }
@@ -738,7 +807,26 @@ function drawCurve(curve) {
 }
 
 // ---- account --------------------------------------------------------------------------------------------------
+function rulesSettings() {
+  const r = S.rulesCfg || {}, c = r.cfg || {}, dis = r.locked ? 'disabled' : '';
+  return `<label class="toggle"><input type="checkbox" id="ruOn" ${c.on ? 'checked' : ''} ${dis}> <span><b>Rules mode on</b>: every order that opens a position needs a level, a stop-loss and a size within your risk</span></label>
+    <div class="formrow"><div class="field"><label>Capital (₹)</label><input id="ruCap" inputmode="numeric" value="${c.capital ?? ''}" ${dis}></div>
+      <div class="field"><label>Risk per trade (% of capital)</label><input id="ruRisk" inputmode="decimal" value="${c.risk_pct ?? ''}" ${dis}></div>
+      <div class="field"><label>"Near a level" = within this × daily ATR</label><input id="ruNear" inputmode="decimal" value="${c.near_atr ?? ''}" ${dis}></div></div>
+    <label class="toggle"><input type="checkbox" id="ruConfirm" ${c.confirm_default ? 'checked' : ''} ${dis}> <span>Wait for the 15-minute reaction by default</span></label>
+    <div class="muted small">Trades a day: set under Safety (“Your max trades a day”). ${r.locked ? '<b>Locked while the market is open.</b>' : ''}</div>
+    <button class="ghost" id="ruSave" style="margin-top:8px" ${dis}>Save rules</button>`;
+}
+function bindRulesSettings() {
+  if (!$('#ruSave')) return;
+  $('#ruSave').onclick = async () => {
+    try { const r = await api('/api/rules/settings', {on: $('#ruOn').checked, capital: +$('#ruCap').value, risk_pct: +$('#ruRisk').value,
+      near_atr: +$('#ruNear').value, confirm_default: $('#ruConfirm').checked}); S.rulesCfg.cfg = r.cfg; toast('Rules saved', 'ok'); }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+}
 async function loadAccount() {
+  try { S.rulesCfg = await api('/api/rules'); } catch (e) { S.rulesCfg = {}; }
   const s = S.status || await api('/api/status');
   const el = $('#account');
   el.innerHTML = '<div class="muted">Loading…</div>';
@@ -779,6 +867,8 @@ async function loadAccount() {
     <div class="box"><div class="kv"><span>Dhan kill switch</span><b class="${kill ? 'down' : 'up'}">${kill ? 'ON: trading stopped for today' : 'Off'}</b></div>
       <div class="muted small">Stops ALL trading on your Dhan account for the rest of the day (Dhan's own kill switch). Close positions first.</div>
       <button class="ghost ${kill ? '' : 'danger'}" id="killBtn" style="margin-top:8px">${kill ? 'Turn kill switch off' : 'Stop trading for today'}</button></div>
+    <div class="section-title">Rules mode (your manual trades)</div>
+    <div class="box">${rulesSettings()}</div>
     <div class="section-title">Dhan login</div>
     <div class="box">
       <div class="kv"><span>Status</span><b>${s.connected ? `Connected · ${esc(s.client)}` : 'Not connected'}</b></div>
@@ -796,6 +886,7 @@ async function loadAccount() {
     <div class="box"><div class="kv"><span>Version</span><span>${esc(s.version)}</span></div>
       <div class="kv"><span>Instruments</span><span>${(s.instruments || 0).toLocaleString('en-IN')}</span></div>
       <div class="ord-actions"><button id="themeBtn">Light / dark</button><button id="logout" class="danger">Sign out</button></div></div>`;
+  bindRulesSettings();
   $('#lmSave').onclick = async () => {
     try { const r = await api('/api/settings/limits', {daily_loss_limit: +$('#lmLoss').value || 0, max_order_value: +$('#lmMax').value || 0, lots_warn: +$('#lmLots').value || 0, max_trades_day: +$('#lmTrades').value || 5});
       S.status.limits = r.limits; toast('Limits saved', 'ok'); } catch (e) { toast(e.message, 'bad'); }
@@ -815,6 +906,64 @@ async function loadAccount() {
     try { localStorage.setItem('mt-theme', next); } catch (e) { /* private mode */ }
   };
   el.querySelectorAll('.item[data-key]').forEach(i => { if (i.dataset.key) i.onclick = () => openInstrument(i.dataset.key); });
+}
+
+// ---- routine: today's plan and the journal (rule ④) -------------------------------------------------------
+async function loadPlan() {
+  let p;
+  try { p = await api('/api/rules/plan'); } catch (e) { return; }
+  S.plan = p;
+  const now = new Date(), after = now.getHours() * 60 + now.getMinutes() >= 15 * 60 + 30;
+  const open = !!S.planOpen;
+  const bits = [];
+  if (p.fix_today) bits.push(`<div class="warnbox">Yesterday you wrote: “${esc(p.fix_today)}”</div>`);
+  bits.push(`<div class="kv"><span>Trades left today</span><b>${p.trades_left} of ${p.max_trades}</b></div>`);
+  if (p.loss_left !== null) bits.push(`<div class="kv"><span>Loss you can still take</span><b class="${p.loss_left <= 0 ? 'down' : ''}">${inr(Math.max(0, p.loss_left))}</b></div>`);
+  bits.push(`<div class="kv"><span>Today's P&amp;L</span><b class="${cls(p.day_pnl)}">${inr(p.day_pnl)}</b></div>`);
+  bits.push(`<div class="kv"><span>Rules mode</span><b>${p.rules.on ? `On · ${p.rules.risk_pct}% risk = ${inr(p.rules.capital * p.rules.risk_pct / 100)}` : '<span class="down">Off</span>'}</b></div>`);
+  if (p.bot_setups.length || p.bot_positions.length) bits.push(`<div class="kv"><span>Auto-trader</span><b>${p.bot_setups.length} setup(s) waiting · ${p.bot_positions.length} open</b></div>`);
+  if (p.waiting.length) bits.push(`<div class="kv"><span>Waiting for confirmation</span><b>${p.waiting.map(a => esc(a.name)).join(', ')}</b></div>`);
+  bits.push(p.near_levels.length ? `<div class="small muted" style="margin-top:6px">At a level now (your watchlist):</div>` +
+      p.near_levels.map(n => `<div class="kv plan-lv" data-key="${esc(n.key)}"><span>${esc(n.sym)}</span><b>${esc(n.level)} ${px(n.price)} <span class="small muted">${n.dist_pct > 0 ? '+' : ''}${n.dist_pct}%</span></b></div>`).join('')
+    : '<div class="small muted" style="margin-top:6px">None of your watchlist stocks is at a level. No level, no trade: waiting is fine.</div>');
+  const jBtn = after || p.journal_done ? `<button class="${p.journal_done ? 'ghost sm' : 'primary'}" id="jrnBtn" style="${p.journal_done ? '' : 'padding:6px 12px'}">${p.journal_done ? '✓ Journal done' : "Write today's journal"}</button>` : '';
+  $('#planCard').innerHTML = `<div class="card plan" style="margin:0 0 12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <h3 style="margin:0;cursor:pointer" id="planToggle">${after ? 'After the close' : "Today's plan"} <span class="muted small">${open ? '▾' : '▸'}</span></h3>
+      <div style="display:flex;gap:8px;align-items:center">${p.streak ? `<span class="pill ok">${p.streak}-day journal streak</span>` : ''}${jBtn}</div></div>
+    ${open ? bits.join('') : `<div class="small muted" style="margin-top:4px">${p.trades_left} trades left · ${p.near_levels.length} watchlist stock(s) at a level${p.fix_today ? " · yesterday's note inside" : ''}</div>`}
+  </div>`;
+  $('#planToggle').onclick = () => { S.planOpen = !open; loadPlan(); };
+  if ($('#jrnBtn')) $('#jrnBtn').onclick = () => openJournal();
+  $$('#planCard .plan-lv').forEach(x => x.onclick = () => openInstrument(x.dataset.key));
+}
+async function openJournal(day) {
+  let v;
+  try { v = await api('/api/rules/journal' + (day ? '?day=' + day : '')); } catch (e) { return toast(e.message, 'bad'); }
+  const e = v.entry || {}, s = v.summary;
+  openSheet(`<div class="sh-head"><div><h2>Journal · ${esc(v.day)}</h2><div class="muted small">Two minutes. Same questions every day.</div></div><button class="sh-close">✕</button></div>
+    <div class="box"><div class="kv"><span>Trades</span><b>${s.trades} (${s.wins} won)</b></div>
+      <div class="kv"><span>Net P&amp;L after charges</span><b class="${cls(s.net)}">${inr(s.net)}</b></div>
+      <div class="kv"><span>Charges</span><b>${inr(s.charges)}</b></div></div>
+    ${v.trades.map(t => `<div class="box small"><div class="kv"><b>${esc(t.sym)}</b><b class="${cls(t.net)}">${inr(t.net)}</b></div>
+      <div class="muted">${esc(t.entry.slice(11, 16))} → ${esc(t.exit.slice(11, 16))} · ${esc(t.side === 'LONG' ? 'long' : 'short')} ${t.qty}</div>
+      <div>${t.in_app ? `✓ Level: ${esc(t.level || '–')} · ✓ Stop ${px(t.stop)} ${t.confirmed ? '· ✓ Waited for confirmation' : '· entered without waiting'}` : '<span class="down">Placed outside this app: no rules check</span>'}
+      ${t.avg_down ? ' · <span class="down">added to a loser</span>' : ''}</div></div>`).join('') || '<div class="muted small">No finished trades today.</div>'}
+    ${[...v.notes, ...v.auto_notes].map(n => `<div class="warnbox">${esc(n)}</div>`).join('')}
+    <div class="section-title">Did you follow your rules?</div>
+    <div class="seg" id="jFollow">${[['yes', 'Yes'], ['partly', 'Partly'], ['no', 'No']].map(([k, l]) => `<button data-v="${k}" class="${e.followed === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="field"><label>What went well?</label><input id="jGood" value="${esc(e.good || '')}" placeholder="e.g. waited for the reaction at PDL"></div>
+    <div class="field" style="margin-top:8px"><label>One thing to fix tomorrow (shown in tomorrow's plan)</label><input id="jFix" value="${esc(e.fix || '')}" placeholder="e.g. no trades before 9:30"></div>
+    <div class="field" style="margin-top:8px"><label>How did you feel while trading? (1 calm – 5 stressed)</label>
+      <div class="seg" id="jMood">${[1, 2, 3, 4, 5].map(m => `<button data-v="${m}" class="${e.mood === m ? 'on' : ''}">${m}</button>`).join('')}</div></div>
+    <button class="primary" id="jSave" style="width:100%;margin-top:12px">Save journal</button>`);
+  let followed = e.followed || '', mood = e.mood || 0;
+  $('#jFollow').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; followed = b.dataset.v; $$('#jFollow button').forEach(x => x.classList.toggle('on', x === b)); };
+  $('#jMood').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; mood = +b.dataset.v; $$('#jMood button').forEach(x => x.classList.toggle('on', x === b)); };
+  $('#jSave').onclick = async () => {
+    try { await api('/api/rules/journal', {day: v.day, followed, good: $('#jGood').value, fix: $('#jFix').value, mood}); closeSheet(); toast('Journal saved', 'ok'); loadPlan(); }
+    catch (er) { toast(er.message, 'bad'); }
+  };
 }
 
 // ---- auto-trader ----------------------------------------------------------------------------------------------
@@ -910,7 +1059,8 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
 (async function start() {
   await loadStatus();
   renderWlTabs(); renderWl();
-  loadFunds(); loadOrders();
+  loadFunds(); loadOrders(); loadPlan();
+  setInterval(() => { if (!document.hidden && S.tab === 'watch') loadPlan(); }, 120000);
   setInterval(pollQuotes, 1000);
   setInterval(loadStatus, 15000);
   setInterval(loadFunds, 20000);

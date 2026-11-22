@@ -33,6 +33,41 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
+## Rules mode (your manual trades)
+On by default. Every manual order that **opens** a position must follow four rules; closing a position is never
+blocked. It can't be switched off while the market is open (Account → Rules mode).
+
+1. **Level first.** The ticket lists the key levels of the stock, or of the underlying for futures and options:
+   - yesterday's high and low, and last week's high and low
+   - daily swing highs and lows
+   - imbalance zones (FVG, inverse FVG, BPR, gap, from the scanner's `swing.py`)
+
+   Levels within 0.15 ATR of each other are merged ("Yesterday's low +2"). You pick the one you're trading. Only
+   levels within 0.3 of a daily ATR of the price can be picked. **No level near the price, no trade.**
+2. **Wait for the reaction** (on by default). The order waits at the server, and nothing goes to Dhan, until a closed
+   15-minute candle of the underlying touches the level and closes back beyond it in the trade's direction:
+   - for a buy, a green candle closing above a support level
+   - for a sell, a red candle closing below a resistance level
+
+   Then it is sent at market, with its stop. It is resized if needed, so the risk still stays within 1%. If the stop
+   trades first, or nothing confirms by 3 PM, it is dropped. Waiting orders are listed under Orders and can be
+   cancelled.
+3. **Risk before the click.** A stop-loss is required. The quantity is worked out from it: 1% of capital (₹1,500
+   of ₹1.5 lakh) at risk, in whole lots. You can trade less, never more. Entries are Limit or Market, sent as a
+   Super order with the stop. The "trades a day" limit (Account → Safety, default 5) is enforced too.
+4. **Same routine every day.**
+   - **The plan card at the top of the Watchlist:**
+     - trades left and loss limit left
+     - yesterday's "fix tomorrow" note
+     - the auto-trader's setups
+     - orders waiting for confirmation
+     - which watchlist stocks are at a level right now
+   - **After 3:30 PM, a two-minute journal:**
+     - the day's trades, each marked with its level, its stop, whether it waited for confirmation, or "placed
+       outside this app"
+     - did you follow your rules (yes / partly / no), what went well, one thing to fix tomorrow, and how you felt
+   - The journal builds a streak of days. Kept in `rules.json` in the data folder.
+
 ## Auto-trader (the Auto tab)
 It trades for you, within hard limits. It is built for ₹1.5 lakh of capital, the top one or two setups only,
 and MTF.
@@ -171,6 +206,7 @@ python3 trade.py --demo          # pretend Dhan account on http://127.0.0.1:3050
 python3 -m unittest discover tests
 node tests/e2e.js http://127.0.0.1:3050      # with the demo running; drives the app in headless Chromium
 ```
+In the demo the market-hours lock on Rules settings is off, so everything can be tried at any time.
 `mockdhan.py` is the pretend Dhan:
 - prices move at random
 - orders fill like on an exchange, and super orders get target and stop legs
@@ -185,5 +221,6 @@ insights maths.
 - `instruments.py`: Dhan's scrip master, search, option-chain lookups
 - `insights.py`: round trips, statistics, habits
 - `autotrader.py`: the auto-trader (swing on MTF), its backtest and edge check
+- `rules.py`: Rules mode: key levels, the order checks, confirmation, plan and journal
 - `static/`: the app (HTML, CSS, JavaScript)
 - `deploy/`: droplet installer, updater, web address (Caddy) and systemd units
