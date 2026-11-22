@@ -151,6 +151,9 @@ class Market:
         with self.lock:
             under = {}
             for i in self.inst.values():
+                if i.get("pinned"):
+                    under[i["sym"]] = i
+                    continue
                 if i["kind"] in ("INDEX", "EQUITY", "FUTCOM"):
                     vol = 0.0006 if i["kind"] == "INDEX" else 0.0012
                     i["px"] = max(0.05, i["px"] * (1 + self.rng.gauss(0, vol)))
@@ -418,6 +421,16 @@ class Handler(BaseHTTPRequestHandler):
         path = u.path
         if path.endswith("scrip-master.csv"):
             return self.reply(200, M.scrip_csv(), "text/csv")
+        if path == "/mock/pin":                       # tests: hold one price still
+            n = int(self.headers.get("Content-Length") or 0)
+            b = json.loads(self.rfile.read(n) or b"{}")
+            with M.lock:
+                i = M.inst.get((b["seg"], str(b["id"])))
+                if not i:
+                    return self.reply(404, {})
+                i["px"], i["pinned"] = float(b["px"]), b.get("pinned", True)
+                M.match()
+            return self.reply(200, {"ok": True})
         if not path.startswith("/v2/"):
             return self.reply(404, {})
         path = path[3:]

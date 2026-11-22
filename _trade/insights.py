@@ -257,7 +257,7 @@ def _finish(b):
             "entry_value": round(entry_val, 2), "gross": round(gross, 2), "charges": round(b["charges"], 2),
             "net": round(gross - b["charges"], 2), "fills": len(fills), "adds": b["adds"], "avg_down": b["avg_down"],
             "expiry_day": bool(b["expiry"]) and b["expiry"] == t0[:10] and b["kind"].startswith("OPT"),
-            "est": b["est"], "opt": b["opt"]}
+            "est": b["est"], "opt": b["opt"], "entry_order": fills[0].get("order_id", "")}
 
 
 # ---- statistics ---------------------------------------------------------------------------

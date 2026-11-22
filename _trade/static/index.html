@@ -32,6 +32,7 @@
 </nav>
 <main id="main">
   <section id="tab-watch" class="tab on">
+    <div id="planCard"></div>
     <div class="search"><input id="q" type="search" placeholder="Search stocks, indices, futures, options  (e.g. nifty 26000 ce)" autocomplete="off" spellcheck="false"></div>
     <div id="results" class="results hidden"></div>
     <div class="wl-head"><div id="wlTabs" class="chips"></div><button id="wlEdit" class="ghost sm">Edit</button></div>
@@ -48,7 +49,8 @@
   </section>
   <section id="tab-orders" class="tab">
     <div class="chips" id="orderFilter"><button data-f="open" class="on">Open</button><button data-f="done">Executed</button><button data-f="all">All</button></div>
-    <div id="orders" class="list"></div>
+    <div id="armed"></div>
+    <div id="orders" class="list" style="margin-top:12px"></div>
   </section>
   <section id="tab-positions" class="tab">
     <div id="pnlCard" class="pnl-card"></div>
