@@ -440,6 +440,31 @@ only buys when a move is likely soon and options are not expensive:
   estimated from index R minus time decay and costs.
 - The ⭐ variant (best total, both halves positive, 10+ trades) is used live. Without one, the card says "paper first".
 
+## Expiry CAS (closing-auction trade, Pulse tab)
+`cas.py`. On a NIFTY or SENSEX expiry day, between 3:08 and 3:42 PM, the scanner connects to Dhan's
+**CAS Live Feed** (WebSocket, request code 23; needs the Data API plan). It reads the **indicative index
+close** packet, and reads the expiring option chain every ~3 seconds.
+
+**What it shows:** every strike's settlement value at that close (call: close − strike; put: strike − close;
+never below 0), against its bid and ask.
+- **BUY:** cheaper than its settlement value.
+- **SELL:** priced above it, for example an OTM option still bid that settles at 0. Sell what you hold.
+- The edge is after STT (0.125% of the settlement value on exercise, 0.1% on a sale), exchange charges and
+  brokerage.
+- Until the auction ends, a safety band (the larger of 0.04% and the last minute's range) is applied, and lots
+  are limited by your risk per trade.
+- Once the close stops moving after 3:35 it is treated as final.
+- Phone alerts (kind "Expiry CAS") go out for edges of ₹300 or more a lot, plus one alert when the auction close
+  is in.
+- No orders are placed.
+
+**Implementation:** SENSEX (BSE) expiry, lot size and index id come from the scrip master's BSE rows. The
+WebSocket client uses only the standard library.
+
+**From 7 Dec 2026:** under SEBI's revised CAS rules, expiring contracts stop at 3:30 PM and settle on the
+last-30-minute average. The auction no longer sets the settlement price, so the screen switches off after
+6 Dec 2026.
+
 ## Discipline guard (your real trades)
 `discipline.py`. **TOOK IT?** (or **✓ Took option / ✓ Took stock** on an alert) records what you actually
 traded: the option or the stock, your entry, **your stop**, the quantity, and whether the stop order is placed

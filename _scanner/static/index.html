@@ -300,6 +300,8 @@
   .pl-kv b { display: block; font-size: 16px; color: var(--text); }
   #pulsePanel .ptable { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; font-size: 12.5px; }
   @media (max-width: 900px) { .pl-hero, .pl-grid { grid-template-columns: minmax(0, 1fr); } .pl-gauge svg { max-width: 220px; } }
+  .cas-card { margin-bottom: 16px; border-color: rgba(201,164,92,.35); } .cas-card h3 small { font: 400 12px Inter; color: var(--muted); }
+  .cas-idle { padding: 10px 14px; } .cas-spark { width: 100%; height: 34px; display: block; margin-top: 4px; }
   .ol-wrap { margin: 4px 0 6px; } .ol-title { font: 600 24px var(--serif); color: #efe7d4; margin: 0 0 10px; }
   .ol-title small { font: 400 12px Inter; color: var(--muted); }
   .ol-sum { font-size: 14.5px; margin: 0 0 10px; color: var(--text); }
@@ -649,7 +651,8 @@
         <label class="switch"><input type="checkbox" class="alKind" value="intra"> Intraday</label>
         <label class="switch"><input type="checkbox" class="alKind" value="swing"> Swing (stocks)</label>
         <label class="switch"><input type="checkbox" class="alKind" value="bnf"> Bank Nifty options</label>
-        <label class="switch"><input type="checkbox" class="alKind" value="results"> Results breakouts</label></div>
+        <label class="switch"><input type="checkbox" class="alKind" value="results"> Results breakouts</label>
+        <label class="switch"><input type="checkbox" class="alKind" value="cas"> Expiry CAS (3:15–3:40)</label></div>
       <label for="alVia">Send them by</label>
       <select id="alVia"><option value="ntfy">ntfy app (free, instant push notifications)</option><option value="whatsapp">WhatsApp via CallMeBot</option></select>
       <div id="alNtfy">
@@ -1708,6 +1711,33 @@ function resBt(x, open) {
     It uses today's Midcap 150 list for the whole history, so stocks that dropped out of the index are missing (results look a little better than reality).
     ⭐ = best total with both halves positive (20+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>`;
 }
+// ---------- Expiry CAS: the closing-auction trade ----------
+function casHtml(c) {
+  if (!c) return "";
+  const B = css("--bull"), R = css("--bear"), G = "#c9a45c", n2 = v => v == null ? "—" : (+v).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  const dt = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) : "—";
+  if (c.status === "rules") return `<div class="pl-card cas-card"><h3>Expiry CAS</h3><div class="hint">From 7 Dec 2026 expiring contracts stop trading at 3:30 PM and settle on the last-30-minute average, not the closing auction (SEBI's revised CAS rules), so the auction trade no longer applies.</div></div>`;
+  if (c.status === "idle" || c.status === "error") return `<div class="pl-card cas-card cas-idle"><h3>Expiry CAS <small>closing-auction trade, ${esc(c.window || "15:08-15:42")} on expiry days</small></h3>
+    <div class="hint">Next windows: NIFTY ${dt((c.next || {}).nifty)} · SENSEX ${dt((c.next || {}).sensex)}. Until ${dt(c.last_day)} (after that the auction no longer settles expiries).
+    ${c.error ? `<br>⚠ ${esc(c.error)}` : ""}</div></div>`;
+  const vs = c.views || [];
+  return vs.map(v => {
+    const rows = v.rows || [], h = v.history || [], lo = Math.min(...h), hi = Math.max(...h);
+    const spark = h.length > 2 ? `<svg viewBox="0 0 200 40" class="cas-spark"><polyline fill="none" stroke="${G}" stroke-width="1.5" points="${h.map((y, i) => `${(i / (h.length - 1) * 200).toFixed(1)},${(38 - (y - lo) / ((hi - lo) || 1) * 36).toFixed(1)}`).join(" ")}"/></svg>` : "";
+    return `<div class="pl-card cas-card"><h3>Expiry CAS · ${esc(v.index)} <small>${c.status === "done" ? "session over" : v.final ? "auction close is in" : "auction running"} · ${esc(v.at || "")} · feed ${esc(v.feed || "")}${c.demo ? " · demo data" : ""}</small></h3>
+      <div class="pl-kv"><div>${v.final ? "Auction close" : "Indicative close"}<b style="color:${v.final ? B : G}">${n2(v.close)}</b>${v.final ? "final: options settle at this" : `can still move ±${n2(v.band)}`}</div>
+        <div>Lot<b>${v.lot}</b>expiry ${esc(v.expiry || "")}</div><div style="min-width:0">Last minutes${spark}</div></div>
+      ${!v.close ? `<div class="hint">Waiting for the indicative close from Dhan's CAS feed (the auction starts at 3:15 PM).</div>` : ""}
+      ${rows.length ? `<table class="ptable"><tr><th class="l">Trade</th><th>Price</th><th>Settles at</th><th>Edge/unit</th><th>Edge/lot</th><th>Max lots</th></tr>
+        ${rows.map(r => `<tr><td class="l"><b style="color:${r.side === "BUY" ? B : R}">${r.side}</b> ${Math.round(r.strike)} ${r.kind}${r.note ? ` <small>${esc(r.note)}</small>` : ""}</td>
+          <td>${n2(r.side === "BUY" ? r.ask : r.bid)}</td><td>${n2(r.settle)}</td><td style="color:${B}">+${n2(r.edge)}</td><td style="color:${B}">+₹${(r.edge_lot || 0).toLocaleString("en-IN")}</td>
+          <td>${r.max_lots ?? "—"}</td></tr>`).join("")}</table>` : v.close ? `<div class="hint">Nothing priced away from its settlement value by more than the charges${v.final ? "" : " and the safety band"} right now.</div>` : ""}
+      <div class="hint">Settles at = what the option pays at the ${v.final ? "auction close" : "indicative close, worst case within the band"}. Edge is after STT (0.125% on exercise, 0.1% on a sale), exchange charges and ₹20 brokerage. BUY = cheaper than its settlement value; SELL = priced above it (sell what you hold). Fill fast, near 3:40 liquidity thins; place the order yourself. If the close moves before the auction ends, a BUY can lose: the band and max lots allow for that.</div>
+      ${(v.ladder || []).length ? `<details class="more"><summary>Strikes near the close</summary><table class="ptable"><tr><th>CE bid/ask</th><th>CE settles</th><th>Strike</th><th>PE settles</th><th>PE bid/ask</th></tr>
+        ${v.ladder.map(l => `<tr><td>${n2(l.CE.bid)} / ${n2(l.CE.ask)}</td><td>${n2(l.CE.settle)}</td><td><b>${Math.round(l.strike)}</b></td><td>${n2(l.PE.settle)}</td><td>${n2(l.PE.bid)} / ${n2(l.PE.ask)}</td></tr>`).join("")}</table></details>` : ""}</div>`;
+  }).join("");
+}
+
 // ---------- Outlook: tomorrow and next week ----------
 function outlookHtml(o) {
   if (!o || !o.day) return "";
@@ -1813,7 +1843,7 @@ function renderPulse() {
       <div>India VIX<b>${x.vix ?? "—"}</b>${x.vix_pct != null ? x.vix_pct + "th pct (4M)" : ""}</div>
       ${mb ? `<div>Mid caps &gt; 50 DMA<b style="color:${mb.above50 >= 55 ? B : mb.above50 <= 40 ? R : G}">${mb.above50}%</b>of ${mb.n}</div>
       <div>New 52W highs / lows<b><span style="color:${B}">${mb.highs}</span> / <span style="color:${R}">${mb.lows}</span></b>mid caps today</div>` : ""}</div></div>`;
-  body.innerHTML = hero + hist + outlookHtml(x.outlook) + `<div class="pl-grid">${broad}${secs}${fii}${pos}${opt}</div>`;
+  body.innerHTML = casHtml(state.cas) + hero + hist + outlookHtml(x.outlook) + `<div class="pl-grid">${broad}${secs}${fii}${pos}${opt}</div>`;
   const ps2 = $("plScan"); if (ps2) ps2.onclick = async ev => { ev.preventDefault(); ps2.textContent = "refreshing…"; await post("/api/pulse/scan", {}).catch(() => {}); setTimeout(refresh, 4000); };
 }
 
@@ -2800,7 +2830,7 @@ $("prefSave").onclick = async () => {
 function showAlerts(a) {
   if (!a) return;
   $("alOn").checked = a.on; $("alVia").value = a.via || "ntfy"; $("alTopic").value = a.topic || "";
-  document.querySelectorAll(".alKind").forEach(k => k.checked = (a.kinds || ["bnf", "swing", "intra", "results"]).includes(k.value));
+  document.querySelectorAll(".alKind").forEach(k => k.checked = (a.kinds || ["bnf", "swing", "intra", "results", "cas"]).includes(k.value));
   $("waPhone").value = a.phone || "";
   $("waKey").value = ""; $("waKey").placeholder = a.has_key ? "Saved (leave empty to keep it)" : "The number CallMeBot sent you";
   $("alLog").innerHTML = (a.last || []).length ? "Last sent: " + a.last.map(x => `${esc(x.at)} ${x.ok ? "✓" : "✗"} ${esc(x.text)}`).join(" · ") : "";

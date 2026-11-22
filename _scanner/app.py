@@ -35,6 +35,7 @@ import backtest
 import breakout
 import bullion
 import bnf
+import cas
 import discipline
 import earnings
 import notify
@@ -56,7 +57,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "15 Nov · Discipline guard: exit-now alarm, option sizing, circuit breakers"
+VERSION = "22 Nov · Expiry CAS: closing-auction trade on NIFTY / SENSEX expiry days"
 
 
 def load_env():
@@ -210,6 +211,7 @@ def fno_stocks():
     rows = csv.DictReader(f)
     underlyings, equity, futures, names = set(), {}, {}, {}
     opts, lots, comm = {}, {}, {}
+    exp_n = exp_s = None                               # nearest NIFTY / SENSEX option expiry
     today = datetime.now(IST).strftime("%Y-%m-%d")
     for row in rows:
         exch, inst = row.get("SEM_EXM_EXCH_ID"), row.get("SEM_INSTRUMENT_NAME")
@@ -220,6 +222,20 @@ def fno_stocks():
             expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
             if expiry > today and (key not in comm or expiry < comm[key][0]):
                 comm[key] = (expiry, row["SEM_SMST_SECURITY_ID"], inst)
+            continue
+        if exch == "BSE":                              # SENSEX: its options, index id, and CAS feed stocks
+            if inst == "OPTIDX" and sym.split("-")[0] == "SENSEX":
+                expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
+                if expiry >= today and (exp_s is None or expiry < exp_s):
+                    exp_s = expiry
+                try:
+                    lots["SENSEX"] = int(float(row.get("SEM_LOT_UNITS") or 0)) or lots.get("SENSEX")
+                except ValueError:
+                    pass
+            elif inst == "INDEX" and cas.norm(sym) in ("SENSEX", "BSESENSEX"):
+                INDEXES["SENSEX"] = row["SEM_SMST_SECURITY_ID"]
+            elif row.get("SEM_SEGMENT") == "E" and sym in CAS_STOCKS:
+                BSE_IDS[sym] = row["SEM_SMST_SECURITY_ID"]
             continue
         if exch != "NSE":
             continue
@@ -268,9 +284,17 @@ def fno_stocks():
                 BNF_FUT[:] = [expiry, row["SEM_SMST_SECURITY_ID"]]
         elif row.get("SEM_INSTRUMENT_NAME") == "OPTIDX" and sym.split("-")[0] == "NIFTY":
             expiry = (row.get("SEM_EXPIRY_DATE") or "")[:10]
-            if expiry >= today and (not EXPIRY.get("nifty") or expiry < EXPIRY["nifty"]):
-                EXPIRY["nifty"] = expiry
+            if expiry >= today and (exp_n is None or expiry < exp_n):
+                exp_n = expiry
+            try:
+                lots["NIFTY"] = int(float(row.get("SEM_LOT_UNITS") or 0)) or lots.get("NIFTY")
+            except ValueError:
+                pass
     f.close()
+    if exp_n:                                          # (re-worked out each time: yesterday's expiry is gone)
+        EXPIRY["nifty"] = exp_n
+    if exp_s:
+        EXPIRY["sensex"] = exp_s
     stocks = {s: equity[s] for s in sorted(underlyings) if s in equity}
     if ONLY:
         stocks = {s: i for s, i in stocks.items() if s in ONLY}
@@ -293,7 +317,9 @@ ALL_EQUITY = {}                                        # every NSE EQ symbol -> 
 INDEX_IDS = {}                                         # Market Pulse index name -> Dhan security id (IDX_I)
 BNF_FUT = []                                           # [expiry, security id] of the current Bank Nifty future
 # Dhan security ids of the indices (IDX_I); read from the scrip master, these are fallbacks.
-INDEXES = {"NIFTY": "13", "BANKNIFTY": "25", "INDIAVIX": "21"}
+INDEXES = {"NIFTY": "13", "BANKNIFTY": "25", "INDIAVIX": "21", "SENSEX": "51"}
+BSE_IDS = {}                                           # BSE equity ids of the CAS feed stocks (for SENSEX)
+CAS_STOCKS = ("RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "BHARTIARTL", "LT", "ITC", "SBIN", "AXISBANK")
 EXPIRY = {}                                            # "nifty" -> nearest NIFTY option expiry, YYYY-MM-DD
 OPTIONS = {}                                           # symbol -> {expiry: {(strike, "CE"/"PE"): security id}}
 LOTS = {}                                              # symbol -> F&O lot size
@@ -473,12 +499,15 @@ def ntfy_topic():
     return SETTINGS["ntfy_topic"]
 
 
-ALERT_KINDS = ("bnf", "swing", "intra", "results")
+ALERT_KINDS = ("bnf", "swing", "intra", "results", "cas")
 
 
 def alert_on(kind):
     """Alerts switched on, and for this kind of trade (Bank Nifty options, swing, intraday)."""
-    return bool(alert_config()) and kind in SETTINGS.get("alert_kinds", ALERT_KINDS)
+    kinds = list(SETTINGS.get("alert_kinds", ALERT_KINDS))
+    if "cas" not in kinds and not SETTINGS.get("alert_kinds_v2"):
+        kinds.append("cas")                            # chosen before Expiry CAS existed: on by default
+    return bool(alert_config()) and kind in kinds
 
 
 def hook_sig(kind, picked_at, symbol):
@@ -1491,6 +1520,200 @@ def pulse_loop():
             warn("Market Pulse", e)
         PULSE_WAKE.wait(600 if market_open() or DEMO else 3600)
         PULSE_WAKE.clear()
+
+
+# ── Expiry CAS: the closing-auction trade on NIFTY / SENSEX expiry days ───────────────────────
+CAS_LIVE = {}                                          # "NIFTY"/"SENSEX" -> {"close", "history": [(t, close)], "at"}
+CAS_WAKE = threading.Event()
+CAS_FROM, CAS_UNTIL = "15:08", "15:42"
+
+
+def cas_today():
+    """Which indices expire today ([("NIFTY", expiry), ...]) while the auction still settles them."""
+    today = datetime.now(IST).date().isoformat()
+    if today > cas.LAST_DAY:
+        return []
+    return [(k, EXPIRY.get(k.lower())) for k in ("NIFTY", "SENSEX") if EXPIRY.get(k.lower()) == today]
+
+
+def cas_feed(stop, demo):
+    """The CAS Live Feed: indicative index close (and stock IEPs) into CAS_LIVE until `stop` is set."""
+    if demo:
+        rng = random.Random(datetime.now(IST).strftime("%Y%m%d"))
+        close = 24480.0
+        while not stop.is_set():
+            close += rng.gauss(0, 1.2)
+            for p in cas.parse(cas.demo_packets(close, time.time())):
+                cas_note(p)
+            stop.wait(2)
+        return
+    subs = [{"ExchangeSegment": "NSE_EQ", "SecurityId": str(ALL_EQUITY[s_])} for s_ in CAS_STOCKS if s_ in ALL_EQUITY] + \
+           [{"ExchangeSegment": "BSE_EQ", "SecurityId": str(BSE_IDS[s_])} for s_ in CAS_STOCKS if s_ in BSE_IDS]
+    while not stop.is_set():
+        ws = None
+        try:
+            ws = cas.WS(f"{cas.FEED_URL}?token={TOKEN}&clientId={CLIENT_ID}&authType=2")
+            ws.sock.settimeout(5)
+            ws.send_json({"RequestCode": 23, "InstrumentCount": len(subs), "InstrumentList": subs})
+            CAS_LIVE["_feed"] = "connected"
+            while not stop.is_set():
+                try:
+                    m = ws.recv()
+                except socket.timeout:
+                    continue
+                if m is None:
+                    break
+                if isinstance(m, bytes):
+                    for p in cas.parse(m):
+                        if p["type"] == "disconnect":
+                            CAS_LIVE["_feed"] = f"disconnected by Dhan (code {p['reason']})"
+                        cas_note(p)
+        except Exception as e:                         # reconnect after a short wait
+            CAS_LIVE["_feed"] = f"feed error: {e}"
+            warn("CAS feed", e)
+        finally:
+            if ws:
+                try:
+                    ws.send_json({"RequestCode": 12})
+                except OSError:
+                    pass
+                ws.close()
+        stop.wait(5)
+
+
+def cas_note(p):
+    if p["type"] == "index":
+        k = cas.index_key(p["name"])
+        if k and p["close"] > 0:
+            v = CAS_LIVE.setdefault(k, {"history": []})
+            v.update(close=p["close"], at=time.time(), name=p["name"])
+            v["history"] = (v["history"] + [(time.time(), p["close"])])[-600:]
+    elif p["type"] == "cas":
+        CAS_LIVE.setdefault("_stocks", {})[p["security_id"]] = {k: p[k] for k in ("iep", "buy_qty", "sell_qty", "imbalance", "ref")}
+
+
+def cas_session(idxs, demo):
+    """3:08-3:42 PM on an expiry day: follow the indicative close, read the expiring chain every few seconds,
+    work out the edges, alert."""
+    stop = threading.Event()
+    CAS_LIVE.clear()
+    threading.Thread(target=cas_feed, args=(stop, demo), daemon=True).start()
+    sent, finals = {}, set()
+    rcfg = risk.config(SETTINGS)
+    try:
+        while True:
+            now = datetime.now(IST)
+            hm = now.strftime("%H:%M")
+            if not demo and hm > CAS_UNTIL:
+                break
+            views = []
+            for k, expiry in idxs:
+                live = CAS_LIVE.get(k) or {}
+                close = live.get("close")
+                lot = LOTS.get(k) or (75 if k == "NIFTY" else 20)
+                hist = live.get("history") or []
+                steady = len(hist) > 3 and time.time() - max((t for t, c in hist if c != close), default=0) > 45
+                final = (hm >= "15:35" or demo and len(hist) > 40) and steady
+                view = {"index": k, "expiry": expiry, "close": close, "final": final, "lot": lot,
+                        "feed": CAS_LIVE.get("_feed") or ("demo" if demo else "connecting"),
+                        "history": [c for _, c in hist[-120:]], "at": now.strftime("%H:%M:%S")}
+                if close:
+                    try:
+                        if demo:
+                            chain = cas_demo_chain(close, k)
+                        else:
+                            chain = option_chain(INDEXES[k], expiry, ("IDX_I",))
+                    except DhanError as e:
+                        if e.fatal:
+                            raise
+                        chain = None
+                    band = cas.band_for(close, hist, final)
+                    rows = cas.opportunities(chain, close, band, lot, rcfg["risk_amt"], final) if chain else []
+                    view.update(band=band, rows=rows[:12], ladder=cas.ladder(chain, close, 6) if chain else [],
+                                chain_ok=bool(chain))
+                    for r in rows[:5]:                 # alert the clear ones, each at most every 2 minutes
+                        key = (k, r["strike"], r["kind"], r["side"])
+                        if r["edge_lot"] >= 300 and time.time() - sent.get(key, 0) > 120:
+                            sent[key] = time.time()
+                            cas_alert(k, close, final, r, lot)
+                    if final and k not in finals:
+                        finals.add(k)
+                        if alert_on("cas") and not demo:
+                            notify.send(f"🔔 {k} auction close is in: {close:,.2f}\nExpiring options now settle at this. "
+                                        "Check the Pulse tab for anything still mispriced before 3:40.", 3)
+                views.append(view)
+            set_state(cas={"status": "live", "views": views, "demo": demo})
+            if demo and not CAS_WAKE.is_set():
+                CAS_WAKE.wait(4)
+                if CAS_WAKE.is_set():
+                    break
+                continue
+            time.sleep(3.2)                            # Dhan's option chain: one request every 3 seconds
+    finally:
+        stop.set()
+        st = dict(STATE.get("cas") or {})
+        st["status"] = "done"
+        set_state(cas=st)
+
+
+def cas_alert(k, close, final, r, lot):
+    if DEMO or not alert_on("cas"):
+        return
+    word = "BUY" if r["side"] == "BUY" else "SELL"
+    price = r["ask"] if r["side"] == "BUY" else r["bid"]
+    text = (f"⚡ CAS {k} · {word} {int(r['strike'])} {r['kind']} at {price:,.2f}\n"
+            f"Indicative close {close:,.2f}{' (final)' if final else ''} → settles at {r['settle']:,.2f}. "
+            f"Edge ₹{r['edge']:,.2f}/unit after charges = ₹{r['edge_lot']:,}/lot"
+            + (f" · max {r['max_lots']} lot{'s' if r.get('max_lots') != 1 else ''} by your risk" if r.get("max_lots") is not None else "")
+            + (f" · {r['note']}" if r.get("note") else "")
+            + ("" if final else ". The auction is still running: the close can move."))
+    notify.send(text, 3)
+
+
+def cas_demo_chain(close, k):
+    """Made-up expiring chain near intrinsic, with a few mispriced strikes (demo only)."""
+    step = 50 if k == "NIFTY" else 100
+    rng = random.Random(int(close))
+    oc, atm = {}, round(close / step) * step
+    for i in range(-8, 9):
+        st = atm + i * step
+        for kind in ("ce", "pe"):
+            v = max(0.0, close - st) if kind == "ce" else max(0.0, st - close)
+            v += rng.uniform(-0.3, 1.2)
+            if (i, kind) in ((-2, "ce"), (2, "pe")):
+                v -= 11                                # cheap vs settlement
+            if (i, kind) in ((3, "ce"), (-3, "pe")):
+                v = 2.6                                # out of the money but still bid
+            v = max(0.05, v)
+            oc.setdefault(f"{st:.6f}", {})[kind] = {"last_price": round(v, 2), "top_bid_price": round(max(0.05, v - .4), 2),
+                                                     "top_ask_price": round(v + .4, 2), "oi": 100000, "volume": 50000}
+    return {"oc": oc, "last_price": close}
+
+
+def cas_loop():
+    """Waits for expiry days; runs the session 3:08-3:42 PM. In demo, shows a made-up session."""
+    while True:
+        try:
+            if DEMO:
+                cas_session([("NIFTY", datetime.now(IST).date().isoformat())], True)
+                CAS_WAKE.clear()
+            else:
+                now = datetime.now(IST)
+                hm = now.strftime("%H:%M")
+                idxs = cas_today()
+                nxt = sorted(v for v in (EXPIRY.get("nifty"), EXPIRY.get("sensex")) if v)
+                after_rules = now.date().isoformat() > cas.LAST_DAY
+                if idxs and CAS_FROM <= hm <= CAS_UNTIL and market_open(now):
+                    cas_session(idxs, False)
+                elif not (STATE.get("cas") or {}).get("status") == "done" or hm < CAS_FROM:
+                    set_state(cas={"status": "rules" if after_rules else "idle", "today": [k for k, _ in idxs],
+                                   "next": {"nifty": EXPIRY.get("nifty"), "sensex": EXPIRY.get("sensex")},
+                                   "window": f"{CAS_FROM}-{CAS_UNTIL}", "last_day": cas.LAST_DAY})
+        except Exception as e:
+            warn("Expiry CAS", e)
+            set_state(cas=dict(STATE.get("cas") or {}, status="error", error=str(e)))
+        CAS_WAKE.wait(30)
+        CAS_WAKE.clear()
 
 
 def bullion_payload(symbol):
@@ -2751,7 +2974,8 @@ class Handler(BaseHTTPRequestHandler):
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
                             "token": token_info(),
                             "alerts": {"on": bool(SETTINGS.get("alerts_on")), "via": SETTINGS.get("alert_via") or "ntfy",
-                                   "kinds": list(SETTINGS.get("alert_kinds", ALERT_KINDS)),
+                                   "kinds": list(SETTINGS.get("alert_kinds", ALERT_KINDS)) + ([] if SETTINGS.get("alert_kinds_v2")
+                                            or "cas" in SETTINGS.get("alert_kinds", ALERT_KINDS) else ["cas"]),
                                    "topic": ntfy_topic(), "server": SETTINGS.get("ntfy_server") or notify.NTFY,
                                    "phone": SETTINGS.get("wa_phone") or "", "has_key": bool(SETTINGS.get("wa_key")),
                                    "last": [{"at": datetime.fromtimestamp(t, IST).strftime("%d %b %H:%M"), "ok": ok, "text": x}
@@ -2964,7 +3188,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/alerts":
             via = body.get("via") if body.get("via") in ("ntfy", "whatsapp") else "ntfy"
             kinds = [k for k in (body.get("kinds") if isinstance(body.get("kinds"), list) else ALERT_KINDS) if k in ALERT_KINDS]
-            ch = {"alerts_on": bool(body.get("on")), "alert_via": via, "alert_kinds": kinds}
+            ch = {"alerts_on": bool(body.get("on")), "alert_via": via, "alert_kinds": kinds, "alert_kinds_v2": True}
             if via == "ntfy":
                 topic = notify.clean_topic(body.get("topic")) if body.get("topic") else ntfy_topic()
                 if not topic:
@@ -3130,6 +3354,7 @@ def main():
     threading.Thread(target=results_loop, daemon=True).start()
     threading.Thread(target=pulse_loop, daemon=True).start()
     threading.Thread(target=guard_loop, daemon=True).start()
+    threading.Thread(target=cas_loop, daemon=True).start()
     notify.start(alert_config)
     threading.Thread(target=watchdog, daemon=True).start()
     try:
