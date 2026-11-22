@@ -18,8 +18,9 @@ function check(ok, what) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  page.on('console', m => { if (m.type() === 'error' && !/status of 40[09]/.test(m.text())) errors.push(m.text()); });   // refusals the test asks for
-  page.on('dialog', d => d.accept(d.type() === 'prompt' ? 'EXIT ALL' : undefined));
+  page.on('console', m => { if (m.type() === 'error' && !/status of 40[019]|status of 423/.test(m.text())) errors.push(m.text()); });   // refusals the test asks for
+  const answers = [];                                       // prompt() answers the test wants to give, in order
+  page.on('dialog', d => d.accept(d.type() === 'prompt' ? (answers.length ? answers.shift() : 'EXIT ALL') : undefined));
   const shot = async name => { if (SHOTS) await page.screenshot({path: `${SHOTS}/${name}.png`}); };
 
   const apiPost = (path, body) => page.evaluate(([p, b]) => fetch(p, {method: 'POST', body: JSON.stringify(b),
@@ -287,6 +288,58 @@ function check(ok, what) {
   await page.waitForSelector('#auPause');
   await page.click('#auPause');
   await page.waitForSelector('#auStart');
+
+  // phone notifications: the panel, the service worker, and a test alert delivered (encrypted) to a fake push service
+  const http = require('http');
+  const pushed = [];
+  const fakePush = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => { pushed.push({headers: req.headers, body: Buffer.concat(chunks)}); res.writeHead(201); res.end(); });
+  });
+  await new Promise(r => fakePush.listen(0, '127.0.0.1', r));
+  const pushUrl = `http://127.0.0.1:${fakePush.address().port}/sub/e2e`;
+  await page.click('#tabs button[data-tab="account"]');
+  await page.waitForSelector('#pushBox .kv');
+  check((await page.textContent('#pushBox')).includes('This device'), 'notifications panel shows');
+  check(await page.evaluate(() => navigator.serviceWorker.getRegistration('/').then(r => !!r)), 'service worker registered');
+  const crypto = require('crypto');
+  const ecdh = crypto.createECDH('prime256v1'); ecdh.generateKeys();
+  const sub = {endpoint: pushUrl, keys: {p256dh: ecdh.getPublicKey().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url')}};
+  check((await apiPost('/api/push/subscribe', {subscription: sub, device: 'e2e'})).ok, 'phone subscription saved');
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#tabs button[data-tab="account"]');
+  await page.waitForSelector('#pushTest');
+  await shot('22-notifications');
+  await page.click('#pushTest');
+  for (let i = 0; i < 50 && pushed.length < 2; i++) await page.waitForTimeout(100);
+  check(pushed.length >= 2 && pushed.every(x => x.headers['content-encoding'] === 'aes128gcm' && /^vapid t=/.test(x.headers.authorization)),
+    `welcome and test alerts delivered encrypted (${pushed.length})`);
+  fakePush.close();
+
+  // PIN lock
+  answers.push('2468', '2468');
+  await page.click('#pinOn');
+  await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('PIN set')));
+  const noPin = await page.evaluate(() => fetch('/api/positions', {headers: {'X-Requested-With': 'meridian-trade'}}).then(r => r.status));
+  check(noPin === 423, 'without the PIN the server refuses (423)');
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
+  await page.waitForSelector('#lock #pinIn');
+  await shot('23-pin-lock');
+  await page.fill('#pinIn', '1111');
+  await page.click('#pinGo');
+  await page.waitForFunction(() => document.querySelector('#pinErr').textContent.includes('Wrong PIN'));
+  check(true, 'wrong PIN refused');
+  await page.fill('#pinIn', '2468');
+  await page.click('#pinGo');
+  await page.waitForFunction(() => !document.querySelector('#lock'));
+  await page.waitForSelector('#wl .item');
+  check(true, 'right PIN unlocks the app');
+  await page.click('#tabs button[data-tab="account"]');
+  await page.waitForSelector('#pinOff');
+  await page.click('#pinOff');
+  await page.waitForSelector('#pinOn');
 
   // desktop layout
   const desk = await browser.newPage({viewport: {width: 1280, height: 800}});

@@ -10,14 +10,113 @@ const S = {status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, e
   orderFilter: 'open', insDays: 90, chainUl: 'NIFTY', chainExp: '', posKeys: [], lastOrders: [], ticket: null};
 
 async function api(path, body, method) {
+  if (lockShown) throw new Error('Locked');             // nothing is asked of the server until the PIN is entered
   const opt = {headers: {'X-Requested-With': 'meridian-trade'}};
+  const pt = pinToken();
+  if (pt) opt.headers['X-Pin-Token'] = pt;
   if (body !== undefined) { opt.method = method || 'POST'; opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
   const r = await fetch(path, opt);
   if (r.status === 401) { location.reload(); throw new Error('Signed out'); }
+  if (r.status === 423) { showLock(); throw new Error('Locked'); }
   let j = {};
   try { j = await r.json(); } catch (e) { j = {error: 'The server answered oddly (' + r.status + ')'}; }
   if (!r.ok) { const e = new Error(j.error || ('Error ' + r.status)); e.data = j; e.status = r.status; throw e; }
   return j;
+}
+
+// ---- PIN lock --------------------------------------------------------------------------------------------
+const LOCK_AFTER_MIN = 5;                                   // background longer than this: ask for the PIN again
+function pinToken() {
+  try { const t = JSON.parse(sessionStorage.getItem('mt-pin') || 'null'); return t && t.exp * 1000 > Date.now() ? t.token : ''; }
+  catch (e) { return ''; }
+}
+function savePinToken(token, exp) { try { sessionStorage.setItem('mt-pin', JSON.stringify({token, exp})); } catch (e) { /* private mode */ } }
+function dropPinToken() { try { sessionStorage.removeItem('mt-pin'); } catch (e) { /* ignore */ } }
+let lockShown = false;
+function showLock() {
+  if (lockShown) return;
+  lockShown = true;
+  const el = document.createElement('div');
+  el.id = 'lock';
+  el.innerHTML = `<div class="lock-box"><div class="brand big"><span class="logo">◆</span> Handral <b>Trading Desk</b></div>
+    <p class="muted">Enter your PIN</p>
+    <input id="pinIn" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off">
+    <button class="primary" id="pinGo">Unlock</button><p id="pinErr" class="error"></p>
+    <button class="ghost sm" id="pinForgot">Forgot PIN?</button></div>`;
+  document.body.appendChild(el);
+  const go = async () => {
+    try {
+      const r = await fetch('/api/pin/unlock', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'meridian-trade'},
+        body: JSON.stringify({pin: $('#pinIn').value})});
+      const j2 = await r.json();
+      if (!r.ok) { $('#pinErr').textContent = j2.error || 'Wrong PIN'; $('#pinIn').value = ''; return; }
+      savePinToken(j2.token, j2.exp);
+      el.remove(); lockShown = false;
+      refreshAll();
+    } catch (e) { $('#pinErr').textContent = e.message; }
+  };
+  $('#pinGo').onclick = go;
+  $('#pinIn').onkeydown = e => { if (e.key === 'Enter') go(); };
+  $('#pinForgot').onclick = async () => {
+    const pw = prompt('Enter the app password (the one you sign in with). It clears the PIN; set a new one under Account.');
+    if (!pw) return;
+    const r = await fetch('/api/pin/reset', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'meridian-trade'},
+      body: JSON.stringify({password: pw})});
+    if (r.ok) { el.remove(); lockShown = false; refreshAll(); toast('PIN cleared. Set a new one under Account.', 'ok', 6000); }
+    else $('#pinErr').textContent = (await r.json()).error || 'Wrong password';
+  };
+  setTimeout(() => $('#pinIn')?.focus(), 50);
+}
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_MIN * 60000 && S.pinSet) { dropPinToken(); showLock(); }
+});
+function refreshAll() {
+  loadStatus(); loadFunds(); loadOrders(); loadPlan();
+  if (S.tab === 'positions') loadPositions();
+  if (S.tab === 'account') loadAccount();
+  if (S.tab === 'auto') loadAuto();
+  if (S.tab === 'insights') loadInsights();
+}
+
+// ---- phone notifications ---------------------------------------------------------------------------------
+function isStandalone() { return window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches; }
+function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent); }
+async function swReg() {
+  if (!('serviceWorker' in navigator)) return null;
+  try { return await navigator.serviceWorker.register('/sw.js'); } catch (e) { return null; }
+}
+function keyBytes(b64) {
+  const s = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - b64.length % 4) % 4));
+  return Uint8Array.from(s, c => c.charCodeAt(0));
+}
+async function enablePush() {
+  const info = S.pushInfo || await api('/api/push');
+  if (!info.available) return toast('Notifications aren\'t available on the server yet (it installs what it needs within a few minutes).', 'bad', 7000);
+  if (isIOS() && !isStandalone()) return toast('On iPhone: Share → Add to Home Screen, open the app from that icon, then turn notifications on.', 'bad', 9000);
+  if (!('Notification' in window) || !('PushManager' in window)) return toast('This browser can\'t receive notifications.', 'bad');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return toast('Notifications are blocked. Allow them in Settings → Notifications → Handral Desk.', 'bad', 8000);
+  const reg = await swReg();
+  if (!reg) return toast('Couldn\'t start the notification service.', 'bad');
+  await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: keyBytes(info.key)});
+  await api('/api/push/subscribe', {subscription: sub.toJSON(), device: (isIOS() ? 'iPhone' : navigator.platform || 'This device')});
+  toast('Notifications on. A welcome alert is on its way.', 'ok', 6000);
+  loadAccount();
+}
+async function disablePush() {
+  const reg = await swReg();
+  const sub = reg && await reg.pushManager.getSubscription();
+  if (sub) { await api('/api/push/unsubscribe', {endpoint: sub.endpoint}); await sub.unsubscribe(); }
+  toast('Notifications off on this device', 'ok');
+  loadAccount();
+}
+async function thisDeviceSubscribed() {
+  try { const reg = await swReg(); const sub = reg && await reg.pushManager.getSubscription(); return sub ? sub.endpoint : ''; }
+  catch (e) { return ''; }
 }
 
 // ---- formatting --------------------------------------------------------------------------------
@@ -824,6 +923,36 @@ function bindRulesSettings() {
     catch (e) { toast(e.message, 'bad'); }
   };
 }
+async function renderPush() {
+  const box = $('#pushBox'); if (!box) return;
+  let info;
+  try { info = await api('/api/push'); } catch (e) { box.innerHTML = `<div class="badbox">${esc(e.message)}</div>`; return; }
+  S.pushInfo = info;
+  const mine = await thisDeviceSubscribed();
+  const here = info.phones.some(p => p.endpoint === mine);
+  const kinds = info.settings.kinds;
+  const iosHint = isIOS() && !isStandalone() ? '<div class="warnbox">On iPhone, notifications work only in the home-screen app: Share → Add to Home Screen, then open it from that icon and turn them on there.</div>' : '';
+  box.innerHTML = `${!info.available ? '<div class="warnbox">Not available on the server yet: it installs what it needs on its next update (within a few minutes).</div>' : ''}
+    ${iosHint}
+    <div class="kv"><span>This device</span><b class="${here ? 'up' : ''}">${here ? 'On' : 'Off'}</b></div>
+    <div class="kv"><span>Phones getting alerts</span><b>${info.phones.length}</b></div>
+    <div class="ord-actions">${here ? '<button id="pushOff">Turn off here</button><button id="pushTest">Send a test</button>' :
+      `<button id="pushOn" class="primary" style="padding:6px 14px" ${info.available ? '' : 'disabled'}>Turn on notifications</button>${info.phones.length ? '<button id="pushTest">Send a test</button>' : ''}`}</div>
+    <div class="section-title" style="margin-top:12px">Tell me about</div>
+    ${Object.entries(info.kinds).map(([k, l]) => `<label class="toggle"><input type="checkbox" data-kind="${k}" ${kinds.includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}
+    <div class="field"><label>Loss alert every (₹)</label><input id="lossStep" inputmode="numeric" value="${info.settings.loss_step}"></div>
+    <button class="ghost" id="alSave" style="margin-top:8px">Save</button>
+    ${info.history.length ? `<details style="margin-top:10px"><summary class="muted small">Last alerts</summary>${info.history.slice(0, 15).map(h =>
+      `<div class="kv small"><span>${esc(h.at)}</span><span style="text-align:right;max-width:72%"><b>${esc(h.title)}</b><br>${esc(h.body)}</span></div>`).join('')}</details>` : ''}
+    ${info.log.length ? `<details><summary class="muted small">Delivery log</summary>${info.log.map(l => `<div class="small ${l[1] ? '' : 'down'}">${esc(l[0])} · ${esc(l[2])}</div>`).join('')}</details>` : ''}`;
+  if ($('#pushOn')) $('#pushOn').onclick = () => enablePush().catch(e => toast(e.message, 'bad', 7000));
+  if ($('#pushOff')) $('#pushOff').onclick = () => disablePush().catch(e => toast(e.message, 'bad'));
+  if ($('#pushTest')) $('#pushTest').onclick = async () => { try { await api('/api/push/test', {}); toast('Test sent', 'ok'); setTimeout(renderPush, 3000); } catch (e) { toast(e.message, 'bad'); } };
+  $('#alSave').onclick = async () => {
+    try { await api('/api/alerts/settings', {kinds: $$('#pushBox [data-kind]').filter(x => x.checked).map(x => x.dataset.kind), loss_step: +$('#lossStep').value});
+      toast('Saved', 'ok'); } catch (e) { toast(e.message, 'bad'); }
+  };
+}
 async function loadAccount() {
   try { S.rulesCfg = await api('/api/rules'); } catch (e) { S.rulesCfg = {}; }
   const s = S.status || await api('/api/status');
@@ -837,6 +966,14 @@ async function loadAccount() {
   let hv = 0, hc = 0;
   (h.holdings || []).forEach(x => { hc += x.totalQty * x.avgCostPrice; hv += x.totalQty * (x._ltp || x.avgCostPrice); });
   el.innerHTML = `
+    <div class="section-title">Phone notifications</div>
+    <div class="box" id="pushBox"><span class="muted small">Loading…</span></div>
+    <div class="section-title">App lock (PIN)</div>
+    <div class="box" id="pinBox">${S.pinSet ? `<div class="kv"><span>PIN</span><b class="up">On</b></div>
+      <div class="muted small">Asked when the app opens, and again after ${LOCK_AFTER_MIN} minutes in the background.</div>
+      <div class="ord-actions"><button id="pinChange">Change PIN</button><button id="pinOff" class="danger">Turn off</button></div>` :
+      `<div class="muted small">A 4–8 digit PIN, asked when the app opens and after ${LOCK_AFTER_MIN} minutes in the background, so nobody holding your phone can trade.</div>
+      <div class="ord-actions"><button id="pinOn">Set a PIN</button></div>`}</div>
     <div class="section-title">Funds</div>
     ${f._e ? `<div class="badbox">${esc(f._e)}</div>` : `<div class="box">
       <div class="kv"><span>Available to trade</span><b>${inr(f.availabelBalance ?? f.availableBalance)}</b></div>
@@ -844,12 +981,12 @@ async function loadAccount() {
       <div class="kv"><span>Opening balance</span><b>${inr(f.sodLimit)}</b></div>
       <div class="kv"><span>Collateral</span><b>${inr(f.collateralAmount)}</b></div>
       <div class="kv"><span>Withdrawable</span><b>${inr(f.withdrawableBalance)}</b></div></div>`}
-    <div class="section-title">Holdings ${h.holdings?.length ? `<span class="muted">· ${inrShort(hv)} (${signed(hv - hc, inrShort)})</span>` : ''}</div>
+    <div class="section-title">Holdings ${h.holdings?.length ? `<span class="muted">· ${inr(hv, 2)} (${hv - hc >= 0 ? '+' : ''}${inr(hv - hc, 2)})</span>` : ''}</div>
     <div class="list">${(h.holdings || []).map(x => {
       const pl = x._ltp ? (x._ltp - x.avgCostPrice) * x.totalQty : null;
       return `<div class="item" data-key="${esc(x._key || '')}"><div class="grow"><div class="name">${esc(x.tradingSymbol)}</div>
-      <div class="sub">${x.totalQty} @ ${px(x.avgCostPrice)} · LTP <span data-q="${esc(x._key || '')}">${px(x._ltp)}</span></div></div>
-      <div class="right"><div class="${cls(pl)}">${pl === null ? '–' : inr(pl)}</div></div></div>`;
+      <div class="sub">${x.totalQty} @ ₹${px(x.avgCostPrice)} · LTP ₹<span data-q="${esc(x._key || '')}">${px(x._ltp)}</span></div></div>
+      <div class="right"><div class="${cls(pl)}">${pl === null ? '–' : inr(pl, 2)}</div></div></div>`;
     }).join('') || '<div class="item muted">' + esc(h._e || 'No holdings.') + '</div>'}</div>
     <div class="section-title">Safety</div>
     <div class="box">
@@ -886,6 +1023,19 @@ async function loadAccount() {
       <div class="kv"><span>Instruments</span><span>${(s.instruments || 0).toLocaleString('en-IN')}</span></div>
       <div class="ord-actions"><button id="themeBtn">Light / dark</button><button id="logout" class="danger">Sign out</button></div></div>`;
   bindRulesSettings();
+  renderPush();
+  const setPin = async () => {
+    const p1 = prompt('New PIN (4–8 digits)'); if (!p1) return;
+    const p2 = prompt('Type the PIN again'); if (p1 !== p2) return toast('The two PINs were different', 'bad');
+    try { const r = await api('/api/pin/set', {pin: p1}); savePinToken(r.token, r.exp); S.pinSet = true; toast('PIN set', 'ok'); loadAccount(); }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+  if ($('#pinOn')) $('#pinOn').onclick = setPin;
+  if ($('#pinChange')) $('#pinChange').onclick = setPin;
+  if ($('#pinOff')) $('#pinOff').onclick = async () => {
+    if (!confirm('Turn the PIN off?')) return;
+    try { await api('/api/pin/clear', {}); S.pinSet = false; dropPinToken(); toast('PIN off', 'ok'); loadAccount(); } catch (e) { toast(e.message, 'bad'); }
+  };
   $('#lmSave').onclick = async () => {
     try { const r = await api('/api/settings/limits', {daily_loss_limit: +$('#lmLoss').value || 0, max_order_value: +$('#lmMax').value || 0, lots_warn: +$('#lmLots').value || 0, max_trades_day: +$('#lmTrades').value || 5});
       S.status.limits = r.limits; toast('Limits saved', 'ok'); } catch (e) { toast(e.message, 'bad'); }
@@ -1056,6 +1206,12 @@ function renderAuto(a) {
 // ---- start --------------------------------------------------------------------------------------------------
 try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) { /* ignore */ }
 (async function start() {
+  try { S.pinSet = (await (await fetch('/api/pin', {headers: {'X-Requested-With': 'meridian-trade'}})).json()).set; } catch (e) { S.pinSet = false; }
+  if (S.pinSet && !pinToken()) showLock();
+  swReg();
+  const h = location.hash.replace('#', '');
+  if (['watch', 'chain', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
+  if (h === 'journal') setTimeout(() => openJournal(), 800);
   await loadStatus();
   renderWlTabs(); renderWl();
   loadFunds(); loadOrders(); loadPlan();

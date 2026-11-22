@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/destiny4424-netizen/handraldentistry-website/main/_trade/deploy/install.sh | sudo bash
 #
 # What it does:
-#   - installs python3, git and curl (the app needs nothing else)
+#   - installs python3, python3-cryptography (phone notifications), git and curl
 #   - checks out this repository to /opt/meridian-trade/repo
 #   - runs the app as a systemd service that starts on boot and restarts on crash
 #   - checks GitHub every 5 minutes and installs new versions of _trade/ by itself
@@ -24,7 +24,7 @@ main() {
   step "Installing packages"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq git python3 curl ca-certificates >/dev/null
+  apt-get install -y -qq git python3 python3-cryptography curl ca-certificates >/dev/null
 
   step "Creating the app user and data folder"
   id trade >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin trade

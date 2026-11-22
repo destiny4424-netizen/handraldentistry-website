@@ -36,6 +36,31 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
+## Phone notifications and the PIN lock (Account, at the top)
+**Notifications** reach the phone even when the app is closed. They use Web Push: iPhone (iOS 16.4+) only in the
+home-screen app, so first Safari → Share → Add to Home Screen, open the app from that icon, then Account → Turn on
+notifications. Checked every 30 seconds:
+- **Orders:** an order filled (a stop-loss or target leg says so) or was rejected, with Dhan's reason.
+- **P&L:** today's P&L crosses another loss step (every ₹5,000 by default), and the daily loss limit.
+- **Auto-trader:** it buys, sells, stops itself, or has a problem.
+- **Rules:** an order waiting for confirmation is sent, or dropped.
+- **Routine:** 9 AM "plan your day" and 3:45 PM "journal time" (only if the journal isn't written), weekdays.
+
+Each kind can be switched off, and the loss step changed. "Send a test" checks the phone. The last alerts and a
+delivery log are shown in the panel.
+
+How it works:
+- Messages are encrypted for the phone (RFC 8291) and signed with the server's own VAPID key (RFC 8292), made on
+  first use and kept in settings.json.
+- Subscriptions are kept in `push.json`, and the alert state in `alerts.json`.
+- It needs `python3-cryptography`: the installer and the updater install it. Without it the app works as before and
+  the panel says notifications aren't available yet.
+
+**PIN lock:**
+- A 4–8 digit PIN is asked when the app opens, and again after 5 minutes in the background. The server checks it
+  too: without a PIN token (valid 8 hours) every API call is refused, not just hidden.
+- 5 wrong PINs lock it for 15 minutes. "Forgot PIN?" clears it with the sign-in password.
+
 ## Rules mode (your manual trades)
 On by default. Every manual order that **opens** a position must follow four rules; closing a position is never
 blocked. It can't be switched off while the market is open (Account → Rules mode).
@@ -225,5 +250,6 @@ insights maths.
 - `insights.py`: round trips, statistics, habits
 - `autotrader.py`: the auto-trader (swing on MTF), its backtest and edge check
 - `rules.py`: Rules mode: key levels, the order checks, confirmation, plan and journal
+- `webpush.py`: Web Push (VAPID + aes128gcm); `alerts.py`: what gets notified; `static/sw.js`: the service worker
 - `static/`: the app (HTML, CSS, JavaScript)
 - `deploy/`: droplet installer, updater, web address (Caddy) and systemd units
