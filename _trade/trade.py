@@ -26,9 +26,11 @@ import dhan as dhanlib                                  # noqa: E402
 import insights                                         # noqa: E402
 from autotrader import AutoTrader                       # noqa: E402
 from rules import Rules                                 # noqa: E402
+from webpush import Push                                # noqa: E402
+from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "22 Nov 2026 · renamed Handral Trading Desk"
+VERSION = "22 Nov 2026 · phone notifications, PIN lock"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -621,6 +623,65 @@ def bot_loop():
         time.sleep(20)
 
 
+# ---- phone notifications --------------------------------------------------------------------
+PUSH = None
+ALERTS = None
+
+
+def alerts_loop():
+    time.sleep(15)
+    while True:
+        try:
+            if D.ready and ALERTS:
+                orders, names = [], {}
+                try:
+                    orders = D.orders()
+                    for o in orders:
+                        it = INST.get(f"{o.get('exchangeSegment')}:{o.get('securityId')}")
+                        names[str(o.get("orderId"))] = it["name"] if it else o.get("tradingSymbol")
+                except dhanlib.DhanError:
+                    orders = None
+                try:
+                    pnl = today_pnl(D.positions())
+                except dhanlib.DhanError:
+                    pnl = None
+                ALERTS.tick(orders=orders, names=names, pnl=pnl,
+                            loss_limit=float(limits().get("daily_loss_limit") or 0),
+                            bot_log=BOT.s["log"] if BOT else None, rules_log=RULES.s["log"] if RULES else None,
+                            journal_done=bool(RULES and RULES.today() in RULES.s["journal"]))
+        except Exception:
+            traceback.print_exc()
+        time.sleep(30)
+
+
+# ---- PIN lock: a second, short lock on top of the 30-day sign-in ----------------------------
+PIN_HOURS = 8
+OPEN_WITHOUT_PIN = {"/api/status", "/api/pin", "/api/pin/unlock", "/api/pin/reset"}
+
+
+def hash_pin(pin, salt):
+    return hashlib.pbkdf2_hmac("sha256", pin.encode(), bytes.fromhex(salt), 200000).hex()
+
+
+def pin_set():
+    return bool(SETTINGS.get("pin_hash"))
+
+
+def pin_token(exp):
+    key = bytes.fromhex(SETTINGS["session_key"])
+    return f"{exp}.{hmac.new(key, b'pin:' + str(exp).encode() + SETTINGS.get('pin_hash', '').encode(), 'sha256').hexdigest()}"
+
+
+def pin_ok(token):
+    if not pin_set():
+        return True
+    try:
+        exp = int(str(token).split(".")[0])
+    except ValueError:
+        return False
+    return exp > time.time() and hmac.compare_digest(pin_token(exp), str(token))
+
+
 # ---- web server ------------------------------------------------------------------------------
 FAILED = {}
 
@@ -728,10 +789,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.static(path[len("/static/"):])
         if path in ("/manifest.webmanifest", "/icon.svg"):
             return self.static(path[1:])
+        if path == "/sw.js":                             # the service worker must come from the site's root
+            return self.static("sw.js")
         if not path.startswith("/api/"):
             return self.send(404, "Not found", "text/plain")
         if not self.signed_in():
             return self.send(401, {"error": "Sign in first."})
+        if path not in OPEN_WITHOUT_PIN and not pin_ok(self.headers.get("X-Pin-Token")):
+            return self.send(423, {"error": "Locked: enter your PIN.", "locked": True})
         try:
             return self.api_get(path, q)
         except dhanlib.DhanError as e:
@@ -809,6 +874,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, D.kill_switch_status())
         if path == "/api/auto":
             return self.send(200, BOT.view())
+        if path == "/api/pin":
+            return self.send(200, {"set": pin_set(), "hours": PIN_HOURS})
+        if path == "/api/push":
+            return self.send(200, {"available": PUSH.available(), "key": PUSH.public_key(),
+                                   "phones": [{"device": x["device"], "since": x["since"], "endpoint": x["endpoint"]}
+                                              for x in PUSH.subs],
+                                   "log": PUSH.log[-8:][::-1], "settings": ALERTS.cfg(), "kinds": ALERT_KINDS,
+                                   "history": ALERTS.s["history"][:30]})
         if path == "/api/rules/levels":
             return self.send(200, dict(RULES.levels_for(q.get("key", "")), cfg=RULES.cfg()))
         if path == "/api/rules":
@@ -854,6 +927,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"ok": True}, extra={"Set-Cookie": "mt=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict"})
         if not self.signed_in():
             return self.send(401, {"error": "Sign in first."})
+        if path not in OPEN_WITHOUT_PIN and not pin_ok(self.headers.get("X-Pin-Token")):
+            return self.send(423, {"error": "Locked: enter your PIN.", "locked": True})
         try:
             return self.api_post(path, b)
         except dhanlib.DhanError as e:
@@ -942,6 +1017,50 @@ class Handler(BaseHTTPRequestHandler):
                      for w in wl]
             save_settings(watchlists=clean)
             return self.send(200, {"ok": True})
+        if path == "/api/pin/unlock":
+            return self.pin_unlock(b)
+        if path == "/api/pin/reset":                     # forgot the PIN: the sign-in password clears it
+            given = str(b.get("password") or "").strip().lower().replace(" ", "")
+            if not (PASSWORD and hmac.compare_digest(hashlib.sha256(given.encode()).digest(),
+                                                     hashlib.sha256(PASSWORD.lower().replace(" ", "").encode()).digest())):
+                time.sleep(1)
+                return self.send(401, {"error": "Wrong password."})
+            save_settings(pin_hash=None, pin_salt=None)
+            audit("pin_reset")
+            return self.send(200, {"ok": True})
+        if path == "/api/pin/set":
+            pin = str(b.get("pin") or "")
+            if not (pin.isdigit() and 4 <= len(pin) <= 8):
+                return self.send(400, {"error": "The PIN must be 4 to 8 digits."})
+            salt = secrets.token_hex(16)
+            save_settings(pin_hash=hash_pin(pin, salt), pin_salt=salt)
+            audit("pin_set")
+            exp = int(time.time()) + PIN_HOURS * 3600
+            return self.send(200, {"ok": True, "token": pin_token(exp), "exp": exp})
+        if path == "/api/pin/clear":
+            save_settings(pin_hash=None, pin_salt=None)
+            audit("pin_cleared")
+            return self.send(200, {"ok": True})
+        if path == "/api/push/subscribe":
+            err = PUSH.subscribe(b.get("subscription"), b.get("device") or "")
+            if err:
+                return self.send(400, {"error": err})
+            PUSH.send("Notifications are on", "This phone will get your trading alerts.", tag="welcome")
+            return self.send(200, {"ok": True})
+        if path == "/api/push/unsubscribe":
+            PUSH.unsubscribe(str(b.get("endpoint") or ""))
+            return self.send(200, {"ok": True})
+        if path == "/api/push/test":
+            if not PUSH.subs:
+                return self.send(400, {"error": "No phone has turned notifications on yet."})
+            ALERTS.notify("test", "Test from Handral Trading Desk", "If you can read this, alerts work.")
+            return self.send(200, {"ok": True})
+        if path == "/api/alerts/settings":
+            err = ALERTS.update_settings(b)
+            if err:
+                return self.send(400, {"error": err})
+            ALERTS.save()
+            return self.send(200, {"ok": True, "settings": ALERTS.cfg()})
         if path.startswith("/api/rules/"):
             act = path[len("/api/rules/"):]
             if act == "settings":
@@ -988,6 +1107,24 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         self.mutate("PUT")
 
+    def pin_unlock(self, b):
+        ip, t = "pin:" + self.client_ip(), time.time()
+        n, until = FAILED.get(ip, (0, 0))
+        if until > t:
+            return self.send(429, {"error": f"Too many wrong PINs. Try again in {int(until - t) // 60 + 1} min, "
+                                            "or sign in again with your password to reset the PIN."})
+        if not pin_set():
+            return self.send(200, {"ok": True, "token": "", "exp": 0})
+        given = str(b.get("pin") or "")
+        if not hmac.compare_digest(hash_pin(given, SETTINGS["pin_salt"]), SETTINGS["pin_hash"]):
+            n += 1
+            FAILED[ip] = (n, t + 900 if n >= 5 else 0)
+            time.sleep(1)
+            return self.send(401, {"error": "Wrong PIN." + (f" {5 - n} tries left." if n < 5 else "")})
+        FAILED.pop(ip, None)
+        exp = int(t) + PIN_HOURS * 3600
+        return self.send(200, {"ok": True, "token": pin_token(exp), "exp": exp})
+
     def login(self, b):
         ip, t = self.client_ip(), time.time()
         n, until = FAILED.get(ip, (0, 0))
@@ -1024,7 +1161,11 @@ def main():
     global RULES
     RULES = Rules(str(DATA), D, INST, QUOTES, now, audit, demo=DEMO)
     RULES.place_fn = place
-    for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop):
+    global PUSH, ALERTS
+    PUSH = Push(str(DATA), lambda: SETTINGS, save_settings,
+                os.environ.get("MT_PUBLIC_URL") or "https://localhost")
+    ALERTS = Alerts(str(DATA), PUSH, now)
+    for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True

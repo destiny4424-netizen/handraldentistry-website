@@ -21,6 +21,7 @@ main() {
   SITE=/etc/caddy/meridian-trade.caddy
 
   if [ "${1:-}" = "--install" ]; then
+    ensure_packages
     sync_files
     fix_caddy
     systemctl enable meridian-trade.service meridian-trade-update.timer >/dev/null
@@ -34,9 +35,18 @@ main() {
     return 1
   fi
 
+  ensure_packages
   update_code
   fix_caddy
   watchdog
+}
+
+# Phone notifications need python3-cryptography (added 22 Nov 2026). The app picks it up without a restart.
+ensure_packages() {
+  python3 -c 'import cryptography' 2>/dev/null && return 0
+  log "Installing python3-cryptography (phone notifications)"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-cryptography >/dev/null 2>&1 \
+    || log "Could not install python3-cryptography yet; will try again in 5 minutes."
 }
 
 log() { echo "$*"; }
