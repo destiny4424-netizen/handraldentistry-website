@@ -116,6 +116,7 @@ class Rules:
         self.lock = threading.RLock()
         self.daily = {}                                   # underlying key -> (day, candles)
         self.m15 = {}                                     # underlying key -> (time, candles)
+        self.prices = {}                                  # key -> (last price, time), for levels and the plan
         self.place_fn = None                              # set by the server: places a checked order
         try:
             self.s = json.load(open(self.path))
@@ -173,7 +174,8 @@ class Rules:
 
     def prefetch(self, keys):
         """One price request for many instruments (Dhan allows one a second)."""
-        need = [k for k in keys if not ((self.QUOTES.get(k) or {}).get("ltp") and time.time() - self.QUOTES[k].get("t", 0) < 60)]
+        need = [k for k in keys if not ((self.QUOTES.get(k) or {}).get("ltp") and time.time() - self.QUOTES[k].get("t", 0) < 60)
+                and not (k in self.prices and time.time() - self.prices[k][1] < 60)]
         by = {}
         for k in need:
             seg, sid = k.split(":")
@@ -182,8 +184,8 @@ class Rules:
             return
         try:
             for (seg, sid), v in self.D.quote(by, "ltp").items():
-                if v.get("last_price"):
-                    self.QUOTES.setdefault(f"{seg}:{sid}", {}).update(ltp=float(v["last_price"]), t=time.time())
+                if v.get("last_price"):                  # its own cache: the app's full quotes stay as they are
+                    self.prices[f"{seg}:{sid}"] = (float(v["last_price"]), time.time())
         except Exception:
             pass
 
@@ -191,6 +193,8 @@ class Rules:
         q = self.QUOTES.get(key)
         if q and q.get("ltp") and time.time() - q.get("t", 0) < 60:
             return float(q["ltp"])
+        if key in self.prices and time.time() - self.prices[key][1] < 60:
+            return self.prices[key][0]
         seg, sid = key.split(":")
         try:
             v = self.D.quote({seg: [sid]}, "ltp").get((seg, sid)) or {}

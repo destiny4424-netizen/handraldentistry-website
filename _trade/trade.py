@@ -1,4 +1,4 @@
-"""Meridian Trade: a personal trading app on your own Dhan account. Watchlists, every stock,
+"""Handral Trading Desk (installed as meridian-trade): a personal trading app on your own Dhan account. Watchlists, every stock,
 index, future and option, option chains, charts, real orders (with a confirm step and safety
 checks), positions, holdings, funds, and insights into your own trading.
 
@@ -28,7 +28,7 @@ from autotrader import AutoTrader                       # noqa: E402
 from rules import Rules                                 # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "22 Nov 2026 · Rules mode, auto-trader"
+VERSION = "22 Nov 2026 · renamed Handral Trading Desk"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -638,7 +638,7 @@ def default_watch():
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "MeridianTrade"
+    server_version = "HandralTradingDesk"
     sys_version = ""
 
     def log_message(self, fmt, *a):
@@ -1025,7 +1025,7 @@ def main():
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True
-    print(f"Meridian Trade {VERSION} on http://{HOST}:{PORT}" + ("  (DEMO: pretend Dhan account)" if DEMO else ""))
+    print(f"Handral Trading Desk {VERSION} on http://{HOST}:{PORT}" + ("  (DEMO: pretend Dhan account)" if DEMO else ""))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

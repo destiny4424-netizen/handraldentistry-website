@@ -1,4 +1,7 @@
-# Meridian Trade
+# Handral Trading Desk
+
+(Called Meridian Trade until 22 Nov 2026. On the droplet it is still installed under that name: the
+`meridian-trade` service, `/var/lib/meridian-trade`, `/etc/meridian-trade`, so nothing needs reinstalling.)
 
 A personal trading app on your own Dhan account. It runs on the droplet and you open it on your iPhone or PC.
 It places **real orders**. It needs nothing but Python 3: no packages, no build step.

@@ -8,7 +8,7 @@
 - `ortho/` — only a redirect: Ortho Assess lives in its own repository, destiny4424-netizen/ortho-assess
   (https://destiny4424-netizen.github.io/ortho-assess/), separate from the clinic website, app and server.
 - `_clinic/` — the cloud server for the clinic app (runs on the droplet; not published)
-- `_trade/` — Meridian Trade, a trading app on your Dhan account: watchlists, option chains, real orders,
+- `_trade/` — Handral Trading Desk (formerly Meridian Trade), a trading app on your Dhan account: watchlists, option chains, real orders,
   positions, and insights into your own trading (runs on the droplet; not published). See `_trade/README.md`.
 - `photos/` — Clinic Photos: organise clinic and patient photos on the iPhone (handraldentistry.com/photos).
   Open it in Safari, Share → Add to Home Screen. Photos are picked from the Photo Library and kept only on
@@ -294,7 +294,7 @@ It sits next to Handral Books in the same Caddy web server and doesn't touch Boo
 If something ever looks wrong: `systemctl status orderblock-scanner` or
 `journalctl -u orderblock-scanner -u orderblock-scanner-update -n 50`.
 
-## Meridian Trade (trading app on the droplet)
+## Handral Trading Desk (trading app on the droplet)
 
 `_trade/` is a personal trading app on your Dhan account, in its own service, separate from the scanner.
 It covers every stock, index, future and option. It has option chains and **places real orders**, always after a
