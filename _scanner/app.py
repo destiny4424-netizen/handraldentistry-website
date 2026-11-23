@@ -35,6 +35,7 @@ import backtest
 import breakout
 import bullion
 import bnf
+import bhav
 import cas
 import discipline
 import earnings
@@ -1528,6 +1529,52 @@ CAS_WAKE = threading.Event()
 CAS_FROM, CAS_UNTIL = "15:08", "15:42"
 
 
+CAS_BT = {}                                            # the bhavcopy check of past expiries (shown on the CAS card)
+
+
+def cas_backtest_job():
+    """Past NIFTY / SENSEX expiries since the auction began: last trade vs settlement, from the bhavcopy.
+    Each day's file is read once (kept in bhav_cas.json)."""
+    f = SETTINGS_DIR / "bhav_cas.json"
+    try:
+        saved = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    seen = {"NSE": False, "BSE": False}
+
+    def fetcher(exch, d):
+        rows = bhav.fetch(exch, d)
+        if rows is not None:
+            seen[exch] = True
+        return rows
+    CAS_BT.update(status="running")
+    res, cache = bhav.cas_backtest(datetime.now(IST).date(), LOTS, saved.get("cache"), fetcher=fetcher)
+    for k in ("NSE", "BSE"):
+        seen[k] = seen[k] or any(v for key, v in cache.items() if key.startswith("NIFTY" if k == "NSE" else "SENSEX"))
+    out = {"at": datetime.now(IST).strftime("%d %b %H:%M"), "summary": bhav.summary(res), "access": seen,
+           "results": [{k: r[k] for k in ("date", "symbol", "close", "count", "best", "sum_top3_lot")} for r in res][-30:]}
+    try:
+        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"cache": cache, "out": out}), encoding="utf-8")
+    except OSError:
+        pass
+    CAS_BT.clear()
+    CAS_BT.update(out, status="done", day=datetime.now(IST).date().isoformat())
+
+
+def cas_bt_due():
+    now = datetime.now(IST)
+    if not CAS_BT:                                     # after a restart: show the saved result first
+        try:
+            out = json.loads((SETTINGS_DIR / "bhav_cas.json").read_text(encoding="utf-8")).get("out")
+            if out:
+                CAS_BT.update(out, status="done", day=None)
+        except (OSError, ValueError):
+            pass
+    return CAS_BT.get("status") != "running" and CAS_BT.get("day") != now.date().isoformat() \
+        and (now.strftime("%H:%M") >= "17:00" or not CAS_BT.get("at"))
+
+
 def cas_today():
     """Which indices expire today ([("NIFTY", expiry), ...]) while the auction still settles them."""
     today = datetime.now(IST).date().isoformat()
@@ -1642,7 +1689,7 @@ def cas_session(idxs, demo):
                             notify.send(f"🔔 {k} auction close is in: {close:,.2f}\nExpiring options now settle at this. "
                                         "Check the Pulse tab for anything still mispriced before 3:40.", 3)
                 views.append(view)
-            set_state(cas={"status": "live", "views": views, "demo": demo})
+            set_state(cas={"status": "live", "views": views, "demo": demo, "bt": dict(CAS_BT)})
             if demo and not CAS_WAKE.is_set():
                 CAS_WAKE.wait(4)
                 if CAS_WAKE.is_set():
@@ -1708,7 +1755,9 @@ def cas_loop():
                 elif not (STATE.get("cas") or {}).get("status") == "done" or hm < CAS_FROM:
                     set_state(cas={"status": "rules" if after_rules else "idle", "today": [k for k, _ in idxs],
                                    "next": {"nifty": EXPIRY.get("nifty"), "sensex": EXPIRY.get("sensex")},
-                                   "window": f"{CAS_FROM}-{CAS_UNTIL}", "last_day": cas.LAST_DAY})
+                                   "window": f"{CAS_FROM}-{CAS_UNTIL}", "last_day": cas.LAST_DAY, "bt": dict(CAS_BT)})
+                if not DEMO and cas_bt_due() and not (CAS_FROM <= hm <= CAS_UNTIL):
+                    threading.Thread(target=cas_backtest_job, daemon=True).start()
         except Exception as e:
             warn("Expiry CAS", e)
             set_state(cas=dict(STATE.get("cas") or {}, status="error", error=str(e)))
