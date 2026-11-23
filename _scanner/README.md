@@ -461,6 +461,16 @@ never below 0), against its bid and ask.
 **Implementation:** SENSEX (BSE) expiry, lot size and index id come from the scrip master's BSE rows. The
 WebSocket client uses only the standard library.
 
+**Past expiries (`bhav.py`):** once a day after 5 PM, the scanner reads the NSE F&O bhavcopy (UDiFF,
+`nsearchives.nseindia.com/content/fo/...`) and BSE's (`bseindia.com/download/Bhavcopy/Derivative/...`) for every
+NIFTY (Tuesday) and SENSEX (Thursday) expiry since the auction began on 3 Aug 2026. A holiday moves the expiry
+to the day before.
+- For each expiry it compares every expiring option's **last traded price** with its **final settlement price**,
+  after charges, and shows the best trade and the top 3.
+- This is an upper bound on what the CAS trade offered: the last trade may have been a small lot.
+- Each file is read once (`bhav_cas.json`).
+- An exchange whose files can't be downloaded is skipped after 6 failures, and the panel says so.
+
 **From 7 Dec 2026:** under SEBI's revised CAS rules, expiring contracts stop at 3:30 PM and settle on the
 last-30-minute average. The auction no longer sets the settlement price, so the screen switches off after
 6 Dec 2026.

@@ -1712,6 +1712,21 @@ function resBt(x, open) {
     ⭐ = best total with both halves positive (20+ trades); it is used live. ${x.edge ? "" : "No variant passed yet: follow these on paper first."}</div></details>`;
 }
 // ---------- Expiry CAS: the closing-auction trade ----------
+function casBt(b) {                                     // the bhavcopy check of past expiries
+  if (!b || !b.status) return "";
+  if (b.status === "running" && !b.summary) return `<div class="hint">Checking past expiries in the NSE/BSE bhavcopy…</div>`;
+  const s = b.summary, acc = b.access || {};
+  const no = ["NSE", "BSE"].filter(k => acc[k] === false);
+  if (!s) return `<div class="hint">Past expiries: no bhavcopy data yet${no.length ? ` (${no.join(" and ")} files couldn't be downloaded from the server)` : ""}.</div>`;
+  const inr = v => "₹" + Math.round(v || 0).toLocaleString("en-IN");
+  return `<details class="more"><summary>Past expiries since the auction began (bhavcopy): ${s.with_edge} of ${s.expiries} had a mispriced last trade · typical best ${inr(s.median_best_lot)}/lot</summary>
+    <table class="ptable"><tr><th class="l">Expiry</th><th>Close</th><th>Best trade at the last price</th><th>Edge/lot</th><th>Top 3</th></tr>
+    ${(b.results || []).slice().reverse().map(r => `<tr><td class="l">${esc(r.symbol)} ${new Date(r.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</td>
+      <td>${r.close ? Math.round(r.close).toLocaleString("en-IN") : "—"}</td>
+      <td>${r.best ? `${r.best.side} ${Math.round(r.best.strike)} ${r.best.kind} at ${r.best.last} → ${r.best.settle}` : "nothing after charges"}</td>
+      <td>${r.best ? inr(r.best.edge_lot) : "—"}</td><td>${inr(r.sum_top3_lot)}</td></tr>`).join("")}</table>
+    <div class="hint">From the exchanges' end-of-day files: each expiring option's last traded price vs its final settlement price, after STT, charges and brokerage (one lot). An upper bound: the last trade may have been a small lot you couldn't have matched.${no.length ? ` ${no.join(" and ")} files couldn't be downloaded.` : ""} Checked ${esc(b.at || "")}.</div></details>`;
+}
 function casHtml(c) {
   if (!c) return "";
   const B = css("--bull"), R = css("--bear"), G = "#c9a45c", n2 = v => v == null ? "—" : (+v).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -1719,7 +1734,7 @@ function casHtml(c) {
   if (c.status === "rules") return `<div class="pl-card cas-card"><h3>Expiry CAS</h3><div class="hint">From 7 Dec 2026 expiring contracts stop trading at 3:30 PM and settle on the last-30-minute average, not the closing auction (SEBI's revised CAS rules), so the auction trade no longer applies.</div></div>`;
   if (c.status === "idle" || c.status === "error") return `<div class="pl-card cas-card cas-idle"><h3>Expiry CAS <small>closing-auction trade, ${esc(c.window || "15:08-15:42")} on expiry days</small></h3>
     <div class="hint">Next windows: NIFTY ${dt((c.next || {}).nifty)} · SENSEX ${dt((c.next || {}).sensex)}. Until ${dt(c.last_day)} (after that the auction no longer settles expiries).
-    ${c.error ? `<br>⚠ ${esc(c.error)}` : ""}</div></div>`;
+    ${c.error ? `<br>⚠ ${esc(c.error)}` : ""}</div>${casBt(c.bt)}</div>`;
   const vs = c.views || [];
   return vs.map(v => {
     const rows = v.rows || [], h = v.history || [], lo = Math.min(...h), hi = Math.max(...h);
@@ -1734,7 +1749,7 @@ function casHtml(c) {
           <td>${r.max_lots ?? "—"}</td></tr>`).join("")}</table>` : v.close ? `<div class="hint">Nothing priced away from its settlement value by more than the charges${v.final ? "" : " and the safety band"} right now.</div>` : ""}
       <div class="hint">Settles at = what the option pays at the ${v.final ? "auction close" : "indicative close, worst case within the band"}. Edge is after STT (0.125% on exercise, 0.1% on a sale), exchange charges and ₹20 brokerage. BUY = cheaper than its settlement value; SELL = priced above it (sell what you hold). Fill fast, near 3:40 liquidity thins; place the order yourself. If the close moves before the auction ends, a BUY can lose: the band and max lots allow for that.</div>
       ${(v.ladder || []).length ? `<details class="more"><summary>Strikes near the close</summary><table class="ptable"><tr><th>CE bid/ask</th><th>CE settles</th><th>Strike</th><th>PE settles</th><th>PE bid/ask</th></tr>
-        ${v.ladder.map(l => `<tr><td>${n2(l.CE.bid)} / ${n2(l.CE.ask)}</td><td>${n2(l.CE.settle)}</td><td><b>${Math.round(l.strike)}</b></td><td>${n2(l.PE.settle)}</td><td>${n2(l.PE.bid)} / ${n2(l.PE.ask)}</td></tr>`).join("")}</table></details>` : ""}</div>`;
+        ${v.ladder.map(l => `<tr><td>${n2(l.CE.bid)} / ${n2(l.CE.ask)}</td><td>${n2(l.CE.settle)}</td><td><b>${Math.round(l.strike)}</b></td><td>${n2(l.PE.settle)}</td><td>${n2(l.PE.bid)} / ${n2(l.PE.ask)}</td></tr>`).join("")}</table></details>` : ""}${casBt(c.bt)}</div>`;
   }).join("");
 }
 
