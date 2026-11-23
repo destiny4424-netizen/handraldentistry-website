@@ -58,7 +58,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "22 Nov · Expiry CAS: closing-auction trade on NIFTY / SENSEX expiry days"
+VERSION = "23 Nov · Cleaner scanner: 5 tabs, advanced tools behind a switch"
 
 
 def load_env():
@@ -508,6 +508,8 @@ def alert_on(kind):
     kinds = list(SETTINGS.get("alert_kinds", ALERT_KINDS))
     if "cas" not in kinds and not SETTINGS.get("alert_kinds_v2"):
         kinds.append("cas")                            # chosen before Expiry CAS existed: on by default
+    if kind in ("bnf", "cas") and not SETTINGS.get("advanced"):
+        return False                                   # hidden tools (Settings > Show advanced) don't alert
     return bool(alert_config()) and kind in kinds
 
 
@@ -1054,6 +1056,8 @@ def mcx_open(now=None):
 
 def bullion_once():
     demo, today = DEMO, datetime.now(IST).strftime("%Y-%m-%d")
+    if not demo and not SETTINGS.get("advanced"):
+        return                                         # Gold & Silver is hidden: don't spend Dhan requests on it
     if demo:
         contracts = {s: [(_add_days(today, 38), s + "1"), (_add_days(today, 98), s + "2")]
                      for s in BULLION_SYMBOLS}
@@ -1750,7 +1754,7 @@ def cas_loop():
                 idxs = cas_today()
                 nxt = sorted(v for v in (EXPIRY.get("nifty"), EXPIRY.get("sensex")) if v)
                 after_rules = now.date().isoformat() > cas.LAST_DAY
-                if idxs and CAS_FROM <= hm <= CAS_UNTIL and market_open(now):
+                if idxs and CAS_FROM <= hm <= CAS_UNTIL and market_open(now) and SETTINGS.get("advanced"):
                     cas_session(idxs, False)
                 elif not (STATE.get("cas") or {}).get("status") == "done" or hm < CAS_FROM:
                     set_state(cas={"status": "rules" if after_rules else "idle", "today": [k for k, _ in idxs],
@@ -3007,7 +3011,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, (HERE / "static" / "index.html").read_bytes(), "text/html; charset=utf-8")
         elif url.path == "/api/state":
             with LOCK:
-                self.send(200, dict(STATE, local=self.is_local(), admin=self.can_admin(), cloud=CLOUD))
+                self.send(200, dict(STATE, local=self.is_local(), admin=self.can_admin(), cloud=CLOUD,
+                                    advanced=bool(SETTINGS.get("advanced"))))
         elif url.path == "/api/settings":
             if not self.can_admin():
                 return self.send(403, {"error": "Settings can only be changed on the PC."})
@@ -3021,7 +3026,7 @@ class Handler(BaseHTTPRequestHandler):
                             "intra_min_score": int(SETTINGS.get("intra_min_score") or 0),
                             "risk": risk.config(SETTINGS),
                             "min_turnover_cr": liq_limits()[0], "min_volume_lakh": liq_limits()[1],
-                            "token": token_info(),
+                            "token": token_info(), "advanced": bool(SETTINGS.get("advanced")),
                             "alerts": {"on": bool(SETTINGS.get("alerts_on")), "via": SETTINGS.get("alert_via") or "ntfy",
                                    "kinds": list(SETTINGS.get("alert_kinds", ALERT_KINDS)) + ([] if SETTINGS.get("alert_kinds_v2")
                                             or "cas" in SETTINGS.get("alert_kinds", ALERT_KINDS) else ["cas"]),
@@ -3180,6 +3185,11 @@ class Handler(BaseHTTPRequestHandler):
                 liq["intra_min_score"] = int(ms)
             save_settings(intraday_from=t, **liq)
             WAKE.set()                                  # rescan so the change shows now
+            return self.send(200, {"ok": True})
+        if path == "/api/display":
+            save_settings(advanced=bool(body.get("advanced")))
+            CAS_WAKE.set()
+            BULLION_WAKE.set()
             return self.send(200, {"ok": True})
         if path == "/api/took":
             kind = body.get("kind")

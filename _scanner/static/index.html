@@ -302,6 +302,9 @@
   @media (max-width: 900px) { .pl-hero, .pl-grid { grid-template-columns: minmax(0, 1fr); } .pl-gauge svg { max-width: 220px; } }
   .cas-card { margin-bottom: 16px; border-color: rgba(201,164,92,.35); } .cas-card h3 small { font: 400 12px Inter; color: var(--muted); }
   .cas-idle { padding: 10px 14px; } .cas-spark { width: 100%; height: 34px; display: block; margin-top: 4px; }
+  body.simple .adv-only { display: none !important; }
+  body.simple #pickNote, body.simple #btstNote, body.simple #secNote,
+  body.simple #tradesPanel .ptitle small, body.simple #btstBookPanel .ptitle small { display: none; }
   .ol-wrap { margin: 4px 0 6px; } .ol-title { font: 600 24px var(--serif); color: #efe7d4; margin: 0 0 10px; }
   .ol-title small { font: 400 12px Inter; color: var(--muted); }
   .ol-sum { font-size: 14.5px; margin: 0 0 10px; color: var(--text); }
@@ -531,13 +534,14 @@
   <nav class="tabs">
     <button class="tab" data-mode="pk">Intraday<span class="count" id="cntPk">0</span></button>
     <button class="tab" data-mode="btst">Swing<span class="count" id="cntBt">0</span></button>
-    <button class="tab" data-mode="pulse">Pulse<span class="count" id="cntPulse">–</span></button>
-    <button class="tab" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
-    <button class="tab" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
-    <button class="tab" data-mode="mcx">Gold &amp; Silver<span class="count" id="cntMcx">0</span></button>
-    <button class="tab" data-mode="perf">Performance</button>
+    <button class="tab" data-mode="trades">Trades</button>
+    <button class="tab" data-mode="pulse">Market<span class="count" id="cntPulse">–</span></button>
+    <button class="tab adv-only" data-mode="ob">Order Blocks<span class="count" id="cntOb">0</span></button>
+    <button class="tab adv-only" data-mode="bo">Breakouts 15m<span class="count" id="cntBo">0</span></button>
+    <button class="tab adv-only" data-mode="mcx">Gold &amp; Silver<span class="count" id="cntMcx">0</span></button>
+    <button class="tab" data-mode="perf">Stats</button>
     <span class="spacer"></span>
-    <button class="tab alerts" id="alertsBtn" title="Pop-up and sound when a new breakout appears">🔔 Breakout alerts: off</button>
+    <button class="tab alerts adv-only" id="alertsBtn" title="Pop-up and sound when a new breakout appears">🔔 Breakout alerts: off</button>
   </nav>
   <div class="live off" id="live"><span class="dot"></span><span id="liveText">—</span></div>
   <span class="chip" id="tf"></span>
@@ -643,6 +647,13 @@
       <div class="err" id="prefErr"></div>
     </div>
     <div class="sect">
+      <b style="font-size:14px">Display</b>
+      <label class="switch"><input type="checkbox" id="advOn"> Show advanced tools</label>
+      <div class="hint">Order Blocks, the raw 15-minute breakouts list, Gold &amp; Silver, Bank Nifty options, Expiry CAS, the scan funnel and
+      extra market charts, and the backtest / compare / journal tools. Off keeps the scanner to Intraday, Swing, Trades, Market and Stats.</div>
+      <div class="err" id="advErr"></div>
+    </div>
+    <div class="sect">
       <b style="font-size:14px">Phone alerts</b>
       <div class="hint">A notification for every new pick, when its entry triggers, and at T1, T2, the stop or the exit.
       Entries and exits are sent as urgent.</div>
@@ -650,9 +661,9 @@
       <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin:4px 0 2px">
         <label class="switch"><input type="checkbox" class="alKind" value="intra"> Intraday</label>
         <label class="switch"><input type="checkbox" class="alKind" value="swing"> Swing (stocks)</label>
-        <label class="switch"><input type="checkbox" class="alKind" value="bnf"> Bank Nifty options</label>
+        <label class="switch adv-only"><input type="checkbox" class="alKind" value="bnf"> Bank Nifty options</label>
         <label class="switch"><input type="checkbox" class="alKind" value="results"> Results breakouts</label>
-        <label class="switch"><input type="checkbox" class="alKind" value="cas"> Expiry CAS (3:15–3:40)</label></div>
+        <label class="switch adv-only"><input type="checkbox" class="alKind" value="cas"> Expiry CAS (3:15–3:40)</label></div>
       <label for="alVia">Send them by</label>
       <select id="alVia"><option value="ntfy">ntfy app (free, instant push notifications)</option><option value="whatsapp">WhatsApp via CallMeBot</option></select>
       <div id="alNtfy">
@@ -760,9 +771,10 @@
     <div class="perfbar"><h2>Performance</h2><select id="perfMonth"></select>
       <label>Risk per trade ₹ <input id="perfRisk" type="number" min="0" step="100" placeholder="e.g. 1000"></label>
       <small style="color:var(--muted)">Every pick the scanner gives is recorded and scored here. R = multiples of the risk; enter your ₹ risk per trade to see rupees.</small></div>
+    <div class="perfsec" id="perfMine" style="margin-bottom:14px"></div>
     <div class="perfgrid"><div class="perfsec" id="perfIntra"></div><div class="perfsec" id="perfBtst"></div></div>
-    <div class="perfsec" id="perfMine" style="margin-top:14px"></div>
     <div class="perfsec" id="perfDaily" style="margin-top:14px"></div>
+    <div class="adv-only">
     <div class="perfbar" style="margin-top:22px"><h2>Backtest</h2><button id="btRun">Run backtest · last 60 sessions</button>
       <small id="btStatus" style="color:var(--muted)"></small></div>
     <div class="hint" id="btNote" style="margin:4px 0 10px"></div>
@@ -773,6 +785,7 @@
     <div class="perfbar" style="margin-top:22px"><h2>Learning journal</h2>
       <small style="color:var(--muted)">What worked and what failed, grouped by how each trade looked when it was given. Suggestions are advice: tell Claude which to apply.</small></div>
     <div class="perfgrid"><div class="perfsec" id="jrIntra"></div><div class="perfsec" id="jrBtst"></div></div>
+    </div>
   </section>
   <section class="panel full" id="btstBookPanel" hidden>
     <div class="ptitle"><h2>Swing trades</h2><small>the 3 PM list is locked in: entry if price breaks the trigger within 3 sessions, then T1 (half, stop to cost), T2, the stop, or a 10-session time stop</small></div>
@@ -811,7 +824,7 @@
   </section>
   <section class="panel" id="btstPanel" hidden>
     <div class="ptitle"><h2>Swing setups</h2><small id="btstNote"></small></div>
-    <div id="bnfBox"></div>
+    <div id="bnfBox" class="adv-only"></div>
     <div id="resBox"></div>
     <div class="caution" id="btstCaution" hidden></div>
     <div id="btstList"></div>
@@ -834,17 +847,17 @@
 <nav class="bnav" id="bnav">
   <button data-go="pk:picksPanel"><span>◎</span>Intraday</button>
   <button data-go="btst:btstPanel"><span>☾</span>Swing</button>
-  <button data-go="pk:tradesPanel"><span>☰</span>Trades</button>
-  <button data-go="pulse:pulsePanel"><span>◐</span>Pulse</button>
+  <button data-go="trades:tradesPanel"><span>☰</span>Trades</button>
+  <button data-go="pulse:pulsePanel"><span>◐</span>Market</button>
   <button data-go="perf:perfPanel"><span>%</span>Stats</button>
   <button id="moreBtn" type="button"><span>⋯</span>More</button>
 </nav>
 <div class="moresheet" id="moreSheet" hidden>
-  <button data-go="ob:listsPanel">Order Blocks</button>
-  <button data-go="bo:listsPanel">Breakouts 15m</button>
-  <button data-go="mcx:bullionPanel">Gold &amp; Silver</button>
-  <button data-go="pk:mGex">NIFTY gamma (GEX)</button>
-  <button data-go="pk:flowPanel">Scan funnel</button>
+  <button class="adv-only" data-go="ob:listsPanel">Order Blocks</button>
+  <button class="adv-only" data-go="bo:listsPanel">Breakouts 15m</button>
+  <button class="adv-only" data-go="mcx:bullionPanel">Gold &amp; Silver</button>
+  <button class="adv-only" data-go="pk:mGex">NIFTY gamma (GEX)</button>
+  <button class="adv-only" data-go="pk:flowPanel">Scan funnel</button>
   <button id="moreSettings" type="button">Settings</button>
   <button id="moreHealth" type="button">Scanner health</button>
 </div>
@@ -854,7 +867,7 @@
 const $ = id => document.getElementById(id);
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 let state = null, selected = null, mode = "pk", alertsOn = false, seen = null;
-try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo", "mcx", "perf", "pulse"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
+try { const m = localStorage.getItem("mode"); if (["pk", "btst", "ob", "bo", "mcx", "perf", "pulse", "trades"].includes(m)) mode = m; alertsOn = localStorage.getItem("alerts") === "1"; } catch {}
 const view = () => mode === "ob" ? { bullish: state.bullish, bearish: state.bearish, scores: state.scores }
                                  : state.breakouts || { bullish: [], bearish: [], scores: [] };
 
@@ -879,21 +892,25 @@ async function refresh() {
 
 function setLive(cls, text) { $("live").className = "live " + cls; $("liveText").textContent = text; }
 
+const adv = () => !!(state && state.advanced);         // Settings > Show advanced tools
 function render() {
   const s = state;
+  document.body.classList.toggle("simple", !adv());
+  if (!adv() && ["ob", "bo", "mcx"].includes(mode)) mode = "pk";
   $("tf").textContent = mode === "ob" ? s.timeframe + "m" : mode === "btst" ? "1h" : mode === "mcx" ? "1D" : s.breakout_tf + "m";
   $("cntMcx").textContent = ((s.bullion || {}).metals || []).filter(m => m.verdict === "BUY").length;
   $("cntBt").textContent = (s.btst && s.btst.picks || []).length;
   const md = (s.pulse || {}).mood; $("cntPulse").textContent = md ? (md.score > 0 ? "+" : "") + md.score : "–";
   const pk = s.picks || { picks: [] };
   $("cntPk").textContent = pk.picks.length;
-  const show = { pk: ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"],
-                 btst: ["marketPanel", "btstBookPanel", "btstPanel"], ob: ["strengthPanel", "listsPanel"], bo: ["strengthPanel", "listsPanel"],
-                 mcx: ["bullInfoPanel", "bullionPanel"], perf: ["perfPanel"], pulse: ["pulsePanel"] };
+  const show = { pk: adv() ? ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel"] : ["picksPanel"],
+                 btst: adv() ? ["marketPanel", "btstBookPanel", "btstPanel"] : ["btstPanel"], ob: ["strengthPanel", "listsPanel"], bo: ["strengthPanel", "listsPanel"],
+                 mcx: ["bullInfoPanel", "bullionPanel"], perf: ["perfPanel"], pulse: ["pulsePanel"],
+                 trades: ["tradesPanel", "btstBookPanel"] };
   document.body.classList.toggle("noside", mode === "perf" || mode === "pulse");
   ["marketPanel", "tradesPanel", "flowPanel", "sectorPanel", "picksPanel", "btstBookPanel", "btstPanel", "strengthPanel", "listsPanel", "perfPanel", "bullInfoPanel", "bullionPanel", "pulsePanel"]
     .forEach(id => $(id).hidden = !show[mode].includes(id));
-  document.querySelectorAll(".bnav button[data-go]").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode && b.dataset.go !== "pk:tradesPanel" && b.dataset.go !== "pk:marketPanel"));
+  document.querySelectorAll(".bnav button[data-go]").forEach(b => b.classList.toggle("on", b.dataset.go.split(":")[0] === mode));
   $("moreBtn").classList.toggle("on", ["ob", "bo", "mcx"].includes(mode));
   renderMarket(s.market);
   renderStrip(s);
@@ -933,6 +950,7 @@ function render() {
   if (mode === "btst") { renderBtst(); return; }
   if (mode === "mcx") { renderBullion(); return; }
   if (mode === "pulse") { renderPulse(); return; }
+  if (mode === "trades") { renderBtst(); return; }      // Today's trades + swing trades
   if (mode === "perf") { if (!perfData || Date.now() - (render.perfAt || 0) > 60000) { render.perfAt = Date.now(); loadPerf(); loadBacktest(); loadJournal(); } return; }
   const v = view();
   document.querySelector("#bullList").previousElementSibling.textContent = mode === "ob" ? "↗ Bullish" : "↗ Breakouts (up)";
@@ -1731,15 +1749,15 @@ function casHtml(c) {
   if (!c) return "";
   const B = css("--bull"), R = css("--bear"), G = "#c9a45c", n2 = v => v == null ? "—" : (+v).toLocaleString("en-IN", { maximumFractionDigits: 2 });
   const dt = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) : "—";
-  if (c.status === "rules") return `<div class="pl-card cas-card"><h3>Expiry CAS</h3><div class="hint">From 7 Dec 2026 expiring contracts stop trading at 3:30 PM and settle on the last-30-minute average, not the closing auction (SEBI's revised CAS rules), so the auction trade no longer applies.</div></div>`;
-  if (c.status === "idle" || c.status === "error") return `<div class="pl-card cas-card cas-idle"><h3>Expiry CAS <small>closing-auction trade, ${esc(c.window || "15:08-15:42")} on expiry days</small></h3>
+  if (c.status === "rules") return `<div class="pl-card adv-only cas-card"><h3>Expiry CAS</h3><div class="hint">From 7 Dec 2026 expiring contracts stop trading at 3:30 PM and settle on the last-30-minute average, not the closing auction (SEBI's revised CAS rules), so the auction trade no longer applies.</div></div>`;
+  if (c.status === "idle" || c.status === "error") return `<div class="pl-card adv-only cas-card cas-idle"><h3>Expiry CAS <small>closing-auction trade, ${esc(c.window || "15:08-15:42")} on expiry days</small></h3>
     <div class="hint">Next windows: NIFTY ${dt((c.next || {}).nifty)} · SENSEX ${dt((c.next || {}).sensex)}. Until ${dt(c.last_day)} (after that the auction no longer settles expiries).
     ${c.error ? `<br>⚠ ${esc(c.error)}` : ""}</div>${casBt(c.bt)}</div>`;
   const vs = c.views || [];
   return vs.map(v => {
     const rows = v.rows || [], h = v.history || [], lo = Math.min(...h), hi = Math.max(...h);
     const spark = h.length > 2 ? `<svg viewBox="0 0 200 40" class="cas-spark"><polyline fill="none" stroke="${G}" stroke-width="1.5" points="${h.map((y, i) => `${(i / (h.length - 1) * 200).toFixed(1)},${(38 - (y - lo) / ((hi - lo) || 1) * 36).toFixed(1)}`).join(" ")}"/></svg>` : "";
-    return `<div class="pl-card cas-card"><h3>Expiry CAS · ${esc(v.index)} <small>${c.status === "done" ? "session over" : v.final ? "auction close is in" : "auction running"} · ${esc(v.at || "")} · feed ${esc(v.feed || "")}${c.demo ? " · demo data" : ""}</small></h3>
+    return `<div class="pl-card adv-only cas-card"><h3>Expiry CAS · ${esc(v.index)} <small>${c.status === "done" ? "session over" : v.final ? "auction close is in" : "auction running"} · ${esc(v.at || "")} · feed ${esc(v.feed || "")}${c.demo ? " · demo data" : ""}</small></h3>
       <div class="pl-kv"><div>${v.final ? "Auction close" : "Indicative close"}<b style="color:${v.final ? B : G}">${n2(v.close)}</b>${v.final ? "final: options settle at this" : `can still move ±${n2(v.band)}`}</div>
         <div>Lot<b>${v.lot}</b>expiry ${esc(v.expiry || "")}</div><div style="min-width:0">Last minutes${spark}</div></div>
       ${!v.close ? `<div class="hint">Waiting for the indicative close from Dhan's CAS feed (the auction starts at 3:15 PM).</div>` : ""}
@@ -2271,7 +2289,7 @@ function renderMarket(m) {
 
 // ---------- Today's trades ----------
 function renderTrades(tv) {
-  if (mode !== "pk") return;
+  if (mode !== "pk" && mode !== "trades") return;
   const rows = (tv && tv.rows) || [], sm = (tv && tv.summary) || {};
   const hm = t => t ? new Date(t * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }) : "";
   $("tSum").innerHTML = rows.length ? `<span>Picks <b>${sm.count}</b></span><span>Triggered <b>${sm.triggered}</b></span>
@@ -2773,6 +2791,7 @@ async function loadSettings() {
   if (!r.ok) return;
   const st = await r.json();
   showAlerts(st.alerts);
+  $("advOn").checked = !!st.advanced;
   $("cid").value = st.client_id || "";
   const tk = st.token || {};
   $("savedInfo").className = "saved" + (st.token_tail && !tk.expired ? "" : " none");
@@ -2868,6 +2887,11 @@ $("alTest").onclick = async () => {
   try { await post("/api/alerts/test", {}); $("alErr").style.color = "var(--bull)"; $("alErr").textContent = "Sent. Check your phone."; }
   catch (err) { $("alErr").textContent = err.message; }
   try { await loadSettings(); } catch {}
+};
+$("advOn").onchange = async () => {
+  try { await post("/api/display", { advanced: $("advOn").checked }); $("advErr").style.color = "var(--bull)";
+        $("advErr").textContent = $("advOn").checked ? "Advanced tools shown." : "Advanced tools hidden."; refresh(); }
+  catch (err) { $("advErr").style.color = ""; $("advErr").textContent = err.message; }
 };
 $("minScore").oninput = () => $("minScoreVal").textContent = $("minScore").value;
 $("logout").onclick = async () => { await post("/api/logout", {}).catch(() => {}); location.reload(); };
