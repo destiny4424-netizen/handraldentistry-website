@@ -57,6 +57,18 @@ your Dhan account, and ranks the strongest bullish and bearish setups.
 - **Breakout alerts:** turn on **🔔 Breakout alerts** and allow notifications. Each new breakout then
   pops up on your screen with a beep, and its card flashes.
 
+
+**Layout (simple, the default):** five tabs.
+- **Intraday:** breakout picks.
+- **Swing:** stock swing setups and Results breakouts.
+- **Trades:** today's trades, swing trades and Took it.
+- **Market:** mood, Outlook, broad market, sectors, FII/DII, options.
+- **Stats:** your trades first, then performance and the daily backtests.
+
+**Settings → Display → Show advanced tools** brings back Order Blocks, the raw 15-minute breakouts list,
+Gold & Silver, Bank Nifty options, Expiry CAS, the scan funnel and extra market charts, and the backtest /
+compare / journal tools. While they are hidden, the Bank Nifty and CAS alerts are muted, and the Gold & Silver
+and CAS jobs don't use Dhan requests.
 ## Setup (Windows)
 Unzip the folder and double-click **start.bat**. It does the rest:
 1. If Python isn't installed, it installs it, which takes a few minutes the first time.
