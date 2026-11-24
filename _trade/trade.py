@@ -32,7 +32,7 @@ from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "24 Nov 2026 · stock option chains, pinned close button"
+VERSION = "24 Nov 2026 · auto-reload on update, option errors shown"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -1359,7 +1359,7 @@ def main():
                 os.environ.get("MT_PUBLIC_URL") or "https://localhost")
     ALERTS = Alerts(str(DATA), PUSH, now)
     global MOVERS
-    MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"))
+    MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"), QUOTES)
     threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()
     for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop):
         threading.Thread(target=fn, daemon=True).start()

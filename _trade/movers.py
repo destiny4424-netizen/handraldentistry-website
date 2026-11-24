@@ -97,10 +97,11 @@ def opening_range_breaks(candles, pdh=None, pdl=None):
 
 
 class Movers:
-    def __init__(self, dhan, instruments, now_fn, daily_fn, liq_fn=lambda: {}):
+    def __init__(self, dhan, instruments, now_fn, daily_fn, liq_fn=lambda: {}, quotes=None):
         """daily_fn(): {symbol: daily candles (oldest first, completed days)} - the auto-trader's cache.
         liq_fn(): saved changes to LIQ_DEFAULTS."""
         self.D, self.INST, self.now, self.daily_fn, self.liq_fn = dhan, instruments, now_fn, daily_fn, liq_fn
+        self.quotes = quotes if quotes is not None else {}       # the app's live quotes (a fallback for index cards)
         self.snap, self.snap_at = None, 0
         self.breaks, self.breaks_at, self.breaks_day = [], None, ""
         self.prev_oi, self.prev_oi_day = {}, ""
@@ -230,6 +231,10 @@ class Movers:
             q = iq.get(tuple(k.split(":"))) or {}
             ltp = float(q.get("last_price") or 0)
             prev = float((q.get("ohlc") or {}).get("close") or 0)
+            if not ltp:                                    # after the close Dhan can send 0: use what we know
+                ltp = float((self.quotes.get(k) or {}).get("ltp") or 0) or prev
+            if not ltp:
+                continue
             idx.append({"name": n, "key": k, "ltp": round(ltp, 2), "chg": round(ltp - prev, 2) if prev else None,
                         "pct": round(100 * (ltp - prev) / prev, 2) if prev and ltp else None})
         build = {}
