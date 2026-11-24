@@ -215,6 +215,18 @@ If a later weekly backtest shows no edge, the bot goes back to paper once it has
 The bot's state and log are in `autotrader.json` in the data folder. Its daily candles are in
 `daily-history.json`.
 
+## Trailing the stop-loss (Positions)
+Every open position shows its working stop-loss: a pending SL / SL-M order on the closing side, or a Super order's
+stop-loss leg.
+- **− / +** move the stop by a step. The step starts at about 0.2% of the price (₹0.05 to ₹500), and tapping
+  "step" changes it.
+- **Move stop** sends the new trigger to Dhan in one tap. An SL-limit order keeps the same gap to its limit price.
+- The line above shows what the stop means in rupees: "₹X at risk" or "locks ₹X profit", and how far it is from the
+  price (with the contract size for MCX).
+- **No stop:** a position without one says so. − / + then **Add stop** places an SL-M order for the whole position.
+- **Safety:** a stop on the wrong side of the price (it would fill at once) is refused, on the phone and on the
+  server.
+
 ## Safety checks (before anything reaches Dhan)
 - The instrument, side, product, order type and quantity must make sense. F&O quantity must be a whole number of
   lots. Prices are rounded to the tick. A stop-loss trigger must be on the right side of its price. A super order

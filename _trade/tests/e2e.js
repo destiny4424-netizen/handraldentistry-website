@@ -115,6 +115,29 @@ function check(ok, what) {
   await page.waitForSelector('[data-exit]');
   await page.waitForTimeout(1500);
   await shot('7-positions');
+  // trail the stop-loss with the buttons: add one, move it up, then tidy up (cancel it) for the rest of the test
+  await page.waitForSelector('.trail [data-tm]');
+  check((await page.textContent('.trail')).includes('No stop-loss'), 'trail: a position without a stop says so');
+  await page.click('.trail [data-tm]');
+  await page.click('.trail [data-tm]');
+  await page.click('.trail [data-tgo]');
+  await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Stop placed')), null, {timeout: 10000});
+  await page.waitForFunction(() => (document.querySelector('.trail') || {}).textContent?.includes('Stop-loss'), null, {timeout: 10000});
+  check(true, 'trail: − then "Add stop" places a stop-loss');
+  const before = await page.$eval('.trail .tv b', b => parseFloat(b.textContent.replace(/[₹,]/g, '')));
+  await page.click('.trail [data-tp]');
+  const after = await page.$eval('.trail .tv b', b => parseFloat(b.textContent.replace(/[₹,]/g, '')));
+  check(after > before, `trail: + raises it (${before} → ${after})`);
+  await shot('7b-trail');
+  await page.click('.trail [data-tgo]');
+  await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Stop moved')), null, {timeout: 10000});
+  check(true, 'trail: "Move stop" sends it');
+  await page.evaluate(async () => {
+    const r = await api('/api/orders');
+    for (const o of r.orders.filter(o => o.orderType === 'STOP_LOSS_MARKET' && ['PENDING', 'TRANSIT', 'TRIGGERED'].includes(o.orderStatus)))
+      await api('/api/order/cancel', {order_id: o.orderId});
+  });
+  await page.waitForTimeout(800);
   const posText = await page.textContent('#tab-positions');
   check(/₹[\d,]+\.\d\d/.test(await page.textContent('#pnlCard')) && /@ ₹[\d,]+\.\d\d · LTP ₹[\d,]+\.\d\d/.test(posText),
     'positions show rupees and paise (P&L, average, LTP)');
