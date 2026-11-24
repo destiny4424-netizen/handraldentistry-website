@@ -260,3 +260,4 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .trail .tv b { font-size: 17px; }
 .trail .tgo { flex: 1.6; height: 44px; border-radius: 12px; background: var(--buy); color: #fff; font-weight: 700; font-size: 14px; }
 .trail .tgo.off { background: var(--line); color: var(--muted); }
+.trail .trail-status { margin-top: 6px; }
