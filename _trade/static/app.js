@@ -8,7 +8,9 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 
 function pref(k, d) { try { const v = localStorage.getItem('mt-' + k); return v === null ? d : v === '1'; } catch (e) { return d; } }
 function setPref(k, v) { try { localStorage.setItem('mt-' + k, v ? '1' : '0'); } catch (e) { /* private mode */ } }
-const S = {trail: {}, chainAll: pref('chainAll', false), liq: {}, wlGood: pref('wlGood', true), mkGood: pref('mkGood', true), status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
+function savedView() { try { return localStorage.getItem('mt-view') || 'wl'; } catch (e) { return 'wl'; } }
+function setView(v) { try { localStorage.setItem('mt-view', v); } catch (e) { /* private mode */ } }
+const S = {miniAll: pref('miniAll', false), view: savedView(), trail: {}, chainAll: pref('chainAll', false), liq: {}, wlGood: pref('wlGood', true), mkGood: pref('mkGood', true), status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
   orderFilter: 'open', insDays: 90, chainUl: 'NIFTY', chainExp: '', posKeys: [], lastOrders: [], ticket: null};
 
 async function api(path, body, method) {
@@ -209,11 +211,10 @@ function showTab(t) {
   if (t === 'orders') loadOrders();
   if (t === 'watch') loadPlan();
   if (t === 'positions') loadPositions();
-  if (t === 'chain') loadChain(true);
   if (t === 'insights') loadInsights();
   if (t === 'account') loadAccount();
   if (t === 'auto') loadAuto();
-  if (t === 'market') loadMarket();
+  if (t === 'watch') loadMarket();
   window.scrollTo(0, 0);
 }
 $('#tabs').onclick = e => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); };
@@ -268,14 +269,29 @@ function updateQuotes() {
 }
 
 // ---- watchlists ----------------------------------------------------------------------------------
+const MK_LISTS = [['gainers', 'Top gainers'], ['losers', 'Top losers'], ['breakouts', '15-min breakouts'], ['volume', 'Volume shockers'],
+  ['highs', '52-week high'], ['lows', '52-week low'], ['buildup', 'OI build-up'], ['sectors', 'Sectors']];
+function showView() {
+  const mk = S.view !== 'wl';
+  $('#wlView').classList.toggle('hidden', mk);
+  $('#mkView').classList.toggle('hidden', !mk);
+  $('#wlEdit').classList.toggle('hidden', mk);
+}
 function renderWlTabs() {
   const el = $('#wlTabs');
-  el.innerHTML = S.wl.map((w, i) => `<button data-i="${i}" class="${i === S.wlIdx ? 'on' : ''}">${esc(w.name)}</button>`).join('') +
-    (S.editWl ? '<button data-new="1">+ New list</button>' : '');
+  const onWl = S.view === 'wl';
+  el.innerHTML = S.wl.map((w, i) => `<button data-i="${i}" class="${onWl && i === S.wlIdx ? 'on' : ''}">${esc(w.name)}</button>`).join('') +
+    (S.editWl ? '<button data-new="1">+ New list</button>' : '') + '<span class="chip-sep"></span>' +
+    MK_LISTS.map(([k, l]) => `<button data-mk="${k}" class="mkchip ${S.view === k ? 'on' : ''}">${l}</button>`).join('');
+  showView();
   $('#wlFilter').classList.toggle('on', S.wlGood);
   $('#wlFilter').textContent = (S.wlGood ? '✓ ' : '') + 'F&O · good volume';
   el.onclick = e => {
     const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.mk) {
+      S.view = S.mk = b.dataset.mk; setView(S.view);
+      renderWlTabs(); renderMarket(); loadMarket(); return;
+    }
     if (b.dataset.new) {
       const n = prompt('Name of the new watchlist'); if (!n) return;
       S.wl.push({name: n.slice(0, 30), keys: []}); S.wlIdx = S.wl.length - 1; saveWl();
@@ -286,6 +302,7 @@ function renderWlTabs() {
       else S.wl[S.wlIdx].name = n.slice(0, 30);
       saveWl();
     } else { S.wlIdx = +b.dataset.i; }
+    S.view = 'wl'; setView('wl');
     renderWlTabs(); renderWl(); pollQuotes();
   };
 }
@@ -367,6 +384,7 @@ $('#sheet').addEventListener('click', e => {
   if (e.target.classList.contains('sheet-bg') || e.target.closest('.sh-close')) return closeSheet();
   const ob = e.target.closest('[data-obuy]');
   if (ob) return openTicket(ob.dataset.obuy, 'BUY');
+  if (e.target.closest('[data-mall]') && S.mini) { S.miniAll = !S.miniAll; setPref('miniAll', S.miniAll); return loadMiniChain(S.mini.key); }
   const me = e.target.closest('[data-mexp]');
   if (me && S.mini) { S.mini.expiry = me.dataset.mexp; loadMiniChain(S.mini.key); }
 });
@@ -422,7 +440,7 @@ async function loadMiniChain(key) {
   const spot = r.spot;
   const atm = spot ? r.rows.reduce((a, x) => (a === null || Math.abs(x.strike - spot) < Math.abs(a - spot) ? x.strike : a), null) : null;
   const i = atm === null ? Math.floor(r.rows.length / 2) : r.rows.findIndex(x => x.strike === atm);
-  const rows = r.rows.slice(Math.max(0, i - 2), i + 3);
+  const rows = S.miniAll ? r.rows : r.rows.slice(Math.max(0, i - 2), i + 3);
   const chg = o => o && o.ltp && o.prev ? (o.ltp - o.prev) / o.prev * 100 : null;
   const side = (o, kind) => o && o.key ? `<td class="mc-b"><button class="mbuy" data-obuy="${esc(o.key)}">Buy</button></td>
       <td class="mc-p ${kind}"><b>₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>` : `<td class="mc-b"></td><td class="mc-p"></td>`;
@@ -430,6 +448,7 @@ async function loadMiniChain(key) {
       <td class="mc-b"><button class="mbuy" data-obuy="${esc(o.key)}">Buy</button></td>` : `<td class="mc-p"></td><td class="mc-b"></td>`;
   const exps = (r.expiries || []).slice(0, 3);
   $('#miniChain').innerHTML = `<div class="mc-head"><span class="section-title" style="margin:0">Options</span>
+      <button class="ghost sm ${S.miniAll ? '' : 'on-green'}" data-mall="1">${S.miniAll ? 'All strikes' : 'ATM ±2'}</button>
       <div class="chips scroll">${exps.map(x => `<button data-mexp="${x}" class="${x === r.expiry ? 'on' : ''}">${new Date(x + 'T00:00').toLocaleDateString('en-IN', {day: 'numeric', month: 'short'})}</button>`).join('')}</div></div>
     <table class="mini-chain"><thead><tr><th colspan="2">CALL</th><th>Strike</th><th colspan="2">PUT</th></tr></thead><tbody>
     ${rows.map(x => `<tr class="${spot && x.strike < spot ? 'itm-ce' : ''} ${spot && x.strike > spot ? 'itm-pe' : ''} ${x.strike === atm ? 'atm' : ''}">
@@ -928,58 +947,6 @@ $('#exitAll').onclick = async () => {
 };
 
 // ---- option chain -------------------------------------------------------------------------------------------
-let chainList = null;
-async function loadChain(first) {
-  if (!chainList) {
-    try { chainList = (await api('/api/underlyings')).list; } catch (e) { chainList = []; }
-    $('#ul').innerHTML = chainList.map(u => `<option>${esc(u)}</option>`).join('');
-    $('#ul').onchange = () => { S.chainUl = $('#ul').value; S.chainExp = ''; loadChain(true); };
-  }
-  if (!chainList.includes(S.chainUl) && chainList.length) S.chainUl = chainList[0];
-  $('#ul').value = S.chainUl;
-  let r;
-  try { r = await api(`/api/chain?ul=${encodeURIComponent(S.chainUl)}&expiry=${encodeURIComponent(S.chainExp)}`); }
-  catch (e) { $('#chainInfo').textContent = e.message; return; }
-  if (r.error && !r.rows) { $('#chainInfo').textContent = r.error; $('#chain').innerHTML = ''; return; }
-  S.chainExp = r.expiry;
-  $('#expiries').innerHTML = (r.expiries || []).map(x => `<button data-e="${x}" class="${x === r.expiry ? 'on' : ''}">${new Date(x + 'T00:00').toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: x.slice(0, 4) !== String(new Date().getFullYear()) ? '2-digit' : undefined})}</button>`).join('');
-  $('#expiries').onclick = e => { const b = e.target.closest('button'); if (b) { S.chainExp = b.dataset.e; loadChain(true); } };
-  const days = Math.max(0, Math.round((new Date(r.expiry + 'T15:30') - new Date()) / 864e5));
-  $('#chainInfo').innerHTML = `<span>Spot <b>${px(r.spot)}</b></span><span>PCR <b>${r.pcr ?? '–'}</b></span><span>Lot <b>${r.lot}</b></span><span>${days} day${days === 1 ? '' : 's'} to expiry</span>` +
-    `<button class="ghost sm ${S.chainAll ? '' : 'on-green'}" data-all="1">${S.chainAll ? 'All strikes' : 'ATM ±2'}</button>` +
-    (r.ukey ? `<button class="ghost sm" data-k="${esc(r.ukey)}">Chart</button>` : '') + (r.futures?.[0] ? `<button class="ghost sm" data-k="${esc(r.futures[0])}">Futures</button>` : '') +
-    (r.error ? `<span class="down">${esc(r.error)}</span>` : '');
-  $('#chainInfo').onclick = e => {
-    if (e.target.closest('[data-all]')) { S.chainAll = !S.chainAll; setPref('chainAll', S.chainAll); loadChain(true); return; }
-    const b = e.target.closest('[data-k]'); if (b) openInstrument(b.dataset.k);
-  };
-  const spot = r.spot;
-  let atm = null;
-  if (spot) atm = r.rows.reduce((a, x) => (a === null || Math.abs(x.strike - spot) < Math.abs(a - spot) ? x.strike : a), null);
-  let rows = r.rows;
-  if (!S.chainAll && atm !== null) {                         // ATM, 2 in the money and 2 out of the money on each side
-    const i = rows.findIndex(x => x.strike === atm);
-    rows = rows.slice(Math.max(0, i - 2), i + 3);
-  }
-  const maxOi = Math.max(1, ...rows.map(x => Math.max(x.CE?.oi || 0, x.PE?.oi || 0)));
-  const cell = (o, side) => {
-    if (!o) return `<td class="${side}"></td><td class="${side} wide"></td><td class="${side} wide"></td><td class="${side}"></td>`;
-    const bar = `<span class="bar" style="width:${Math.round((o.oi || 0) / maxOi * 40)}px;color:${side === 'ce' ? 'var(--down)' : 'var(--up)'}"></span>`;
-    const chg = o.ltp && o.prev ? (o.ltp - o.prev) / o.prev * 100 : null;
-    const oiCell = `<td class="${side}">${side === 'ce' ? bar : ''}${big(o.oi)}${side === 'pe' ? bar : ''}<div class="sm ${cls(o.chg_oi)}">${o.chg_oi === null ? '' : signed(o.chg_oi, big)}</div></td>`;
-    const ivCell = `<td class="${side} wide sm">${o.iv ? Number(o.iv).toFixed(1) : '–'}</td>`;
-    const dCell = `<td class="${side} wide sm">${o.delta !== null && o.delta !== undefined ? Number(o.delta).toFixed(2) : '–'}</td>`;
-    const ltp = `<td class="${side} p" data-k="${esc(o.key)}">${px(o.ltp)}<div class="sm ${cls(chg)}">${chg === null ? '' : signed(chg, v => v.toFixed(1)) + '%'}</div></td>`;
-    return side === 'ce' ? oiCell + ivCell + dCell + ltp : ltp + dCell + ivCell + oiCell;
-  };
-  $('#chain').innerHTML = `<thead><tr><th>OI (chg)</th><th class="wide">IV</th><th class="wide">Δ</th><th>CALL LTP</th><th>Strike</th><th>PUT LTP</th><th class="wide">Δ</th><th class="wide">IV</th><th>OI (chg)</th></tr></thead><tbody>` +
-    rows.map(x => `<tr class="${spot && x.strike < spot ? 'itm-ce' : ''} ${spot && x.strike > spot ? 'itm-pe' : ''} ${x.strike === atm ? 'atm' : ''}">${cell(x.CE, 'ce')}<td class="k">${Number(x.strike).toLocaleString('en-IN')}</td>${cell(x.PE, 'pe')}</tr>`).join('') + '</tbody>';
-  if (first && atm !== null) {
-    const tr = $('#chain tr.atm');
-    if (tr) { const w = $('.chain-wrap'); w.scrollTop = tr.offsetTop - w.clientHeight / 2 + 20; }
-  }
-}
-$('#chain').onclick = e => { const c = e.target.closest('td.p[data-k]'); if (c) openInstrument(c.dataset.k); };
 
 // ---- insights ------------------------------------------------------------------------------------------------
 $('#insDays').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.insDays = +b.dataset.d; $$('#insDays button').forEach(x => x.classList.toggle('on', x === b)); loadInsights(); };
@@ -1268,9 +1235,9 @@ async function openJournal(day) {
 }
 
 // ---- market: gainers, losers, breakouts, volume, 52-week, OI, sectors -------------------------------------
-S.mk = 'gainers';
+S.mk = S.view !== 'wl' ? S.view : 'gainers';
 $('#mkGood').onclick = () => { S.mkGood = !S.mkGood; setPref('mkGood', S.mkGood); renderMarket(); };
-$('#mkTabs').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.mk = b.dataset.m; $$('#mkTabs button').forEach(x => x.classList.toggle('on', x === b)); renderMarket(); };
+
 async function loadMarket() {
   try { S.market = await api('/api/market'); } catch (e) { $('#mkList').innerHTML = `<div class="item muted">${esc(e.message)}</div>`; return; }
   renderMarket();
@@ -1435,19 +1402,19 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   if (S.pinSet && !pinToken()) showLock();
   swReg();
   const h = location.hash.replace('#', '');
-  if (['watch', 'market', 'chain', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
+  if (['watch', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
+  if (h === 'market' || h === 'chain') setTimeout(() => showTab('watch'), 0);
   if (h === 'journal') setTimeout(() => openJournal(), 800);
   await loadStatus();
   renderWlTabs(); renderWl();
-  loadFunds(); loadOrders(); loadPlan();
+  loadFunds(); loadOrders(); loadPlan(); loadMarket();
   setInterval(() => { if (!document.hidden && S.tab === 'watch') loadPlan(); }, 120000);
   setInterval(pollQuotes, 1000);
   setInterval(loadStatus, 15000);
   setInterval(loadFunds, 20000);
   setInterval(() => { if (document.hidden) return; if (S.tab === 'orders') loadOrders(); if (S.tab === 'positions') loadPositions(); }, 2500);
-  setInterval(() => { if (!document.hidden && S.tab === 'chain') loadChain(false); }, 3500);
   setInterval(() => { if (!document.hidden && S.tab === 'auto') loadAuto(); }, 15000);
-  setInterval(() => { if (!document.hidden && S.tab === 'market') loadMarket(); }, 20000);
+  setInterval(() => { if (!document.hidden && S.tab === 'watch') loadMarket(); }, 20000);
   setInterval(() => { if (!document.hidden && S.tab !== 'orders') loadOrders(); }, 10000);
   pollQuotes();
 })();

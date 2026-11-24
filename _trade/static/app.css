@@ -274,3 +274,8 @@ table.mini-chain { width: 100%; border-collapse: collapse; font-variant-numeric:
 .mini-chain tr.itm-ce td.ce, .mini-chain tr.itm-pe td.pe { background: var(--warnbg); }
 .mini-chain .mc-b { text-align: center; width: 52px; }
 .mbuy { padding: 7px 10px; border-radius: 8px; background: var(--buy); color: #fff; font-weight: 700; font-size: 12px; }
+.chip-sep { flex: 0 0 1px; align-self: stretch; background: var(--line); margin: 2px 4px; }
+#wlTabs .mkchip { border-style: dashed; }
+#wlTabs .mkchip.on { border-style: solid; }
+.wl-head { gap: 8px; }
+.wl-head #wlTabs { flex: 1; min-width: 0; }

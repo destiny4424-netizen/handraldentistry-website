@@ -46,11 +46,17 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   **Buy** button that opens that option's order ticket. Up to 3 expiries, refreshed every 5 seconds. Market depth and
   the Open/High/Low boxes were removed to keep the screen simple. (An "Open in TradingView" link was tried and
   removed: on the iPhone it opened the website, not the app.)
-- **Option chain:** by default the ATM strike with 2 in-the-money and 2 out-of-the-money strikes on each side.
-  "ATM ±2" switches to all strikes, and the choice is remembered on the phone.
+- **Option chain** (on the stock's or index's screen): by default the ATM strike with 2 in-the-money and 2
+  out-of-the-money strikes on each side, with Buy buttons. "ATM ±2" switches to all strikes, and the choice is
+  remembered on the phone.
 
-## Market tab
-What's moving among the liquid F&O stocks (about 200, those with futures). Tap any stock to open it and trade.
+## Market lists (in the Watchlist tab)
+There are no separate Market or Options tabs any more: the Watchlist tab has everything. It shows the index cards and
+breadth at the top, then one row of chips, with your watchlists first and then the market lists below. Tap any stock
+to open it and trade. The full option chain is on each stock's or index's own screen, under the chart, with an
+"ATM ±2 / All strikes" switch.
+
+The market lists cover the liquid F&O stocks (about 200, those with futures).
 - **Indices** (NIFTY, BANK NIFTY, FIN NIFTY, MIDCAP SELECT, SENSEX, VIX) and **breadth** (how many are up or down).
 - **Top gainers / top losers:** 15 each by % change today, with volume against usual.
 - **15-min breakouts:** the first 15-minute candle (9:15–9:30) is the range. A later 15-minute candle closing above
@@ -64,7 +70,7 @@ What's moving among the liquid F&O stocks (about 200, those with futures). Tap a
   build-up, short covering, long unwinding.
 - **Sectors:** the average % change of each sector's F&O stocks (the scanner's sector list).
 
-**"F&O · good volume only"** (on by default, in the Market tab and on the watchlist):
+**"F&O · good volume only"** (on by default, for the market lists and the watchlists):
 - **Good volume** is the scanner's liquidity rule: over the last 20 sessions the stock traded on average at least
   ₹200 crore and 5 lakh shares a day, and today it has traded at least 0.8× its usual volume for this time of day.
   "Change" edits the three numbers (saved in settings.json as `liquidity`).

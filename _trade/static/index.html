@@ -23,8 +23,6 @@
 <div id="banner" class="banner hidden"></div>
 <nav class="tabs" id="tabs">
   <button data-tab="watch" class="on"><i>☰</i><span>Watchlist</span></button>
-  <button data-tab="market"><i>▲</i><span>Market</span></button>
-  <button data-tab="chain"><i>⛓</i><span>Options</span></button>
   <button data-tab="orders"><i>⇄</i><span>Orders</span><b id="ordersBadge" class="badge hidden"></b></button>
   <button data-tab="positions"><i>◧</i><span>Positions</span></button>
   <button data-tab="auto"><i>⚙</i><span>Auto</span></button>
@@ -36,32 +34,20 @@
     <div id="planCard"></div>
     <div class="search"><input id="q" type="search" placeholder="Search stocks, indices, futures, options  (e.g. nifty 26000 ce)" autocomplete="off" spellcheck="false"></div>
     <div id="results" class="results hidden"></div>
-    <div class="wl-head"><div id="wlTabs" class="chips"></div><button id="wlEdit" class="ghost sm">Edit</button></div>
-    <div class="wl-filter"><button id="wlFilter" class="chip-toggle">F&amp;O · good volume</button><span id="wlHidden" class="muted small"></span></div>
-    <div id="wl" class="list"></div>
-    <div id="wlEmpty" class="empty hidden">This list is empty. Search above and tap ＋ to add stocks, indices, futures or options.</div>
-  </section>
-  <section id="tab-market" class="tab">
     <div id="mkIdx" class="mk-idx"></div>
     <div id="mkBreadth"></div>
-    <div class="chips scroll" id="mkTabs">
-      <button data-m="gainers" class="on">Top gainers</button><button data-m="losers">Top losers</button>
-      <button data-m="breakouts">15-min breakouts</button><button data-m="volume">Volume shockers</button>
-      <button data-m="highs">52-week high</button><button data-m="lows">52-week low</button>
-      <button data-m="buildup">OI build-up</button><button data-m="sectors">Sectors</button>
+    <div class="wl-head"><div id="wlTabs" class="chips scroll"></div><button id="wlEdit" class="ghost sm">Edit</button></div>
+    <div id="wlView">
+      <div class="wl-filter"><button id="wlFilter" class="chip-toggle">F&amp;O · good volume</button><span id="wlHidden" class="muted small"></span></div>
+      <div id="wl" class="list"></div>
+      <div id="wlEmpty" class="empty hidden">This list is empty. Search above and tap ＋ to add stocks, indices, futures or options.</div>
     </div>
-    <div class="wl-filter"><button id="mkGood" class="chip-toggle">F&amp;O · good volume only</button></div>
-    <div id="mkRule" class="muted small"></div>
-    <div id="mkNote" class="muted small" style="margin:8px 0"></div>
-    <div id="mkList" class="list"></div>
-  </section>
-  <section id="tab-chain" class="tab">
-    <div class="chain-head">
-      <select id="ul"></select>
-      <div id="expiries" class="chips scroll"></div>
+    <div id="mkView" class="hidden">
+      <div class="wl-filter"><button id="mkGood" class="chip-toggle">F&amp;O · good volume only</button></div>
+      <div id="mkRule" class="muted small"></div>
+      <div id="mkNote" class="muted small" style="margin:8px 0"></div>
+      <div id="mkList" class="list"></div>
     </div>
-    <div id="chainInfo" class="chain-info"></div>
-    <div class="chain-wrap"><table id="chain" class="chain"></table></div>
   </section>
   <section id="tab-orders" class="tab">
     <div class="chips" id="orderFilter"><button data-f="open" class="on">Open</button><button data-f="done">Executed</button><button data-f="all">All</button></div>
