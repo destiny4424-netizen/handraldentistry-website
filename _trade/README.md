@@ -46,6 +46,10 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   **Buy** button that opens that option's order ticket. Up to 3 expiries, refreshed every 5 seconds. Market depth and
   the Open/High/Low boxes were removed to keep the screen simple. (An "Open in TradingView" link was tried and
   removed: on the iPhone it opened the website, not the app.)
+- **Option chain sources:** Dhan's option chain is asked with the index's segment; for a stock, NSE_EQ first and then
+  NSE_FNO, as the scanner does. The segment that works is remembered. If Dhan's chain still has nothing, the chain is
+  built from the options' own quotes (one request), so stocks always show prices and Buy buttons ("prices from each
+  option's own quote" under the table).
 - **Option chain** (on the stock's or index's screen): by default the ATM strike with 2 in-the-money and 2
   out-of-the-money strikes on each side, with Buy buttons. "ATM ±2" switches to all strikes, and the choice is
   remembered on the phone.
