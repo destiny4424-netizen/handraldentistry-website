@@ -280,3 +280,25 @@ table.mini-chain { width: 100%; border-collapse: collapse; font-variant-numeric:
 #wlTabs .mkchip.on { border-style: solid; }
 .wl-head { gap: 8px; }
 .wl-head #wlTabs { flex: 1; min-width: 0; }
+
+/* Quick tab: 1-OTM option, limit buy, stop after the fill */
+.qk input, .qkp input { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
+.qk-dir { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.qk-dir button { padding: 12px 8px; border-radius: 12px; font-weight: 700; font-size: 16px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.qk-dir small { font-weight: 400; font-size: 12px; opacity: .85; }
+.qk-up { background: var(--upbg); color: var(--up); } .qk-down { background: var(--downbg); color: var(--down); }
+.qk-up.on { background: var(--up); color: #fff; } .qk-down.on { background: var(--down); color: #fff; }
+.qkp h3 { margin: 0 0 4px; font-size: 18px; }
+.qkp .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.qkp label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.qk-lots { display: flex; align-items: center; gap: 6px; }
+.qk-lots button { width: 40px; height: 42px; border-radius: 10px; border: 1px solid var(--line); font-size: 20px; }
+.qk-lots input { text-align: center; }
+.qk-money { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; text-align: center; }
+.qk-money div { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 4px; }
+.qk-money b { display: block; font-size: 15px; margin-top: 2px; }
+.qk-go { width: 100%; padding: 14px; border-radius: 12px; font-weight: 700; font-size: 16px; background: var(--buy); color: #fff; }
+.qk-go:disabled { opacity: .5; }
+.qk-h { font-size: 14px; color: var(--muted); margin: 18px 2px 8px; font-weight: 600; }
+.qk-item { padding: 10px 12px; }
+.qk-item .note { font-size: 13px; margin-top: 3px; }

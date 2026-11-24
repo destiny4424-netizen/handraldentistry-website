@@ -30,9 +30,10 @@ import mcx                                              # noqa: E402
 from webpush import Push                                # noqa: E402
 from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
+import quick                                            # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "24 Nov 2026 · auto-reload on update, option errors shown"
+VERSION = "24 Nov 2026 · Quick tab: 1-OTM option, limit buy, stop-loss after the fill"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -511,6 +512,99 @@ def place(b, internal=False, level=None):
     if RULES:
         RULES.record_sent(o, it, rows, level, opening, confirmed=internal)
     return 200, {"ok": True, "orders": rows, "sym": it["name"], "warnings": warn}
+
+
+# ---- Quick option trade: 1 strike OTM, limit buy, stop-loss placed after the fill -------------
+QUICK = None
+
+
+def funds_available():
+    try:
+        f = D.funds()
+    except dhanlib.DhanError:
+        return None
+    v = f.get("availabelBalance", f.get("availableBalance"))
+    return float(v) if v is not None else None
+
+
+def quick_plan(ul, direction, expiry=""):
+    """The 1-strike-OTM option of an underlying for a move up (call) or down (put), ready to buy."""
+    ul = str(ul or "").upper().strip()
+    direction = "down" if str(direction).lower() in ("down", "bear", "pe", "sell") else "up"
+    exps = INST.chain_info(ul)
+    if not exps:
+        return 400, {"error": f"No options found for {ul or 'that name'}. Type the symbol, e.g. RELIANCE or NIFTY."}
+    exp = expiry if expiry in exps else quick.pick_expiry(exps, now().date())
+    c = chain(ul, exp)
+    if c.get("error"):
+        return 400, {"error": c["error"]}
+    if not c.get("spot"):
+        return 400, {"error": f"No live price for {ul} yet, so the at-the-money strike can't be worked out."}
+    kind = "CE" if direction == "up" else "PE"
+    atm, strike = quick.pick_strike([r["strike"] for r in c["rows"]], c["spot"], direction)
+    row = next((r for r in c["rows"] if r["strike"] == strike), None)
+    opt = (row or {}).get(kind)
+    if not opt or not opt.get("key"):
+        return 400, {"error": f"No {kind} one strike out of the money for {ul} {exp}."}
+    it = INST.get(opt["key"]) or {}
+    tick = it.get("tick") or 0.05
+    price = quick.tick_round(opt.get("ask") or opt.get("ltp") or 0, tick)
+    return 200, {"ul": ul, "direction": direction, "kind": kind, "expiry": exp, "expiries": exps[:4],
+                 "spot": c["spot"], "atm": atm, "strike": strike, "key": opt["key"], "name": it.get("name") or f"{ul} {strike} {kind}",
+                 "ltp": opt.get("ltp"), "bid": opt.get("bid"), "ask": opt.get("ask"), "oi": opt.get("oi"),
+                 "lot": it.get("lot") or c.get("lot") or 1, "tick": tick, "price": price,
+                 "stop": quick.default_stop(price, tick) if price else None, "available": funds_available()}
+
+
+def quick_order(b):
+    """A LIMIT buy of the option; the watcher places its stop-loss once it fills."""
+    key = str(b.get("key") or "")
+    it = INST.get(key)
+    if not it or not it.get("opt"):
+        return 400, {"error": "Pick the option again (tap Up or Down)."}
+    try:
+        lots, price, stop = int(b.get("lots") or 0), float(b.get("price") or 0), float(b.get("stop") or 0)
+    except (TypeError, ValueError):
+        return 400, {"error": "Lots, price and stop-loss must be numbers."}
+    tick, lot = it["tick"] or 0.05, it["lot"] or 1
+    price, stop = quick.tick_round(price, tick), quick.tick_round(stop, tick)
+    if lots < 1:
+        return 400, {"error": "Buy at least 1 lot."}
+    if price <= 0:
+        return 400, {"error": "Enter the limit price."}
+    if not 0 < stop < price:
+        return 400, {"error": "The stop-loss must be below your buy price (and above zero)."}
+    product = "MARGIN" if str(b.get("product") or "").upper() in ("MARGIN", "NRML", "CARRY") else "INTRADAY"
+    avail = funds_available()
+    m = quick.money(avail, price, lots * lot, stop)
+    if avail is not None and m["remaining"] < 0 and not b.get("big_ok"):
+        return 400, {"error": f"This needs {insights.rupees(m['used'])} but only {insights.rupees(avail)} is available.",
+                     "money": m}
+    code, r = place({"key": key, "side": "BUY", "qty": lots * lot, "product": product, "type": "LIMIT",
+                     "price": price, "validity": "DAY", "big_ok": b.get("big_ok")})
+    if code != 200 or not r.get("ok"):
+        return code, r
+    if r.get("armed"):                                 # Rules mode holds the order until a candle reacts
+        return code, r
+    oid = str(((r.get("orders") or [{}])[0]).get("orderId") or "")
+    if oid and QUICK:
+        QUICK.add(oid, key, it.get("name") or it["sym"], lots * lot, price, stop, product, tick)
+        QUICK_WAKE.set()
+    return 200, dict(r, money=m, stop=stop, note="Limit buy sent. The stop-loss goes in by itself as soon as it fills.")
+
+
+QUICK_WAKE = threading.Event()
+
+
+def quick_loop():
+    while True:
+        try:
+            if QUICK and D.ready and QUICK.open_items():
+                QUICK.check()
+        except Exception:
+            traceback.print_exc()
+        QUICK_WAKE.wait(3)
+        QUICK_WAKE.clear()
 
 
 def preview(b):
@@ -997,6 +1091,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chain":
             r = chain(q.get("ul", "NIFTY"), q.get("expiry", ""))
             return self.send(200, r)
+        if path == "/api/quick/plan":
+            code, r = quick_plan(q.get("ul"), q.get("dir"), q.get("expiry") or "")
+            return self.send(code, r)
+        if path == "/api/quick/orders":
+            return self.send(200, {"items": QUICK.view() if QUICK else []})
         if path == "/api/underlyings":
             return self.send(200, {"list": INST.option_underlyings()})
         if path == "/api/chart":
@@ -1118,6 +1217,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(500, {"error": f"Something went wrong: {e}"})
 
     def api_post(self, path, b):
+        if path == "/api/quick/order":
+            code, r = quick_order(b)
+            return self.send(code, r)
         if path == "/api/order/preview":
             return self.send(200, preview(b))
         if path == "/api/order":
@@ -1358,6 +1460,10 @@ def main():
     PUSH = Push(str(DATA), lambda: SETTINGS, save_settings,
                 os.environ.get("MT_PUBLIC_URL") or "https://localhost")
     ALERTS = Alerts(str(DATA), PUSH, now)
+    global QUICK
+    QUICK = quick.Watcher(str(DATA), D.order, place, D.modify_order,
+                          notify=lambda t, body: PUSH.send(t, body, tag="quick") if PUSH else None)
+    threading.Thread(target=quick_loop, daemon=True).start()
     global MOVERS
     MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"), QUOTES)
     threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()

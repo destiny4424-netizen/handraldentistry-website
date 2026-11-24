@@ -23,6 +23,7 @@
 <div id="banner" class="banner hidden"></div>
 <nav class="tabs" id="tabs">
   <button data-tab="watch" class="on"><i>☰</i><span>Watchlist</span></button>
+  <button data-tab="quick"><i>⚡</i><span>Quick</span></button>
   <button data-tab="orders"><i>⇄</i><span>Orders</span><b id="ordersBadge" class="badge hidden"></b></button>
   <button data-tab="positions"><i>◧</i><span>Positions</span></button>
   <button data-tab="auto"><i>⚙</i><span>Auto</span></button>
@@ -48,6 +49,18 @@
       <div id="mkNote" class="muted small" style="margin:8px 0"></div>
       <div id="mkList" class="list"></div>
     </div>
+  </section>
+  <section id="tab-quick" class="tab">
+    <div class="card qk">
+      <div class="qk-row"><input id="qkUl" list="qkUls" placeholder="Stock or index, e.g. RELIANCE" autocomplete="off" spellcheck="false" autocapitalize="characters">
+        <datalist id="qkUls"></datalist></div>
+      <div class="qk-dir"><button id="qkUp" class="qk-up">▲ Going up<small>buy 1-OTM call</small></button>
+        <button id="qkDown" class="qk-down">▼ Going down<small>buy 1-OTM put</small></button></div>
+      <div id="qkErr" class="error"></div>
+    </div>
+    <div id="qkPlan"></div>
+    <h3 class="qk-h">Quick orders today</h3>
+    <div id="qkList" class="list"></div>
   </section>
   <section id="tab-orders" class="tab">
     <div class="chips" id="orderFilter"><button data-f="open" class="on">Open</button><button data-f="done">Executed</button><button data-f="all">All</button></div>

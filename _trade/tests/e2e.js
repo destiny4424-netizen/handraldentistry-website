@@ -461,6 +461,34 @@ function check(ok, what) {
   await page.click('#pinOff');
   await page.waitForSelector('#pinOn');
 
+  // Quick tab: 1-OTM option, limit buy, stop-loss once it fills
+  await apiPost('/api/rules/settings', {on: false});
+  await page.click('#tabs button[data-tab="quick"]');
+  await page.fill('#qkUl', 'RELIANCE');
+  await page.click('#qkUp');
+  await page.waitForSelector('#qkGo', {timeout: 15000});
+  const qName = await page.textContent('.qkp h3');
+  check(/CE|CALL/.test(qName), 'Quick: Up picks a call (' + qName.trim() + ')');
+  check(/\d/.test(await page.textContent('#qkUsed')) && /\d/.test(await page.textContent('#qkRem')), 'Quick: shows amount used and remaining');
+  const lot = await page.evaluate(() => S.qk.lot);
+  await page.click('#qkPlus');
+  check((await page.textContent('#qkQty')).includes((2 * lot).toLocaleString('en-IN')), 'Quick: + adds a lot');
+  await page.click('#qkMinus');
+  await page.click('#qkPct button[data-pct="20"]');
+  const pr = await page.evaluate(() => S.qk.price);
+  check(Math.abs(parseFloat(await page.inputValue('#qkStop')) - pr * 0.8) < 0.11, 'Quick: −20% sets the stop');
+  await page.fill('#qkPrice', String(Math.round(pr * 1.5 * 10) / 10));     // above the market: the pretend Dhan fills it
+  await shot('14-quick');
+  await page.click('#qkGo');
+  await page.waitForFunction(() => /Stop-loss in/.test(document.querySelector('#qkList').textContent), null, {timeout: 20000});
+  check(true, 'Quick: buy filled and the stop-loss went in by itself');
+  check((await page.textContent('#qkList')).includes('stop-loss placed'), 'Quick: the list says where the stop is');
+  await shot('15-quick-done');
+  await page.fill('#qkUl', 'RELIANCE');
+  await page.click('#qkDown');
+  await page.waitForFunction(() => /PE|PUT/.test(document.querySelector('.qkp h3')?.textContent || ''), null, {timeout: 15000});
+  check(true, 'Quick: Down picks a put');
+
   // desktop layout
   const desk = await browser.newPage({viewport: {width: 1280, height: 800}});
   await desk.goto(BASE);
