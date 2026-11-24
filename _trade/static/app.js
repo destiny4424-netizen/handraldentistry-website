@@ -8,7 +8,7 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 
 function pref(k, d) { try { const v = localStorage.getItem('mt-' + k); return v === null ? d : v === '1'; } catch (e) { return d; } }
 function setPref(k, v) { try { localStorage.setItem('mt-' + k, v ? '1' : '0'); } catch (e) { /* private mode */ } }
-const S = {liq: {}, wlGood: pref('wlGood', true), mkGood: pref('mkGood', true), status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
+const S = {chainAll: pref('chainAll', false), liq: {}, wlGood: pref('wlGood', true), mkGood: pref('mkGood', true), status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
   orderFilter: 'open', insDays: 90, chainUl: 'NIFTY', chainExp: '', posKeys: [], lastOrders: [], ticket: null};
 
 async function api(path, body, method) {
@@ -361,6 +361,7 @@ function closeSheet() {
   $('#sheet').classList.add('hidden');
   document.body.style.overflow = '';
   S.sheetKey = null; S.ticket = null;
+  if (lwc) { try { lwc.remove(); } catch (e) { /* gone */ } lwc = null; }
 }
 $('#sheet').addEventListener('click', e => { if (e.target.classList.contains('sheet-bg') || e.target.closest('.sh-close')) closeSheet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').classList.contains('hidden')) closeSheet(); });
@@ -383,7 +384,9 @@ async function openInstrument(key) {
     <div><span class="bigprice" id="shLtp">–</span> <span id="shChg" class="chg"></span></div>
     <div class="stats" id="shStats"></div>
     <div class="chips tf" id="tf">${['1', '5', '15', '60', 'D'].map(t => `<button data-tf="${t}" class="${t === '5' ? 'on' : ''}">${t === 'D' ? 'Day' : t + 'm'}</button>`).join('')}</div>
-    <canvas class="chart" id="chart"></canvas>
+    <div class="chart" id="chart"></div>
+    <div class="tv-row"><a id="shTV" class="ghost sm tv-link" target="_blank" rel="noopener">Open in TradingView ↗</a>
+      <span class="muted small">pinch or scroll to zoom · drag to go back in time</span></div>
     <div class="section-title">Market depth</div><div class="depth" id="depth"><div class="muted small">Waiting for prices…</div></div>
     <div class="ord-actions" style="margin-top:12px">
       <button id="shWl">${inWl(key) ? '✓ In watchlist' : '＋ Watchlist'}</button>
@@ -392,6 +395,9 @@ async function openInstrument(key) {
     ${tradable ? `<div class="bs"><button class="b-buy" id="shBuy">BUY</button><button class="b-sell" id="shSell">SELL</button></div>`
       : '<div class="muted small" style="margin-top:12px">An index can\'t be bought itself: open its option chain, or search for its futures.</div>'}`);
   updateSheetQuote();
+  const tv = tvSymbol(it);
+  if (tv) $('#shTV').href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tv);
+  else $('#shTV').classList.add('hidden');
   $('#shWl').onclick = () => { toggleWl(key); $('#shWl').textContent = inWl(key) ? '✓ In watchlist' : '＋ Watchlist'; };
   if ($('#shChain')) $('#shChain').onclick = () => { S.chainUl = it.ul || it.sym; S.chainExp = it.opt ? it.expiry : ''; closeSheet(); showTab('chain'); };
   if (tradable) { $('#shBuy').onclick = () => openTicket(key, 'BUY'); $('#shSell').onclick = () => openTicket(key, 'SELL'); }
@@ -415,44 +421,62 @@ function updateSheetQuote() {
 }
 
 // ---- chart --------------------------------------------------------------------------------------------
+let lwc = null;
+const IST_SHIFT = 19800;                                    // the chart shows times as UTC: shift them to IST
 async function drawChart(key, tf) {
-  const cv = $('#chart'); if (!cv) return;
-  const ctx = cv.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const W = cv.clientWidth, H = cv.clientHeight;
-  cv.width = W * dpr; cv.height = H * dpr; ctx.scale(dpr, dpr);
-  ctx.fillStyle = css('--muted'); ctx.font = '12px system-ui'; ctx.fillText('Loading chart…', 12, 20);
+  const box = $('#chart'); if (!box) return;
+  if (lwc) { try { lwc.remove(); } catch (e) { /* gone */ } lwc = null; }
+  box.innerHTML = '<div class="muted small" style="padding:12px">Loading chart…</div>';
   let r;
   try { r = await api(`/api/chart?key=${encodeURIComponent(key)}&tf=${tf}`); } catch (e) { r = {error: e.message}; }
   if (S.sheetKey !== key || !$('#chart')) return;
-  ctx.clearRect(0, 0, W, H);
-  if (r.error || !r.rows || !r.rows.length) { ctx.fillStyle = css('--muted'); ctx.fillText(r.error || 'No candles for this period.', 12, 20); return; }
-  const rows = r.rows.slice(-Math.max(30, Math.floor(W / 6)));
-  const hi = Math.max(...rows.map(x => x[2])), lo = Math.min(...rows.map(x => x[3]));
-  const pad = 8, right = 56, top = 10, bot = 18;
-  const y = v => top + (hi - v) / ((hi - lo) || 1) * (H - top - bot);
-  const cw = (W - pad - right) / rows.length;
-  ctx.strokeStyle = css('--line'); ctx.lineWidth = 1; ctx.fillStyle = css('--muted'); ctx.font = '10px system-ui';
-  for (let i = 0; i <= 4; i++) {
-    const v = lo + (hi - lo) * i / 4, yy = y(v);
-    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W - right, yy); ctx.stroke();
-    ctx.fillText(px(v), W - right + 4, yy + 3);
-  }
-  const up = css('--up'), dn = css('--down');
-  rows.forEach((c, i) => {
-    const x = pad + i * cw + cw / 2;
-    const col = c[4] >= c[1] ? up : dn;
-    ctx.strokeStyle = col; ctx.fillStyle = col;
-    ctx.beginPath(); ctx.moveTo(x, y(c[2])); ctx.lineTo(x, y(c[3])); ctx.stroke();
-    const b1 = y(Math.max(c[1], c[4])), b2 = y(Math.min(c[1], c[4]));
-    ctx.fillRect(x - Math.max(1, cw * 0.35), b1, Math.max(2, cw * 0.7), Math.max(1, b2 - b1));
+  if (r.error || !r.rows || !r.rows.length) { box.innerHTML = `<div class="muted small" style="padding:12px">${esc(r.error || 'No candles for this period.')}</div>`; return; }
+  box.innerHTML = '';
+  if (!window.LightweightCharts) { box.innerHTML = '<div class="muted small" style="padding:12px">Chart library didn\'t load.</div>'; return; }
+  const L = window.LightweightCharts;
+  lwc = L.createChart(box, {
+    width: box.clientWidth, height: box.clientHeight,
+    layout: {background: {type: 'solid', color: css('--card')}, textColor: css('--muted'), fontSize: 11},
+    grid: {vertLines: {color: css('--line')}, horzLines: {color: css('--line')}},
+    rightPriceScale: {borderColor: css('--line')},
+    timeScale: {borderColor: css('--line'), timeVisible: tf !== 'D', secondsVisible: false, rightOffset: 4},
+    crosshair: {mode: 0},
+    localization: {priceFormatter: v => Number(v).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})},
   });
-  const last = rows[rows.length - 1][4];
-  ctx.setLineDash([3, 3]); ctx.strokeStyle = css('--buy');
-  ctx.beginPath(); ctx.moveTo(pad, y(last)); ctx.lineTo(W - right, y(last)); ctx.stroke(); ctx.setLineDash([]);
-  const t0 = new Date(rows[0][0] * 1000), t1 = new Date(rows[rows.length - 1][0] * 1000);
-  const f = d => tf === 'D' ? d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short'}) : d.toLocaleString('en-IN', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
-  ctx.fillStyle = css('--muted'); ctx.fillText(f(t0), pad, H - 4); ctx.textAlign = 'right'; ctx.fillText(f(t1), W - right, H - 4); ctx.textAlign = 'left';
+  const up = css('--up'), dn = css('--down');
+  const candles = lwc.addCandlestickSeries({upColor: up, downColor: dn, borderVisible: false, wickUpColor: up, wickDownColor: dn});
+  const vol = lwc.addHistogramSeries({priceFormat: {type: 'volume'}, priceScaleId: '', lastValueVisible: false, priceLineVisible: false});
+  vol.priceScale().applyOptions({scaleMargins: {top: 0.82, bottom: 0}});
+  const t = x => tf === 'D' ? new Date((x[0] + IST_SHIFT) * 1000).toISOString().slice(0, 10) : x[0] + IST_SHIFT;
+  const seen = new Set(), rows = r.rows.filter(x => { const k2 = t(x); if (seen.has(k2)) return false; seen.add(k2); return true; });
+  candles.setData(rows.map(x => ({time: t(x), open: x[1], high: x[2], low: x[3], close: x[4]})));
+  vol.setData(rows.map(x => ({time: t(x), value: x[5] || 0, color: x[4] >= x[1] ? css('--upbg') : css('--downbg')})));
+  lwc.timeScale().setVisibleLogicalRange({from: Math.max(0, rows.length - (tf === 'D' ? 120 : 90)), to: rows.length + 3});
+  new ResizeObserver(() => { if (lwc && $('#chart')) lwc.applyOptions({width: $('#chart').clientWidth}); }).observe(box);
+  const last = rows[rows.length - 1];
+  if (!S.quotes[key] && $('#shLtp')) {                      // no live quote (e.g. after the close): show the last price
+    $('#shLtp').textContent = px(last[4]);
+    $('#shChg').textContent = 'last traded price';
+    $('#shChg').className = 'chg muted';
+  }
+}
+
+// TradingView symbol for "Open in TradingView" (its app opens the link if installed).
+const TV_INDEX = {NIFTY: 'NSE:NIFTY', BANKNIFTY: 'NSE:BANKNIFTY', FINNIFTY: 'NSE:CNXFINANCE', MIDCPNIFTY: 'NSE:NIFTY_MID_SELECT',
+  NIFTYNXT50: 'NSE:NIFTYJR', INDIAVIX: 'NSE:INDIAVIX', SENSEX: 'BSE:SENSEX', BANKEX: 'BSE:BANKEX'};
+function tvName(s) { return String(s || '').toUpperCase().replace(/[-&\s]/g, '_'); }
+function tvSymbol(it) {
+  if (!it) return '';
+  const ex = it.exch === 'BSE' ? 'BSE' : it.exch === 'MCX' ? 'MCX' : 'NSE';
+  if (it.kind === 'INDEX') return TV_INDEX[it.sym] || `${ex}:${tvName(it.sym)}`;
+  if (it.kind === 'EQUITY') return `${ex}:${tvName(it.sym)}`;
+  const ul = TV_INDEX[it.ul] ? TV_INDEX[it.ul].split(':')[1] : tvName(it.ul);
+  if (it.kind.startsWith('FUT')) return `${ex}:${ul}1!`;
+  if (it.opt && ex !== 'MCX' && it.expiry) {                 // e.g. NSE:NIFTY261124C26000
+    const d = it.expiry.replace(/-/g, '').slice(2);
+    return `${ex}:${ul}${d}${it.opt === 'CE' ? 'C' : 'P'}${Number(it.strike)}`;
+  }
+  return `${ex}:${ul}1!`;                                    // MCX options: the underlying future
 }
 
 // ---- order ticket ---------------------------------------------------------------------------------------
@@ -825,12 +849,21 @@ async function loadChain(first) {
   $('#expiries').onclick = e => { const b = e.target.closest('button'); if (b) { S.chainExp = b.dataset.e; loadChain(true); } };
   const days = Math.max(0, Math.round((new Date(r.expiry + 'T15:30') - new Date()) / 864e5));
   $('#chainInfo').innerHTML = `<span>Spot <b>${px(r.spot)}</b></span><span>PCR <b>${r.pcr ?? '–'}</b></span><span>Lot <b>${r.lot}</b></span><span>${days} day${days === 1 ? '' : 's'} to expiry</span>` +
+    `<button class="ghost sm ${S.chainAll ? '' : 'on-green'}" data-all="1">${S.chainAll ? 'All strikes' : 'ATM ±2'}</button>` +
     (r.ukey ? `<button class="ghost sm" data-k="${esc(r.ukey)}">Chart</button>` : '') + (r.futures?.[0] ? `<button class="ghost sm" data-k="${esc(r.futures[0])}">Futures</button>` : '') +
     (r.error ? `<span class="down">${esc(r.error)}</span>` : '');
-  $('#chainInfo').onclick = e => { const b = e.target.closest('[data-k]'); if (b) openInstrument(b.dataset.k); };
-  const rows = r.rows, spot = r.spot;
+  $('#chainInfo').onclick = e => {
+    if (e.target.closest('[data-all]')) { S.chainAll = !S.chainAll; setPref('chainAll', S.chainAll); loadChain(true); return; }
+    const b = e.target.closest('[data-k]'); if (b) openInstrument(b.dataset.k);
+  };
+  const spot = r.spot;
   let atm = null;
-  if (spot) atm = rows.reduce((a, x) => (a === null || Math.abs(x.strike - spot) < Math.abs(a - spot) ? x.strike : a), null);
+  if (spot) atm = r.rows.reduce((a, x) => (a === null || Math.abs(x.strike - spot) < Math.abs(a - spot) ? x.strike : a), null);
+  let rows = r.rows;
+  if (!S.chainAll && atm !== null) {                         // ATM, 2 in the money and 2 out of the money on each side
+    const i = rows.findIndex(x => x.strike === atm);
+    rows = rows.slice(Math.max(0, i - 2), i + 3);
+  }
   const maxOi = Math.max(1, ...rows.map(x => Math.max(x.CE?.oi || 0, x.PE?.oi || 0)));
   const cell = (o, side) => {
     if (!o) return `<td class="${side}"></td><td class="${side} wide"></td><td class="${side} wide"></td><td class="${side}"></td>`;
