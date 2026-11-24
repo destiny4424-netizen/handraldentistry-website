@@ -56,6 +56,10 @@ function check(ok, what) {
   await page.waitForSelector('#shBuy');
   await page.waitForFunction(() => /\d/.test(document.querySelector('#shLtp').textContent));
   await page.waitForTimeout(800);
+  await page.waitForSelector('#chart canvas');
+  check(true, 'instrument chart drawn (TradingView Lightweight Charts)');
+  const tvHref = await page.getAttribute('#shTV', 'href');
+  check(/tradingview\.com\/chart\/\?symbol=NSE%3A[A-Z]/.test(tvHref || ''), 'Open in TradingView link: ' + tvHref);
   await shot('3-instrument');
   await page.click('#shBuy');
   await page.waitForSelector('#tkReview');
@@ -132,6 +136,13 @@ function check(ok, what) {
   await page.waitForTimeout(500);
   await shot('8-chain');
   check(await page.$('#chain tr.atm') !== null, 'chain marks the at-the-money strike');
+  const compactRows = (await page.$$('#chain tbody tr')).length;
+  check(compactRows === 5, `chain shows ATM ±2 by default (${compactRows} strikes)`);
+  await page.click('#chainInfo [data-all]');
+  await page.waitForFunction(() => document.querySelectorAll('#chain tbody tr').length > 5);
+  check(true, 'chain: "All strikes" shows the full chain');
+  await page.click('#chainInfo [data-all]');
+  await page.waitForFunction(() => document.querySelectorAll('#chain tbody tr').length === 5);
   await page.click('#chain tr.atm td.p.ce');
   await page.waitForSelector('#shBuy');
   await page.click('#shBuy');
