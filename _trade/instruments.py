@@ -1,6 +1,7 @@
 """Every instrument Dhan lists (stocks, indices, futures, options on NSE, BSE and MCX), read from
 Dhan's scrip master, with search and option-chain lookups."""
 import csv
+import mcx
 import os
 import threading
 import time
@@ -110,7 +111,10 @@ class Instruments:
                     sym = INDEX_ALIASES.get(sym.upper(), sym.upper().replace(" ", "") if sym.upper().replace(" ", "") in POPULAR_INDICES else sym)
                 ul = sym.split("-")[0] if kind in DERIV else sym
                 key = f"{seg}:{sid}"
-                it = {"key": key, "seg": seg, "id": sid, "kind": kind, "sym": sym, "exch": exch,
+                mult = contract = None
+                if seg == "MCX_COMM":                  # Dhan counts MCX quantity in lots (see mcx.py)
+                    lot, mult, contract = 1, mcx.multiplier(ul), mcx.describe(ul)
+                it = {"mult": mult, "contract": contract, "key": key, "seg": seg, "id": sid, "kind": kind, "sym": sym, "exch": exch,
                       "name": custom or name or sym, "co": name, "lot": lot, "tick": _tick(row.get("SEM_TICK_SIZE")),
                       "expiry": expiry if kind in DERIV else "", "strike": strike if opt else 0, "opt": opt, "ul": ul}
                 by_key[key] = it

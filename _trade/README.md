@@ -65,6 +65,20 @@ Prices come in one request per kind, refreshed every 20 seconds while the tab is
 about a minute for all stocks. Yesterday's futures OI is read once a day. The daily candles (20-day volume, 52-week)
 are the auto-trader's, downloaded each morning. `movers.py`.
 
+## MCX (commodities)
+On MCX, Dhan counts the quantity in **lots**, and a price is quoted for a smaller unit than the lot. For example,
+SILVER100 is priced per 10 g but a lot is 100 g, so a ₹1 move is ₹10 per lot. `mcx.py` has the contract sizes:
+GOLD, GOLDM, GOLDGUINEA, GOLDPETAL, GOLDTEN, SILVER, SILVERM, SILVERMIC, SILVER100, CRUDEOIL(M), NATURALGAS,
+NATGASMINI, COPPER, ZINC(MINI), LEAD(MINI), ALUMINIUM, ALUMINI.
+- **Positions:** Dhan's API sends the open P&L of an MCX position per unit, while its app shows it in rupees.
+  SILVER100 came through 10 times too small. Open MCX P&L is now multiplied before it is shown, or used for the loss
+  limit and the alerts. It is checked against the live price, so the multiplier is never applied twice. Closed MCX
+  P&L already comes in rupees.
+- **Order ticket:** the quantity is in lots ("1 lot of 100 g (price per 10 g) · ₹10 per ₹1 move"). The value, the
+  money at risk and the Rules-mode sizing all include the contract size.
+- **Unknown contracts:** an MCX contract that isn't in the table can't be ordered from the app.
+- **Insights:** MCX round trips are in rupees too.
+
 ## Phone notifications and the PIN lock (Account, at the top)
 **Notifications** reach the phone even when the app is closed. They use Web Push: iPhone (iOS 16.4+) only in the
 home-screen app, so first Safari → Share → Add to Home Screen, open the app from that icon, then Account → Turn on
@@ -279,6 +293,7 @@ insights maths.
 - `insights.py`: round trips, statistics, habits
 - `autotrader.py`: the auto-trader (swing on MTF), its backtest and edge check
 - `rules.py`: Rules mode: key levels, the order checks, confirmation, plan and journal
+- `mcx.py`: MCX contract sizes; fixes the open MCX P&L Dhan sends per unit
 - `movers.py`: the Market tab (gainers, losers, breakouts, volume, 52-week, OI, sectors)
 - `webpush.py`: Web Push (VAPID + aes128gcm); `alerts.py`: what gets notified; `static/sw.js`: the service worker
 - `static/`: the app (HTML, CSS, JavaScript)

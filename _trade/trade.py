@@ -26,12 +26,13 @@ import dhan as dhanlib                                  # noqa: E402
 import insights                                         # noqa: E402
 from autotrader import AutoTrader                       # noqa: E402
 from rules import Rules                                 # noqa: E402
+import mcx                                              # noqa: E402
 from webpush import Push                                # noqa: E402
 from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "24 Nov 2026 · F&O and good-volume filter"
+VERSION = "24 Nov 2026 · MCX lots and P&L fixed"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -269,7 +270,14 @@ def build_order(b):
                       "trailingJump": round_tick(sup.get("trail"), tick)}
         if not sl:
             warn.append("This super order has no stop-loss leg.")
-    value = qty * ref * (1 if eq else 1)
+    mult = 1
+    if it["seg"] == "MCX_COMM":
+        mult = it.get("mult")
+        if not mult:
+            stop.append(f"The app doesn't know the contract size of {it['ul']} yet, so it can't work out the value "
+                        "or the risk. Use Dhan's own app for this one.")
+            mult = 1
+    value = qty * ref * mult
     lim = limits()
     if lim.get("max_order_value") and value > float(lim["max_order_value"]) and not b.get("big_ok"):
         stop.append(f"This order is worth {insights.rupees(value)}, above your limit of "
@@ -284,7 +292,13 @@ def build_order(b):
     if ltp and q.get("uc") and q.get("lc") and price and not (float(q["lc"]) <= price <= float(q["uc"])):
         stop.append(f"The price is outside today's circuit limits (₹{q['lc']} – ₹{q['uc']}).")
     o["_value"] = round(value, 2)
+    o["_mult"] = mult
     return o, it, stop, warn
+
+
+def get_positions():
+    """Dhan's positions, with MCX open P&L corrected (see mcx.py). Used everywhere: screens, loss limit, alerts."""
+    return mcx.fix_positions(D.positions(), QUOTES)
 
 
 def positions_view(pos):
@@ -303,6 +317,11 @@ def positions_view(pos):
             lq = QUOTES.get(k)
             if lq and lq.get("ltp"):
                 p["_ltp"] = lq["ltp"]
+            else:                                      # no live price yet: work it back from Dhan's P&L
+                net = int(p["netQty"])
+                cost = float(p.get("buyAvg") or 0) if net > 0 else float(p.get("sellAvg") or 0)
+                if cost:
+                    p["_ltp"] = round(cost + float(p.get("unrealizedProfit") or 0) / (net * float(p.get("_mult") or 1)), 2)
     return pos, keys
 
 
@@ -352,7 +371,7 @@ def place(b, internal=False, level=None):
     lim = limits()
     positions = []
     try:
-        positions = D.positions()
+        positions = get_positions()
     except dhanlib.DhanError:
         pass
     opening = not is_closing(o, positions)
@@ -425,12 +444,12 @@ def preview(b):
                                                    o["price"] or float((QUOTES.get(it["key"]) or {}).get("ltp") or 0))
         sup = o.get("super")
         if sup and sup.get("stopLossPrice"):
-            risk = abs(sup["price"] - sup["stopLossPrice"]) * o["quantity"]
+            risk = abs(sup["price"] - sup["stopLossPrice"]) * o["quantity"] * o["_mult"]
             out["risk"] = round(risk, 2)
             if sup.get("targetPrice"):
-                out["reward"] = round(abs(sup["targetPrice"] - sup["price"]) * o["quantity"], 2)
+                out["reward"] = round(abs(sup["targetPrice"] - sup["price"]) * o["quantity"] * o["_mult"], 2)
         try:
-            positions = D.positions()
+            positions = get_positions()
             lim = float(limits().get("daily_loss_limit") or 0)
             pnl = today_pnl(positions)
             out["day_pnl"] = round(pnl, 2)
@@ -644,7 +663,7 @@ def alerts_loop():
                 except dhanlib.DhanError:
                     orders = None
                 try:
-                    pnl = today_pnl(D.positions())
+                    pnl = today_pnl(get_positions())
                 except dhanlib.DhanError:
                     pnl = None
                 ALERTS.tick(orders=orders, names=names, pnl=pnl,
@@ -853,7 +872,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/trades":
             return self.send(200, {"trades": D.trades_today()})
         if path == "/api/positions":
-            pos, keys = positions_view(D.positions())
+            pos, keys = positions_view(get_positions())
             want(keys)
             return self.send(200, {"positions": pos, "pnl": round(today_pnl(pos), 2), "limits": limits()})
         if path == "/api/holdings":
@@ -900,7 +919,7 @@ class Handler(BaseHTTPRequestHandler):
                                    "log": RULES.s["log"][:20], "locked": RULES.locked()})
         if path == "/api/rules/plan":
             try:
-                pos = D.positions()
+                pos = get_positions()
             except dhanlib.DhanError:
                 pos = []
             wl = SETTINGS.get("watchlists") or default_watch()
