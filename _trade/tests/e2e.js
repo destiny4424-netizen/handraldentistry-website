@@ -198,6 +198,33 @@ function check(ok, what) {
   check(true, 'market: tapping a stock opens it to trade');
   await page.click('.sh-close');
 
+  // "F&O · good volume" filter: the Market lists and the watchlist hide thin stocks (WIPRO, TATASTEEL in the demo)
+  await page.click('#tabs button[data-tab="market"]');
+  await page.waitForFunction(async () => {
+    if (/of \d+ pass/.test(document.querySelector('#mkRule').textContent) && (S.market.low_volume || []).length) return true;
+    await loadMarket(); return false;
+  }, null, {timeout: 120000, polling: 3000});
+  const shownMk = await page.$$eval('#mkList .item .name', xs => xs.map(x => x.textContent));
+  check(!shownMk.some(t => /WIPRO|TATASTEEL/.test(t)), 'market: thin stocks left out of top gainers');
+  await shot('26-market-filter');
+  await page.click('#mkGood');
+  check(!(await page.textContent('#mkGood')).includes('✓'), 'market: the filter can be switched off');
+  await page.click('#mkGood');
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.fill('#q', 'wipro');
+  await page.waitForSelector('.res[data-key] [data-add]');
+  check((await page.textContent('#results')).includes('F&O'), 'search marks F&O stocks');
+  await page.click('.res[data-key] [data-add]');
+  await page.fill('#q', '');
+  await page.dispatchEvent('#q', 'input');
+  await page.waitForFunction(() => /hidden/.test(document.querySelector('#wlHidden').textContent), null, {timeout: 30000});
+  check(!(await page.textContent('#wl')).includes('WIPRO'), 'watchlist: low-volume stock hidden');
+  await shot('27-watchlist-filter');
+  await page.click('#wlShowAll');
+  await page.waitForFunction(() => document.querySelector('#wl').textContent.includes('WIPRO'));
+  check((await page.textContent('#wl')).includes('low vol'), 'watchlist: "Show all" brings it back, marked low vol');
+  await page.click('#wlFilter');
+
   // Rules mode: level first, wait for the reaction, risk first, the daily plan and journal
   await apiPost('/api/rules/settings', {on: true, confirm_default: true});
   const SBIN = 'NSE_EQ:3045';

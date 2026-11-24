@@ -26,6 +26,23 @@ from picks import sector_of                               # the scanner's sector
 
 IST = timezone(timedelta(hours=5, minutes=30))
 INDICES = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "INDIAVIX"]
+# "Good volume", the scanner's own liquidity rule: on average at least ₹200 crore and 5 lakh shares traded a day
+# (last 20 sessions), and today at least 0.8x the usual volume for this time of day.
+LIQ_DEFAULTS = {"min_turnover_cr": 200, "min_avg_lakh": 5, "min_rvol": 0.8}
+
+
+def liquidity(daily, vol_today, frac, cfg):
+    """turnover_cr, avg_lakh, rvol and good (None when there is no daily history to judge by)."""
+    d = (daily or [])[-20:]
+    if not d:
+        return {"turnover_cr": None, "avg_lakh": None, "rvol": None, "liquid": None, "good": None}
+    avg_v = sum(c["v"] for c in d) / len(d)
+    turnover = sum(c["v"] * c["c"] for c in d) / len(d) / 1e7
+    rvol = (vol_today / (avg_v * frac)) if avg_v and vol_today else None
+    liquid = turnover >= cfg["min_turnover_cr"] and avg_v >= cfg["min_avg_lakh"] * 1e5
+    good = liquid and (rvol is None or rvol >= cfg["min_rvol"])          # no volume yet (pre-open): judged on history
+    return {"turnover_cr": round(turnover), "avg_lakh": round(avg_v / 1e5, 1), "rvol": round(rvol, 2) if rvol else None,
+            "liquid": liquid, "good": good}
 TOP = 15
 
 
@@ -80,9 +97,10 @@ def opening_range_breaks(candles, pdh=None, pdl=None):
 
 
 class Movers:
-    def __init__(self, dhan, instruments, now_fn, daily_fn):
-        """daily_fn(): {symbol: daily candles (oldest first, completed days)} - the auto-trader's cache."""
-        self.D, self.INST, self.now, self.daily_fn = dhan, instruments, now_fn, daily_fn
+    def __init__(self, dhan, instruments, now_fn, daily_fn, liq_fn=lambda: {}):
+        """daily_fn(): {symbol: daily candles (oldest first, completed days)} - the auto-trader's cache.
+        liq_fn(): saved changes to LIQ_DEFAULTS."""
+        self.D, self.INST, self.now, self.daily_fn, self.liq_fn = dhan, instruments, now_fn, daily_fn, liq_fn
         self.snap, self.snap_at = None, 0
         self.breaks, self.breaks_at, self.breaks_day = [], None, ""
         self.prev_oi, self.prev_oi_day = {}, ""
@@ -98,6 +116,35 @@ class Movers:
                 continue
             fut = next((fk for exp, fk in futs if exp >= today), None)
             out[ul] = (k, fut)
+        return out
+
+    def liq_cfg(self):
+        return dict(LIQ_DEFAULTS, **(self.liq_fn() or {}))
+
+    def fno_stocks(self):
+        return {ul for ul in self.INST.futs if (self.INST.under.get(ul) or "").startswith("NSE_EQ:")}
+
+    def liquidity_for(self, keys, quotes):
+        """For watchlist rows: is it F&O, and is its volume good? Indices and F&O contracts always count."""
+        daily = self.daily_fn() or {}
+        fno = self.fno_stocks()
+        cfg, frac = self.liq_cfg(), self.session_fraction()
+        out = {}
+        for k in keys:
+            it = self.INST.get(k)
+            if not it:
+                continue
+            if it["kind"] == "INDEX":
+                out[k] = {"exempt": True, "good": True, "fno": False}
+            elif it["kind"] != "EQUITY":
+                out[k] = {"exempt": True, "good": True, "fno": True}
+            else:
+                is_fno = it["sym"] in fno
+                vol = float((quotes.get(k) or {}).get("vol") or 0)
+                lq = liquidity(daily.get(it["sym"]), vol, frac, cfg)
+                lq["fno"] = is_fno
+                lq["good"] = is_fno and lq["good"] is not False      # not F&O: never; no history yet: kept
+                out[k] = lq
         return out
 
     def session_fraction(self):
@@ -130,6 +177,7 @@ class Movers:
         iq = self.D.quote({"IDX_I": [k.split(":")[1] for _, k in idx_keys]}, "ohlc") if idx_keys else {}
         daily = self.daily_fn() or {}
         frac = self.session_fraction()
+        cfg = self.liq_cfg()
         rows = []
         for sym, (k, fk) in uni.items():
             q = eq.get(tuple(k.split(":")))
@@ -143,8 +191,8 @@ class Movers:
             pct = 100 * chg / base if base else 0
             vol = float(q.get("volume") or 0)
             d = daily.get(sym) or []
-            avg20 = sum(c["v"] for c in d[-20:]) / len(d[-20:]) if d[-20:] else 0
-            rvol = vol / (avg20 * frac) if avg20 else None
+            lq = liquidity(d, vol, frac, cfg)
+            rvol = lq["rvol"]
             yr = d[-250:]
             hi52 = max((c["h"] for c in yr), default=None)
             lo52 = min((c["l"] for c in yr), default=None)
@@ -164,8 +212,16 @@ class Movers:
                          "new_high": bool(hi52 and day_hi >= hi52), "new_low": bool(lo52 and day_lo <= lo52),
                          "from_high_pct": round(100 * (ltp - hi52) / hi52, 2) if hi52 else None,
                          "from_low_pct": round(100 * (ltp - lo52) / lo52, 2) if lo52 else None,
-                         "oi": oi, "oi_pct": oi_pct, "buildup": buildup(pct, oi_pct)})
+                         "oi": oi, "oi_pct": oi_pct, "buildup": buildup(pct, oi_pct),
+                         "turnover_cr": lq["turnover_cr"], "good": lq["good"]})
         by_pct = sorted(rows, key=lambda r: -r["pct"])
+        good = [r for r in rows if r["good"] is not False]           # unknown (no history yet) stays in
+        good_syms = {r["sym"] for r in good}
+        by_pct_good = [r for r in by_pct if r["good"] is not False]
+        highs = sorted([r for r in rows if r["from_high_pct"] is not None and (r["new_high"] or r["from_high_pct"] >= -2)],
+                       key=lambda r: -(r["from_high_pct"] or -99))
+        lows = sorted([r for r in rows if r["from_low_pct"] is not None and (r["new_low"] or r["from_low_pct"] <= 2)],
+                      key=lambda r: r["from_low_pct"] or 99)
         sectors = {}
         for r in rows:
             sectors.setdefault(r["sector"], []).append(r["pct"])
@@ -186,17 +242,19 @@ class Movers:
             "at": self.now().strftime("%H:%M:%S"), "count": len(rows), "indices": idx,
             "breadth": {"up": sum(1 for r in rows if r["pct"] > 0.05), "down": sum(1 for r in rows if r["pct"] < -0.05),
                         "flat": sum(1 for r in rows if -0.05 <= r["pct"] <= 0.05)},
-            "gainers": by_pct[:TOP], "losers": by_pct[::-1][:TOP],
-            "volume": sorted([r for r in rows if (r["rvol"] or 0) >= 2], key=lambda r: -r["rvol"])[:TOP],
-            "highs": sorted([r for r in rows if r["from_high_pct"] is not None and (r["new_high"] or r["from_high_pct"] >= -2)],
-                            key=lambda r: -(r["from_high_pct"] or -99))[:TOP],
-            "lows": sorted([r for r in rows if r["from_low_pct"] is not None and (r["new_low"] or r["from_low_pct"] <= 2)],
-                           key=lambda r: r["from_low_pct"] or 99)[:TOP],
+            "gainers": by_pct_good[:TOP], "losers": by_pct_good[::-1][:TOP],
+            "gainers_all": by_pct[:TOP], "losers_all": by_pct[::-1][:TOP],
+            "volume": sorted([r for r in rows if (r["rvol"] or 0) >= 2 and r["good"] is not False], key=lambda r: -r["rvol"])[:TOP],
+            "volume_all": sorted([r for r in rows if (r["rvol"] or 0) >= 2], key=lambda r: -r["rvol"])[:TOP],
+            "highs": [r for r in highs if r["sym"] in good_syms][:TOP], "highs_all": highs[:TOP],
+            "lows": [r for r in lows if r["sym"] in good_syms][:TOP], "lows_all": lows[:TOP],
             "buildup": {k: v[:10] for k, v in build.items()},
             "sectors": sorted([{"name": s, "pct": round(sum(v) / len(v), 2), "n": len(v),
                                 "up": sum(1 for x in v if x > 0)} for s, v in sectors.items() if s != "Others"],
                               key=lambda s: -s["pct"]),
-            "breakouts": self.breaks, "breakouts_at": self.breaks_at,
+            "breakouts": [b for b in self.breaks if b["sym"] in good_syms], "breakouts_all": self.breaks,
+            "breakouts_at": self.breaks_at,
+            "liq": cfg, "good_count": len(good), "low_volume": sorted(r["sym"] for r in rows if r["good"] is False),
             "daily_ready": bool(daily), "oi_ready": bool(self.prev_oi), "job": self.job,
         }
 

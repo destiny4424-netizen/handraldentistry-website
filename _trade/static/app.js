@@ -6,7 +6,9 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-const S = {status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
+function pref(k, d) { try { const v = localStorage.getItem('mt-' + k); return v === null ? d : v === '1'; } catch (e) { return d; } }
+function setPref(k, v) { try { localStorage.setItem('mt-' + k, v ? '1' : '0'); } catch (e) { /* private mode */ } }
+const S = {liq: {}, wlGood: pref('wlGood', true), mkGood: pref('mkGood', true), status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
   orderFilter: 'open', insDays: 90, chainUl: 'NIFTY', chainExp: '', posKeys: [], lastOrders: [], ticket: null};
 
 async function api(path, body, method) {
@@ -232,8 +234,13 @@ async function pollQuotes() {
   quoteBusy = true;
   try {
     const need = keys.filter(k => !S.info[k]);
-    const r = await api('/api/quotes?keys=' + encodeURIComponent(keys.join(',')) + (need.length ? '&info=1' : ''));
+    const r = await api('/api/quotes?keys=' + encodeURIComponent(keys.join(',')) + (need.length ? '&info=1' : '') + (S.tab === 'watch' ? '&liq=1' : ''));
     Object.assign(S.info, r.info || {});
+    if (r.liq && Object.keys(r.liq).length) {
+      const changed = Object.keys(r.liq).some(k => (S.liq[k] || {}).good !== r.liq[k].good);
+      Object.assign(S.liq, r.liq);
+      if (changed && S.tab === 'watch') renderWl();
+    }
     for (const [k, q] of Object.entries(r.quotes || {})) {
       const old = S.quotes[k];
       if (q) { q._dir = old && old.ltp !== q.ltp ? (q.ltp > old.ltp ? 'up' : 'down') : ''; S.quotes[k] = q; }
@@ -265,6 +272,8 @@ function renderWlTabs() {
   const el = $('#wlTabs');
   el.innerHTML = S.wl.map((w, i) => `<button data-i="${i}" class="${i === S.wlIdx ? 'on' : ''}">${esc(w.name)}</button>`).join('') +
     (S.editWl ? '<button data-new="1">+ New list</button>' : '');
+  $('#wlFilter').classList.toggle('on', S.wlGood);
+  $('#wlFilter').textContent = (S.wlGood ? '✓ ' : '') + 'F&O · good volume';
   el.onclick = e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.new) {
@@ -285,11 +294,17 @@ function renderWl() {
   const el = $('#wl');
   const emptyList = !w || !w.keys.length;
   $('#wlEmpty').classList.toggle('hidden', !emptyList);
-  if (emptyList) { el.innerHTML = ''; return; }
-  el.innerHTML = w.keys.map(k => {
-    const it = S.info[k], q = S.quotes[k];
+  if (emptyList) { el.innerHTML = ''; $('#wlHidden').innerHTML = ''; return; }
+  const shown = S.wlGood ? w.keys.filter(k => !S.liq[k] || S.liq[k].good) : w.keys;
+  const hidden = w.keys.length - shown.length;
+  $('#wlHidden').innerHTML = hidden ? `${hidden} hidden: not F&amp;O, or low volume today. <button class="ghost sm" id="wlShowAll">Show all</button>` : '';
+  if ($('#wlShowAll')) $('#wlShowAll').onclick = () => { S.wlGood = false; setPref('wlGood', false); renderWlTabs(); renderWl(); };
+  el.innerHTML = shown.map(k => {
+    const it = S.info[k], q = S.quotes[k], lq = S.liq[k] || {};
+    const lqTags = lq.exempt ? '' : (lq.fno ? '<span class="tag fno">F&amp;O</span>' : '') +
+      (lq.rvol ? `<span class="tag">${lq.rvol}× vol</span>` : '') + (lq.good === false ? '<span class="tag low">low vol</span>' : '');
     return `<div class="item" data-key="${esc(k)}">
-      <div class="grow"><div class="name">${esc(shortName(it) || k)} ${kindTag(it)}</div>
+      <div class="grow"><div class="name">${esc(shortName(it) || k)} ${kindTag(it)}${lqTags}</div>
       <div class="sub">${esc(it ? (it.kind === 'EQUITY' ? it.co || it.name : it.kind === 'INDEX' ? (it.exch + ' index') : it.name) : '')}</div></div>
       <div class="right"><div class="ltp" data-q="${esc(k)}">${q ? px(q.ltp) : '…'}</div>
       <div class="chg ${q ? cls(q.chg) : ''}" data-q="${esc(k)}" data-f="chg">${q ? `${signed(q.chg)} (${signed(q.pct, v => Number(v).toFixed(2))}%)` : ''}</div></div>
@@ -302,6 +317,7 @@ function wlClick(e) {
   if (rm) { e.stopPropagation(); const w = S.wl[S.wlIdx]; w.keys = w.keys.filter(k => k !== rm.dataset.rm); saveWl(); renderWl(); return; }
   const it = e.target.closest('.item'); if (it) openInstrument(it.dataset.key);
 }
+$('#wlFilter').onclick = () => { S.wlGood = !S.wlGood; setPref('wlGood', S.wlGood); renderWlTabs(); renderWl(); };
 $('#wlEdit').onclick = () => { S.editWl = !S.editWl; $('#wlEdit').textContent = S.editWl ? 'Done' : 'Edit'; renderWlTabs(); renderWl(); };
 async function saveWl() {
   try { await api('/api/watchlists', {watchlists: S.wl}); } catch (e) { toast(e.message, 'bad'); }
@@ -324,7 +340,7 @@ async function doSearch() {
   const r = await api('/api/search?q=' + encodeURIComponent(q));
   r.results.forEach(it => { S.info[it.key] = it; });
   el.innerHTML = r.results.length ? r.results.map(it => `<div class="res" data-key="${esc(it.key)}">
-      <div class="grow"><div class="name">${esc(shortName(it))} ${kindTag(it)}</div><div class="sub">${esc(it.name)}${it.lot > 1 ? ' · lot ' + it.lot : ''}</div></div>
+      <div class="grow"><div class="name">${esc(shortName(it))} ${kindTag(it)}${it.fno ? '<span class="tag fno">F&amp;O</span>' : ''}</div><div class="sub">${esc(it.name)}${it.lot > 1 ? ' · lot ' + it.lot : ''}</div></div>
       <button data-add="${esc(it.key)}" class="${inWl(it.key) ? 'in' : ''}" title="Add to watchlist">${inWl(it.key) ? '✓' : '＋'}</button></div>`).join('')
     : '<div class="res muted">Nothing found. Try the NSE symbol, or e.g. "banknifty 58000 pe".</div>';
   el.classList.remove('hidden');
@@ -1118,6 +1134,7 @@ async function openJournal(day) {
 
 // ---- market: gainers, losers, breakouts, volume, 52-week, OI, sectors -------------------------------------
 S.mk = 'gainers';
+$('#mkGood').onclick = () => { S.mkGood = !S.mkGood; setPref('mkGood', S.mkGood); renderMarket(); };
 $('#mkTabs').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.mk = b.dataset.m; $$('#mkTabs button').forEach(x => x.classList.toggle('on', x === b)); renderMarket(); };
 async function loadMarket() {
   try { S.market = await api('/api/market'); } catch (e) { $('#mkList').innerHTML = `<div class="item muted">${esc(e.message)}</div>`; return; }
@@ -1136,20 +1153,32 @@ function renderMarket() {
       <div class="sub">${sub || ''}</div></div><div class="right"><div class="ltp">₹${px(r.ltp)}</div><div class="chg">${right}</div></div></div>`;
   let html = '', note = '';
   const k = S.mk;
+  const L = name => (S.mkGood ? m[name] : (m[name + '_all'] || m[name])) || [];
+  const lq = m.liq || {};
+  $('#mkGood').classList.toggle('on', S.mkGood);
+  $('#mkGood').textContent = (S.mkGood ? '✓ ' : '') + 'F&O · good volume only';
+  $('#mkRule').innerHTML = S.mkGood ? `Good volume: ₹${lq.min_turnover_cr} Cr+ and ${lq.min_avg_lakh} lakh+ shares a day (20-day average), and today ≥ ${lq.min_rvol}× usual so far. ${m.good_count} of ${m.count} pass. <a href="#" id="mkRuleEdit">Change</a>` : '';
+  if ($('#mkRuleEdit')) $('#mkRuleEdit').onclick = async e => {
+    e.preventDefault();
+    const a = prompt('Minimum average traded value a day (₹ crore)', lq.min_turnover_cr); if (a === null) return;
+    const b = prompt('Minimum average shares a day (lakh)', lq.min_avg_lakh); if (b === null) return;
+    const c = prompt('Today at least this × usual volume so far', lq.min_rvol); if (c === null) return;
+    try { await api('/api/market/liquidity', {min_turnover_cr: +a, min_avg_lakh: +b, min_rvol: +c}); toast('Saved', 'ok'); loadMarket(); } catch (er) { toast(er.message, 'bad'); }
+  };
   if (k === 'gainers' || k === 'losers') {
-    html = m[k].map(r => row(r, pctSpan(r.pct), `${r.chg > 0 ? '+' : ''}₹${px(r.chg)}${r.rvol ? ` · volume ${r.rvol}× usual` : ''}`)).join('');
+    html = L(k).map(r => row(r, pctSpan(r.pct), `${r.chg > 0 ? '+' : ''}₹${px(r.chg)}${r.rvol ? ` · volume ${r.rvol}× usual` : ''}${r.turnover_cr ? ` · ₹${r.turnover_cr.toLocaleString('en-IN')} Cr/day` : ''}`)).join('');
   } else if (k === 'volume') {
-    html = m.volume.map(r => row(r, `<b>${r.rvol}×</b> volume`, `${pctSpan(r.pct)} · ${big(r.vol)} traded`)).join('');
+    html = L('volume').map(r => row(r, `<b>${r.rvol}×</b> volume`, `${pctSpan(r.pct)} · ${big(r.vol)} traded`)).join('');
     note = 'Today\'s volume against the 20-day average, adjusted for how much of the day has gone. 2× or more.';
     if (!m.daily_ready) note = 'Waiting for the daily candles (the auto-trader downloads them; a few minutes after the first start).';
   } else if (k === 'highs' || k === 'lows') {
     const hi = k === 'highs';
-    html = m[k].map(r => row(r, pctSpan(r.pct), (hi ? r.new_high : r.new_low) ? `<b class="${hi ? 'up' : 'down'}">New 52-week ${hi ? 'high' : 'low'} today</b>` :
+    html = L(k).map(r => row(r, pctSpan(r.pct), (hi ? r.new_high : r.new_low) ? `<b class="${hi ? 'up' : 'down'}">New 52-week ${hi ? 'high' : 'low'} today</b>` :
       `${Math.abs(hi ? r.from_high_pct : r.from_low_pct).toFixed(2)}% from the 52-week ${hi ? 'high' : 'low'} ₹${px(hi ? r.hi52 : r.lo52)}`)).join('');
     note = `New 52-week ${hi ? 'highs' : 'lows'} today, and stocks within 2% of one.`;
     if (!m.daily_ready) note = 'Waiting for the daily candles (a few minutes after the first start).';
   } else if (k === 'breakouts') {
-    html = (m.breakouts || []).map(x => `<div class="item" data-key="${esc(x.key)}"><div class="grow">
+    html = L('breakouts').map(x => `<div class="item" data-key="${esc(x.key)}"><div class="grow">
       <div class="name">${esc(x.sym)} <span class="pill ${x.side === 'up' ? 'ok' : 'bad'}">${x.side === 'up' ? '▲ BREAKOUT' : '▼ BREAKDOWN'}</span></div>
       <div class="sub">${esc(x.at)} candle closed ${x.side === 'up' ? 'above' : 'below'} ${esc(x.level_name)} ₹${px(x.level)} · ${x.vol_x}× the day's average volume</div></div>
       <div class="right"><div class="ltp">₹${px(x.close)}</div><div class="chg ${x.side === 'up' ? 'up' : 'down'}">${x.beyond_pct > 0 ? '+' : ''}${x.beyond_pct}% beyond</div></div></div>`).join('');

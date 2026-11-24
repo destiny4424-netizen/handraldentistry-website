@@ -31,7 +31,7 @@ from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "23 Nov 2026 · Market tab"
+VERSION = "24 Nov 2026 · F&O and good-volume filter"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -811,7 +811,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             return self.send(200, status())
         if path == "/api/search":
-            return self.send(200, {"results": INST.search(q.get("q", ""))})
+            res = INST.search(q.get("q", ""))
+            fno = MOVERS.fno_stocks() if MOVERS else set()
+            for r in res:
+                r["fno"] = r["kind"] == "EQUITY" and r["sym"] in fno
+            return self.send(200, {"results": res})
         if path == "/api/instrument":
             it = INST.get(q.get("key", ""))
             return self.send(200, public(it) if it else {"error": "Unknown"})
@@ -821,7 +825,9 @@ class Handler(BaseHTTPRequestHandler):
             info = {}
             if q.get("info"):
                 info = {k: public(INST.by_key[k]) for k in keys if k in INST.by_key}
-            return self.send(200, {"quotes": {k: QUOTES.get(k) for k in keys}, "info": info, "error": STATUS["feed_error"]})
+            liq = MOVERS.liquidity_for(keys, QUOTES) if q.get("liq") and MOVERS else {}
+            return self.send(200, {"quotes": {k: QUOTES.get(k) for k in keys}, "info": info, "liq": liq,
+                                   "error": STATUS["feed_error"]})
         if path == "/api/chain":
             r = chain(q.get("ul", "NIFTY"), q.get("expiry", ""))
             return self.send(200, r)
@@ -1059,6 +1065,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(400, {"error": "No phone has turned notifications on yet."})
             ALERTS.notify("test", "Test from Handral Trading Desk", "If you can read this, alerts work.")
             return self.send(200, {"ok": True})
+        if path == "/api/market/liquidity":
+            from movers import LIQ_DEFAULTS
+            cfg = dict(LIQ_DEFAULTS, **(SETTINGS.get("liquidity") or {}))
+            for k, (lo, hi) in {"min_turnover_cr": (0, 100000), "min_avg_lakh": (0, 10000), "min_rvol": (0, 20)}.items():
+                if b.get(k) not in (None, ""):
+                    v = float(b[k])
+                    if not lo <= v <= hi:
+                        return self.send(400, {"error": f"{k.replace('_', ' ')} must be between {lo} and {hi}."})
+                    cfg[k] = v
+            save_settings(liquidity=cfg)
+            if MOVERS:
+                MOVERS.snap_at = 0
+            return self.send(200, {"ok": True, "liq": cfg})
         if path == "/api/alerts/settings":
             err = ALERTS.update_settings(b)
             if err:
@@ -1170,7 +1189,7 @@ def main():
                 os.environ.get("MT_PUBLIC_URL") or "https://localhost")
     ALERTS = Alerts(str(DATA), PUSH, now)
     global MOVERS
-    MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {})
+    MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"))
     threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()
     for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop):
         threading.Thread(target=fn, daemon=True).start()

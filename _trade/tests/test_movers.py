@@ -56,9 +56,29 @@ class Breakouts(unittest.TestCase):
         self.assertIsNone(movers.buildup(0.1, 4.0))                        # price barely moved
 
 
+class Liquidity(unittest.TestCase):
+    def day(self, v, c=1000.0):
+        return {"t": 0, "o": c, "h": c, "l": c, "c": c, "v": v}
+
+    def test_rule(self):
+        cfg = dict(movers.LIQ_DEFAULTS)
+        big = [self.day(3_000_000)] * 20                              # ₹300 Cr and 30 lakh shares a day
+        self.assertTrue(movers.liquidity(big, 3_000_000, 1.0, cfg)["good"])
+        self.assertEqual(movers.liquidity(big, 3_000_000, 1.0, cfg)["turnover_cr"], 300)
+        self.assertFalse(movers.liquidity(big, 1_000_000, 1.0, cfg)["good"])      # only 0.33x usual today
+        self.assertTrue(movers.liquidity(big, 1_000_000, 0.3, cfg)["good"])       # ...but it's early in the day
+        thin = [self.day(300_000)] * 20                               # ₹30 Cr a day
+        self.assertFalse(movers.liquidity(thin, 900_000, 1.0, cfg)["good"])
+        self.assertIsNone(movers.liquidity([], 900_000, 1.0, cfg)["good"])        # no history: can't judge
+
+
 class Snapshot(unittest.TestCase):
     def test_against_pretend_dhan(self):
-        m = movers.Movers(trade.D, trade.INST, lambda: datetime.now(IST), lambda: {})
+        uni = {u: trade.INST.under[u] for u in trade.INST.futs if trade.INST.under.get(u, "").startswith("NSE_EQ")}
+        frm = (datetime.now(IST) - timedelta(days=60)).strftime("%Y-%m-%d")
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        hist = {u: movers._rows(trade.D.daily(k.split(":")[1], "NSE_EQ", "EQUITY", frm, today)) for u, k in uni.items()}
+        m = movers.Movers(trade.D, trade.INST, lambda: datetime.now(IST), lambda: hist)
         m.load_prev_oi()
         s = m.snapshot(max_age=0)
         self.assertGreaterEqual(s["count"], 15)
@@ -70,6 +90,16 @@ class Snapshot(unittest.TestCase):
         self.assertTrue(any(r["oi_pct"] is not None for r in s["gainers"] + s["losers"]))
         self.assertTrue(s["sectors"])
         self.assertIn("NIFTY", [i["name"] for i in s["indices"]])
+        shown = {r["sym"] for r in s["gainers"] + s["losers"]}
+        self.assertFalse(shown & {"WIPRO", "TATASTEEL"})              # the thin ones are filtered out
+        self.assertEqual(set(s["low_volume"]) & {"WIPRO", "TATASTEEL"}, {"WIPRO", "TATASTEEL"})
+        self.assertEqual(len(s["gainers_all"]), min(movers.TOP, s["count"]))
+        keys = [trade.INST.under[x] for x in ("WIPRO", "SBIN", "NIFTY")]
+        trade.QUOTES[keys[1]] = {"ltp": 870, "vol": 30_000_000, "t": 0}
+        lq = m.liquidity_for(keys, trade.QUOTES)
+        self.assertEqual((lq[keys[0]]["fno"], lq[keys[0]]["good"]), (True, False))
+        self.assertTrue(lq[keys[1]]["good"])
+        self.assertTrue(lq[keys[2]]["exempt"])
 
 
 if __name__ == "__main__":
