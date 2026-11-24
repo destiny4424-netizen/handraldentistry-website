@@ -219,6 +219,7 @@ function showTab(t) {
   if (t === 'insights') loadInsights();
   if (t === 'account') loadAccount();
   if (t === 'auto') loadAuto();
+  if (t === 'quick') loadQuick();
   if (t === 'watch') loadMarket();
   window.scrollTo(0, 0);
 }
@@ -231,6 +232,7 @@ function visibleKeys() {
   if (S.tab === 'positions' || S.tab === 'account') S.posKeys.forEach(k => keys.add(k));
   if (S.sheetKey) keys.add(S.sheetKey);
   if (S.ticket?.key) keys.add(S.ticket.key);
+  if (S.tab === 'quick' && S.qk?.key) keys.add(S.qk.key);
   return [...keys];
 }
 let quoteBusy = false;
@@ -1407,6 +1409,116 @@ function renderAuto(a) {
   if (a.job.running) setTimeout(() => S.tab === 'auto' && loadAuto(), 2500);
 }
 
+
+// ---- Quick: a stock's 1-OTM option, a limit buy, and the stop-loss placed once it fills ---------------------
+S.qk = null;
+let qkUlsLoaded = false;
+async function loadQuick() {
+  if (!qkUlsLoaded) {
+    try { const r = await api('/api/underlyings'); $('#qkUls').innerHTML = (r.list || []).map(u => `<option value="${esc(u)}">`).join(''); qkUlsLoaded = true; } catch (e) { /* later */ }
+  }
+  loadQuickList();
+}
+async function quickPlan(dir, expiry) {
+  const ul = $('#qkUl').value.trim().toUpperCase();
+  $('#qkErr').textContent = '';
+  if (!ul) { $('#qkErr').textContent = 'Type the stock first, e.g. RELIANCE'; return; }
+  $('#qkUp').classList.toggle('on', dir === 'up'); $('#qkDown').classList.toggle('on', dir === 'down');
+  $('#qkPlan').innerHTML = '<div class="card muted">Finding the strike…</div>';
+  try {
+    const p = await api(`/api/quick/plan?ul=${encodeURIComponent(ul)}&dir=${dir}` + (expiry ? `&expiry=${encodeURIComponent(expiry)}` : ''));
+    const old = S.qk;
+    S.qk = Object.assign(p, {lots: old && old.key === p.key ? old.lots : 1, product: (old && old.product) || 'INTRADAY'});
+    renderQuick();
+  } catch (e) { $('#qkPlan').innerHTML = ''; $('#qkErr').textContent = e.message; }
+}
+function qkNums() {
+  const p = S.qk, price = parseFloat($('#qkPrice').value) || 0, stop = parseFloat($('#qkStop').value) || 0;
+  const lots = Math.max(1, parseInt($('#qkLots').value) || 1), qty = lots * p.lot, used = price * qty;
+  return {price, stop, lots, qty, used, remaining: p.available == null ? null : p.available - used, risk: stop > 0 && stop < price ? (price - stop) * qty : null};
+}
+function qkMoney() {
+  const p = S.qk; if (!p || !$('#qkPrice')) return;
+  const n = qkNums();
+  p.lots = n.lots;
+  $('#qkQty').textContent = `${n.lots} lot${n.lots > 1 ? 's' : ''} × ${p.lot} = ${n.qty.toLocaleString('en-IN')} qty`;
+  $('#qkUsed').textContent = inr(n.used, 0);
+  $('#qkRem').textContent = n.remaining == null ? '–' : inr(n.remaining, 0);
+  $('#qkRem').className = n.remaining != null && n.remaining < 0 ? 'down' : '';
+  $('#qkRisk').innerHTML = n.risk == null ? '<span class="down">Stop-loss must be below the buy price</span>'
+    : `If the stop is hit you lose about <b class="${n.risk > 2000 ? 'down' : ''}">${inr(n.risk, 0)}</b>` + (n.risk > 2000 ? ' · more than your ₹2,000 per-trade rule' : '')
+      + ` · ${(100 * (n.price - n.stop) / n.price).toFixed(0)}% under the price`;
+  const short = n.remaining != null && n.remaining < 0;
+  $('#qkGo').disabled = !(n.price > 0 && n.risk != null) || short;
+  $('#qkGo').textContent = short ? 'Not enough money for this' : `Buy ${n.qty.toLocaleString('en-IN')} at ${inr(n.price, 2)} (limit)`;
+}
+function renderQuick() {
+  const p = S.qk;
+  const exps = (p.expiries || []).map(e => `<button data-qexp="${esc(e)}" class="${e === p.expiry ? 'on' : ''}">${esc(e.slice(5))}</button>`).join('');
+  $('#qkPlan').innerHTML = `<div class="card qkp">
+    <h3 class="${p.kind === 'CE' ? 'up' : 'down'}">${esc(p.name)}</h3>
+    <div class="muted small">${esc(p.ul)} spot ${px(p.spot)} · at the money ${p.atm} → one strike out: <b>${p.strike} ${p.kind}</b></div>
+    <div class="small" style="margin-top:6px">Last <b id="qkLtp">${px(p.ltp)}</b> · bid <span id="qkBid">${px(p.bid)}</span> · ask <span id="qkAsk">${px(p.ask)}</span> · OI ${big(p.oi)}</div>
+    <div class="chips" id="qkExp" style="margin-top:8px">${exps}</div>
+    <div class="grid2">
+      <div><label>Limit price (₹)</label><input id="qkPrice" type="number" inputmode="decimal" step="${p.tick}" value="${p.price}"></div>
+      <div><label>Lots</label><div class="qk-lots"><button id="qkMinus">−</button><input id="qkLots" type="number" inputmode="numeric" min="1" value="${p.lots}"><button id="qkPlus">＋</button></div></div>
+    </div>
+    <div class="muted small" id="qkQty"></div>
+    <div class="grid2">
+      <div><label>Stop-loss price (₹)</label><input id="qkStop" type="number" inputmode="decimal" step="${p.tick}" value="${p.stop}"></div>
+      <div><label>Stop at</label><div class="chips" id="qkPct"><button data-pct="20">−20%</button><button data-pct="30">−30%</button><button data-pct="40">−40%</button></div></div>
+    </div>
+    <div class="small" id="qkRisk"></div>
+    <div class="seg" id="qkProd" style="margin-top:10px"><button data-p="INTRADAY" class="${p.product === 'INTRADAY' ? 'on' : ''}">Intraday</button><button data-p="MARGIN" class="${p.product === 'MARGIN' ? 'on' : ''}">Carry forward</button></div>
+    <div class="qk-money"><div><span class="muted small">Available</span><b>${p.available == null ? '–' : inr(p.available, 0)}</b></div>
+      <div><span class="muted small">This order uses</span><b id="qkUsed"></b></div><div><span class="muted small">Remaining</span><b id="qkRem"></b></div></div>
+    <button class="qk-go" id="qkGo"></button>
+    <div class="muted small" style="margin-top:8px">A plain limit buy. Once it fills, a SELL stop-loss order (trigger at your stop) is placed at Dhan by itself, and your phone is told.</div>
+  </div>`;
+  qkMoney();
+  ['qkPrice', 'qkStop', 'qkLots'].forEach(id => { $('#' + id).oninput = qkMoney; });
+  $('#qkMinus').onclick = () => { $('#qkLots').value = Math.max(1, (parseInt($('#qkLots').value) || 1) - 1); qkMoney(); };
+  $('#qkPlus').onclick = () => { $('#qkLots').value = (parseInt($('#qkLots').value) || 1) + 1; qkMoney(); };
+  $('#qkPct').onclick = e => { const b = e.target.closest('button'); if (!b) return;
+    const pr = parseFloat($('#qkPrice').value) || 0, t = p.tick || 0.05;
+    $('#qkStop').value = Math.max(t, Math.round(pr * (1 - b.dataset.pct / 100) / t) * t).toFixed(2); qkMoney(); };
+  $('#qkExp').onclick = e => { const b = e.target.closest('button'); if (b) quickPlan(p.direction, b.dataset.qexp); };
+  $('#qkProd').onclick = e => { const b = e.target.closest('button'); if (!b) return; p.product = b.dataset.p;
+    $$('#qkProd button').forEach(x => x.classList.toggle('on', x === b)); };
+  $('#qkGo').onclick = quickGo;
+}
+async function quickGo() {
+  const p = S.qk, n = qkNums();
+  if (!confirm(`Buy ${n.qty} ${p.name} at ${inr(n.price, 2)} limit?\n\nUses ${inr(n.used, 0)}. Once it fills, a stop-loss sell goes in at ${inr(n.stop, 2)} (risk about ${inr(n.risk, 0)}).`)) return;
+  $('#qkGo').disabled = true;
+  try {
+    const r = await api('/api/quick/order', {key: p.key, lots: n.lots, price: n.price, stop: n.stop, product: p.product});
+    toast(r.armed ? 'Held by Rules mode: it goes in when the candle confirms.' : (r.note || 'Order sent'), 'ok', 6000);
+    loadQuickList(); loadFunds();
+  } catch (e) { toast(e.message, 'bad', 8000); }
+  qkMoney();
+}
+async function quickPrices() {
+  const p = S.qk; if (!p || !$('#qkLtp')) return;
+  const q = S.quotes && S.quotes[p.key];
+  if (q) { if (q.ltp) $('#qkLtp').textContent = px(q.ltp); if (q.bid) $('#qkBid').textContent = px(q.bid); if (q.ask) $('#qkAsk').textContent = px(q.ask); }
+}
+const QK_LABEL = {waiting: ['Waiting to fill', ''], partial: ['Part filled', 'warn'], done: ['Stop-loss in', 'ok'], dropped: ['Not filled', 'bad'], no_stop: ['NO STOP', 'bad']};
+async function loadQuickList() {
+  try {
+    const items = (await api('/api/quick/orders')).items || [];
+    $('#qkList').innerHTML = items.length ? items.map(x => { const [l, c] = QK_LABEL[x.status] || [x.status, ''];
+      return `<div class="item qk-item"><div style="flex:1"><div><b>${esc(x.name)}</b> <span class="pill ${c}">${l}</span></div>
+        <div class="muted small">${x.qty} @ ${inr(x.price, 2)} · stop ${inr(x.stop, 2)} · ${new Date(x.at * 1000).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit'})}</div>
+        <div class="note ${x.status === 'no_stop' ? 'down' : ''}">${esc(x.note)}</div></div></div>`; }).join('')
+      : '<div class="empty">No quick orders yet. Type a stock, tap Up or Down, check the price and lots, and buy.</div>';
+  } catch (e) { /* offline */ }
+}
+$('#qkUp').onclick = () => quickPlan('up');
+$('#qkDown').onclick = () => quickPlan('down');
+$('#qkUl').onkeydown = e => { if (e.key === 'Enter') quickPlan((S.qk && S.qk.direction) || 'up'); };
+
 // ---- start --------------------------------------------------------------------------------------------------
 try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) { /* ignore */ }
 (async function start() {
@@ -1414,7 +1526,7 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   if (S.pinSet && !pinToken()) showLock();
   swReg();
   const h = location.hash.replace('#', '');
-  if (['watch', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
+  if (['watch', 'quick', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
   if (h === 'market' || h === 'chain') setTimeout(() => showTab('watch'), 0);
   if (h === 'journal') setTimeout(() => openJournal(), 800);
   await loadStatus();
@@ -1428,5 +1540,8 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   setInterval(() => { if (!document.hidden && S.tab === 'auto') loadAuto(); }, 15000);
   setInterval(() => { if (!document.hidden && S.tab === 'watch') loadMarket(); }, 20000);
   setInterval(() => { if (!document.hidden && S.tab !== 'orders') loadOrders(); }, 10000);
+  setInterval(() => { if (!document.hidden && S.tab === 'quick') { loadQuickList(); quickPrices(); } }, 3000);
+  const qp = new URLSearchParams(location.search);
+  if (qp.get('quick')) setTimeout(() => { showTab('quick'); $('#qkUl').value = qp.get('quick').toUpperCase(); quickPlan(qp.get('dir') === 'down' ? 'down' : 'up'); }, 0);
   pollQuotes();
 })();
