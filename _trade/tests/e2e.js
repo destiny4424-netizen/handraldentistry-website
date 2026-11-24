@@ -183,6 +183,10 @@ function check(ok, what) {
   await page.waitForSelector('#wl .item');
   await page.click('#wl .item');
   await page.waitForSelector('#miniChain tr.atm', {timeout: 15000});
+  await page.evaluate(() => { const b = document.querySelector('.sheet-body'); b.scrollTop = b.scrollHeight; });
+  await page.waitForTimeout(300);
+  const closeBox = await (await page.$('.sh-close')).boundingBox();
+  check(closeBox && closeBox.y >= 0 && closeBox.y < 200, `the ✕ stays on screen when the page is scrolled (y=${closeBox && Math.round(closeBox.y)})`);
   await shot('8-chain');
   check(true, 'chain marks the at-the-money strike');
   const compactRows = (await page.$$('#miniChain .mini-chain tbody tr')).length;

@@ -454,7 +454,7 @@ async function loadMiniChain(key) {
     ${rows.map(x => `<tr class="${spot && x.strike < spot ? 'itm-ce' : ''} ${spot && x.strike > spot ? 'itm-pe' : ''} ${x.strike === atm ? 'atm' : ''}">
       ${side(x.CE, 'ce')}<td class="mc-k">${Number(x.strike).toLocaleString('en-IN')}${x.strike === atm ? '<div class="sm">ATM</div>' : ''}</td>${putSide(x.PE)}</tr>`).join('')}
     </tbody></table>
-    <div class="muted small" style="margin-top:6px">Lot ${r.lot} · spot ₹${px(spot)} · shaded = in the money</div>`;
+    <div class="muted small" style="margin-top:6px">Lot ${r.lot} · spot ₹${px(spot)} · shaded = in the money${r.source === 'quotes' ? ' · prices from each option\'s own quote' : ''}</div>`;
 }
 
 // ---- chart --------------------------------------------------------------------------------------------

@@ -619,6 +619,8 @@ class Handler(BaseHTTPRequestHandler):
                 return 400, err("DH-905", "Input_Exception", "Invalid underlying")
             ex = sorted({i["expiry"] for i in m.inst.values() if i.get("ul") == ul["sym"] and i["opt"]})
             return 200, {"data": ex, "status": "success"}
+        if path == "/optionchain" and getattr(m, "chain_down", False):      # tests: Dhan's chain has nothing
+            return 400, err("DH-905", "Input_Exception", "No option chain for this underlying")
         if path == "/optionchain":
             ul = next((i for i in m.inst.values() if i["id"] == str(b["UnderlyingScrip"]) and i["seg"] == b["UnderlyingSeg"]), None)
             if not ul:

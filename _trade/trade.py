@@ -32,7 +32,7 @@ from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "24 Nov 2026 · market lists in the Watchlist tab"
+VERSION = "24 Nov 2026 · stock option chains, pinned close button"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -623,6 +623,48 @@ def instruments_loop():
 CHAIN_CACHE = {}
 
 
+CHAIN_SEG = {}                                         # underlying -> the segment Dhan's option chain answered for
+
+
+def fetch_chain(ul, under, expiry):
+    """Dhan's option chain: (spot, {strike: {"ce", "pe"}}). For stocks it asks with NSE_EQ and then NSE_FNO,
+    as the scanner does, and remembers which one worked."""
+    segs = [CHAIN_SEG[ul]] if ul in CHAIN_SEG else ([under[0], "NSE_FNO"] if under[0] == "NSE_EQ" else [under[0]])
+    last = None
+    for seg in segs:
+        try:
+            d = D.option_chain(under[1], seg, expiry)
+        except dhanlib.DhanError as e:
+            last = e
+            continue
+        if d.get("oc"):
+            CHAIN_SEG[ul] = seg
+            return float(d.get("last_price") or 0), d["oc"]
+    if last:
+        raise last
+    return 0.0, {}
+
+
+def quotes_chain(keys):
+    """When Dhan's option chain has nothing: the contracts' own quotes (one request), in the chain's shape."""
+    by = {}
+    for k in keys.values():
+        seg, sid = k.split(":")
+        by.setdefault(seg, []).append(sid)
+    got = D.quote(by, "quote")
+    oc = {}
+    for (strike, opt), k in keys.items():
+        q = got.get(tuple(k.split(":")))
+        if not q or not q.get("last_price"):
+            continue
+        d = q.get("depth") or {}
+        oc.setdefault(f"{strike:.6f}", {})[opt.lower()] = {
+            "last_price": q.get("last_price"), "oi": q.get("oi"), "previous_close_price": (q.get("ohlc") or {}).get("close"),
+            "volume": q.get("volume"), "top_bid_price": ((d.get("buy") or [{}])[0]).get("price"),
+            "top_ask_price": ((d.get("sell") or [{}])[0]).get("price")}
+    return oc
+
+
 def chain(ul, expiry):
     expiries = INST.chain_info(ul)
     if not expiries:
@@ -630,21 +672,28 @@ def chain(ul, expiry):
     expiry = expiry if expiry in expiries else expiries[0]
     keys = INST.chain_keys(ul, expiry)
     under = INST.underlying(ul)
-    spot, data = 0.0, {}
+    spot, data, source = 0.0, {}, "chain"
     ck = (ul, expiry)
     hit = CHAIN_CACHE.get(ck)
-    if hit and time.time() - hit[0] < 3:
-        spot, data = hit[1], hit[2]
+    if hit and time.time() - hit[0] < 4:
+        spot, data, source = hit[1], hit[2], hit[3]
     elif under:
+        err = None
         try:
-            d = D.option_chain(under[1], under[0], expiry)
-            spot, data = float(d.get("last_price") or 0), d.get("oc") or {}
-            CHAIN_CACHE[ck] = (time.time(), spot, data)
+            spot, data = fetch_chain(ul, under, expiry)
         except dhanlib.DhanError as e:
-            if hit:
-                spot, data = hit[1], hit[2]
-            else:
-                return {"error": str(e), "expiries": expiries, "expiry": expiry}
+            err = e
+        if not data:                                   # no chain from Dhan: the options' own prices
+            try:
+                data, source = quotes_chain(keys), "quotes"
+            except dhanlib.DhanError as e:
+                err = err or e
+        if data:
+            CHAIN_CACHE[ck] = (time.time(), spot, data, source)
+        elif hit:
+            spot, data, source = hit[1], hit[2], hit[3]
+        elif err:
+            return {"error": str(err), "expiries": expiries, "expiry": expiry}
     strikes = sorted({k[0] for k in keys})
     by_strike = {}
     for k, v in data.items():
@@ -674,7 +723,13 @@ def chain(ul, expiry):
         want([ukey])
         if not spot:
             spot = float((QUOTES.get(ukey) or {}).get("ltp") or 0)
-    return {"ul": ul, "expiry": expiry, "expiries": expiries, "spot": spot, "rows": rows, "lot": lot,
+        if not spot:
+            try:
+                seg, sid = ukey.split(":")
+                spot = float((D.quote({seg: [sid]}, "ltp").get((seg, sid)) or {}).get("last_price") or 0)
+            except dhanlib.DhanError:
+                pass
+    return {"ul": ul, "expiry": expiry, "expiries": expiries, "spot": spot, "rows": rows, "lot": lot, "source": source,
             "pcr": round(pe_oi / ce_oi, 2) if ce_oi else None, "ukey": ukey,
             "futures": [k for _, k in (INST.futs.get(ul) or [])][:3]}
 
