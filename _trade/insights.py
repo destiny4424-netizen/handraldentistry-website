@@ -7,6 +7,8 @@ Fills come from Dhan's trade history (with Dhan's own charges) and today's trade
 import json
 import sqlite3
 import threading
+
+import mcx
 from contextlib import contextmanager
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -245,8 +247,9 @@ def _apply(b, f):
 def _finish(b):
     fills = b["fills"]
     t0, t1 = fills[0]["time"], fills[-1]["time"]
-    gross = b["sell_val"] - b["buy_val"]
-    entry_val = b["buy_val"] if b["side"] == "LONG" else b["sell_val"]
+    mult = (mcx.multiplier(b["sym"]) or 1) if b["kind"] in ("FUTCOM", "OPTFUT") else 1   # MCX: quantity is lots
+    gross = (b["sell_val"] - b["buy_val"]) * mult
+    entry_val = (b["buy_val"] if b["side"] == "LONG" else b["sell_val"]) * mult
     try:
         held = (datetime.strptime(t1, "%Y-%m-%d %H:%M:%S") - datetime.strptime(t0, "%Y-%m-%d %H:%M:%S")).total_seconds() / 60
     except ValueError:

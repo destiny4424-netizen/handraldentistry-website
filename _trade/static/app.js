@@ -511,7 +511,7 @@ function renderTicket() {
     <div class="seg" id="tkProd">${products.map(([v, l]) => `<button data-v="${v}" class="${t.product === v ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="seg" id="tkType">${types.map(([v, l]) => `<button data-v="${v}" class="${t.type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="fields">
-      <div class="field"><label>${t.lot > 1 ? 'Lots' : 'Quantity'}</label>
+      <div class="field"><label>${t.lot > 1 || it.seg === 'MCX_COMM' ? 'Lots' : 'Quantity'}</label>
         <div class="stepper"><button data-step="-1">−</button><input id="tkLots" inputmode="numeric" value="${t.lots}"><button data-step="1">＋</button></div>
         <div class="hint" id="tkQtyHint"></div></div>
       <div class="field" id="fPrice"><label>Price</label><input id="tkPrice" inputmode="decimal" value="${t.price === '' ? '' : px(t.price).replace(/,/g, '')}">
@@ -560,10 +560,11 @@ function syncTicketFields() {
     const c = t.rules.cfg, sl = parseFloat(t.sl) || 0, entry = t.type === 'MARKET' ? (S.quotes[t.key]?.ltp || p) : p;
     const maxRisk = c.capital * c.risk_pct / 100;
     if (sl && entry && Math.abs(entry - sl) > 0) {
-      const maxLots = Math.floor(Math.floor(maxRisk / Math.abs(entry - sl)) / t.lot);
+      const mult = t.it.mult || 1;
+      const maxLots = Math.floor(Math.floor(maxRisk / (Math.abs(entry - sl) * mult)) / t.lot);
       t.maxLots = maxLots;
       if (!t.lotsTouched || (parseInt(t.lots) || 0) > maxLots) { t.lots = Math.max(0, maxLots); $('#tkLots').value = t.lots; }
-      const risk = (parseInt(t.lots) || 0) * t.lot * Math.abs(entry - sl);
+      const risk = (parseInt(t.lots) || 0) * t.lot * Math.abs(entry - sl) * mult;
       $('#tkRisk').innerHTML = maxLots < 1 ? `<span class="down">Even ${t.lot > 1 ? '1 lot' : '1 share'} risks more than ₹${Math.round(maxRisk).toLocaleString('en-IN')} with this stop. Use a closer stop or skip.</span>` :
         `risk <b>${inr(risk)}</b> of ₹${Math.round(maxRisk).toLocaleString('en-IN')} allowed · at most ${(maxLots * t.lot).toLocaleString('en-IN')} ${t.lot > 1 ? 'units' : 'shares'}`;
     } else {
@@ -571,7 +572,10 @@ function syncTicketFields() {
     }
   }
   const qty = (parseInt(t.lots) || 0) * t.lot;
-  $('#tkQtyHint').textContent = (t.lot > 1 ? `${qty.toLocaleString('en-IN')} units · ` : '') + (p ? `≈ ${inrShort(qty * p)}` : '');
+  const m = t.it.seg === 'MCX_COMM' ? (t.it.mult || 0) : 1;
+  $('#tkQtyHint').textContent = t.it.seg === 'MCX_COMM'
+    ? (m ? `${qty} lot${qty === 1 ? '' : 's'} of ${t.it.contract} · ₹${m.toLocaleString('en-IN')} per ₹1 move · ≈ ${inrShort(qty * p * m)}` : 'Contract size unknown: use Dhan\'s app')
+    : (t.lot > 1 ? `${qty.toLocaleString('en-IN')} units · ` : '') + (p ? `≈ ${inrShort(qty * p)}` : '');
 }
 function updateTicketQuote() {
   const t = S.ticket, q = S.quotes[t.key]; if (!q || !$('#tkLtp')) return;
@@ -607,7 +611,8 @@ function showConfirm(r) {
   openSheet(`<div class="sh-head"><div><div class="confirm-title"><span class="pill ${t.side === 'BUY' ? 'buy' : 'sell'}">${t.side}</span> ${esc(shortName(it))}</div>
       <div class="muted small">${esc(it.name)} ${kindTag(it)}</div></div><button class="sh-close" aria-label="Close">✕</button></div>
     <div class="box">
-      <div class="kv"><span>Quantity</span><b>${qty.toLocaleString('en-IN')}${t.lot > 1 ? ` (${t.lots} lot${t.lots > 1 ? 's' : ''} × ${t.lot})` : ''}</b></div>
+      <div class="kv"><span>Quantity</span><b>${t.it.seg === 'MCX_COMM' ? `${qty} lot${qty === 1 ? '' : 's'} (each ${esc(t.it.contract || '?')})` :
+        qty.toLocaleString('en-IN') + (t.lot > 1 ? ` (${t.lots} lot${t.lots > 1 ? 's' : ''} × ${t.lot})` : '')}</b></div>
       <div class="kv"><span>Price</span><b>${priceTxt}</b></div>
       <div class="kv"><span>Order</span><b>${typeName} · ${prodName}${t.validity === 'IOC' ? ' · IOC' : ''}${t.amo ? ' · AMO' : ''}</b></div>
       <div class="kv"><span>Order value</span><b>${inr(r.value)}</b></div>

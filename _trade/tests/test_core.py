@@ -164,20 +164,20 @@ class Orders(unittest.TestCase):
 
 class Positions(unittest.TestCase):
     def test_pnl_is_dhans_own(self):
-        """The owner's case (22 Nov): ASIANPAINT 2640 CE, 1,750 @ 87.96, LTP 69.80. Dhan said −₹31,774.99;
-        working it out from the multiplier field showed −₹3,17,74,995."""
+        """An option where Dhan's "multiplier" field is 1000: working the P&L out from it showed 1,000x the loss.
+        Made-up numbers (this repository is public)."""
         k = trade.INST.search("nifty 26000 ce")[0]["key"]
         seg, sid = k.split(":")
-        trade.QUOTES[k] = {"ltp": 69.80, "t": time.time()}
-        pos = [{"exchangeSegment": seg, "securityId": sid, "netQty": 1750, "buyAvg": 87.95714, "sellAvg": 0,
-                "multiplier": 1000, "realizedProfit": 0.0, "unrealizedProfit": -31774.99},
-               {"exchangeSegment": "MCX_COMM", "securityId": "440000", "netQty": 10, "buyAvg": 1523, "multiplier": 10,
-                "realizedProfit": 0.0, "unrealizedProfit": -600.0}]
+        trade.QUOTES[k] = {"ltp": 80.0, "t": time.time()}
+        pos = [{"exchangeSegment": seg, "securityId": sid, "netQty": 750, "buyAvg": 100.0, "sellAvg": 0,
+                "multiplier": 1000, "realizedProfit": 0.0, "unrealizedProfit": -15000.0},
+               {"exchangeSegment": "MCX_COMM", "securityId": "440000", "netQty": 0, "buyAvg": 1500, "multiplier": 10,
+                "realizedProfit": -500.0, "unrealizedProfit": 0.0}]
         out, keys = trade.positions_view(pos)
-        self.assertEqual(out[0]["unrealizedProfit"], -31774.99)
+        self.assertEqual(out[0]["unrealizedProfit"], -15000.0)
         self.assertNotIn("_unreal", out[0])
-        self.assertEqual(out[0]["_ltp"], 69.80)
-        self.assertEqual(round(trade.today_pnl(out), 2), -32374.99)      # Dhan's "Overall P&L"
+        self.assertEqual(out[0]["_ltp"], 80.0)
+        self.assertEqual(round(trade.today_pnl(out), 2), -15500.0)
 
 
 def fill(t, side, qty, price, sid="1", kind="OPTIDX", product="INTRADAY", seg="NSE_FNO"):

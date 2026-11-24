@@ -237,8 +237,8 @@ class Rules:
     def opened_today(self):
         return [x for x in self.s["sent"].get(self.today(), []) if x.get("opening")]
 
-    def max_qty(self, entry, stop, lot):
-        risk_unit = abs(entry - stop)
+    def max_qty(self, entry, stop, lot, mult=1):
+        risk_unit = abs(entry - stop) * (mult or 1)
         if risk_unit <= 0:
             return 0
         c = self.cfg()
@@ -262,12 +262,13 @@ class Rules:
             probs.append("Rule 3: set your stop-loss before you enter. The size is worked out from it.")
         entry = float(sup.get("price") or o.get("price") or 0)
         lot = it["lot"] if it["seg"] not in ("NSE_EQ", "BSE_EQ") else 1
+        mult = (it.get("mult") or 1) if it["seg"] == "MCX_COMM" else 1
         if stop and entry:
-            mq = self.max_qty(entry, stop, lot)
+            mq = self.max_qty(entry, stop, lot, mult)
             risk_amt = c["capital"] * c["risk_pct"] / 100
-            info.update(max_qty=mq, risk_allowed=round(risk_amt, 2), risk_unit=round(abs(entry - stop), 2))
+            info.update(max_qty=mq, risk_allowed=round(risk_amt, 2), risk_unit=round(abs(entry - stop) * mult, 2))
             if mq <= 0:
-                probs.append(f"Even {'1 lot' if lot > 1 else '1 share'} risks {abs(entry - stop) * lot:,.0f}, more than "
+                probs.append(f"Even {'1 lot' if lot > 1 or mult > 1 else '1 share'} risks ₹{abs(entry - stop) * lot * mult:,.0f}, more than "
                              f"your ₹{risk_amt:,.0f}. Choose a closer stop, or skip this one.")
             elif o["quantity"] > mq:
                 probs.append(f"Rule 3: at most {mq:,} {'units' if lot > 1 else 'shares'} with this stop "
@@ -313,7 +314,8 @@ class Rules:
              "level": {k: level[k] for k in ("id", "name", "price")}, "tol": level["_tol"], "bull": bull,
              "side": o["transactionType"], "qty": o["quantity"], "stop": o["super"]["stopLossPrice"],
              "risk_unit": abs(o["super"]["price"] - o["super"]["stopLossPrice"]), "status": "waiting",
-             "lot": it["lot"] if it["seg"] not in ("NSE_EQ", "BSE_EQ") else 1}
+             "lot": it["lot"] if it["seg"] not in ("NSE_EQ", "BSE_EQ") else 1,
+             "mult": (it.get("mult") or 1) if it["seg"] == "MCX_COMM" else 1}
         with self.lock:
             self.s["armed"].append(a)
             self.save()
@@ -370,7 +372,7 @@ class Rules:
                     continue
                 a["status"] = "confirmed"
                 a["confirmed_at"] = t.strftime("%H:%M")
-                qty = min(a["qty"], self.max_qty(px, a["stop"], a.get("lot", 1)))   # risk stays within 1% at today's price
+                qty = min(a["qty"], self.max_qty(px, a["stop"], a.get("lot", 1), a.get("mult", 1)))   # risk stays within 1% at today's price
                 if qty <= 0:
                     a["status"] = "invalid"
                     self._log(a, "Confirmed, but at this price even the smallest size risks too much. Not taken.")
