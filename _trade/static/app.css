@@ -249,3 +249,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .tv-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .tv-link { color: var(--buy); text-decoration: none; font-weight: 600; display: inline-block; }
 .ghost.on-green { background: var(--upbg); color: var(--up); border-color: var(--up); font-weight: 600; }
+.trail { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg2); max-width: 440px; }
+.trail.bad { border-color: var(--down); }
+.trail-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.trail .step { font-size: 12px; padding: 3px 9px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+.trail-row { display: flex; align-items: center; gap: 8px; }
+.trail .tb { flex: 1; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 24px; font-weight: 600; line-height: 1; }
+.trail .tb:active { background: var(--line); }
+.trail .tv { font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+.trail .tv b { font-size: 17px; }
+.trail .tgo { flex: 1.6; height: 44px; border-radius: 12px; background: var(--buy); color: #fff; font-weight: 700; font-size: 14px; }
+.trail .tgo.off { background: var(--line); color: var(--muted); }

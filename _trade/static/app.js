@@ -8,7 +8,7 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 
 function pref(k, d) { try { const v = localStorage.getItem('mt-' + k); return v === null ? d : v === '1'; } catch (e) { return d; } }
 function setPref(k, v) { try { localStorage.setItem('mt-' + k, v ? '1' : '0'); } catch (e) { /* private mode */ } }
-const S = {chainAll: pref('chainAll', false), liq: {}, wlGood: pref('wlGood', true), mkGood: pref('mkGood', true), status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
+const S = {trail: {}, chainAll: pref('chainAll', false), liq: {}, wlGood: pref('wlGood', true), mkGood: pref('mkGood', true), status: null, tab: 'watch', wl: [], wlIdx: 0, info: {}, quotes: {}, editWl: false, sheetKey: null,
   orderFilter: 'open', insDays: 90, chainUl: 'NIFTY', chainExp: '', posKeys: [], lastOrders: [], ticket: null};
 
 async function api(path, body, method) {
@@ -774,10 +774,72 @@ function openModify(o) {
   };
 }
 
+// ---- trailing the stop-loss with − / + ---------------------------------------------------------------------
+const STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500];
+function defaultStep(ltp, tick) {
+  const want = Math.max(tick || 0.05, (ltp || 0) * 0.002);           // about 0.2% of the price
+  return STEPS.find(s => s >= want && s >= (tick || 0.05)) || STEPS[STEPS.length - 1];
+}
+function roundTo(v, tick) { return Math.round(Math.round(v / tick) * tick * 100) / 100; }
+function trailState(p) {
+  const k = p._key, net = +p.netQty, ltp = +(S.quotes[k]?.ltp || p._ltp || 0), tick = +p._tick || 0.05;
+  const st = (p._stops || [])[0];
+  let t = S.trail[k];
+  const base = st ? st.trigger : roundTo(ltp * (net > 0 ? 0.99 : 1.01), tick);
+  if (!t || (st && t.orderId !== st.order_id)) t = S.trail[k] = {value: base, step: defaultStep(ltp, tick), orderId: st ? st.order_id : ''};
+  if (!t.touched) t.value = base;                               // follow the live stop until the buttons are used
+  return {t, st, ltp, tick, net};
+}
+function trailHtml(p) {
+  const {t, st, ltp, net} = trailState(p);
+  const avg = net > 0 ? +p.buyAvg : +p.sellAvg, qty = Math.abs(net), mult = +p._mult || 1;
+  const loss = (net > 0 ? avg - t.value : t.value - avg) * qty * mult;          // > 0: lost if hit; < 0: profit locked
+  const away = ltp ? Math.abs(ltp - t.value) / ltp * 100 : null;
+  const bad = ltp && (net > 0 ? t.value >= ltp : t.value <= ltp);
+  const changed = !st || Math.abs(t.value - st.trigger) > 1e-9;
+  return `<div class="trail ${bad ? 'bad' : ''}">
+    <div class="trail-top"><span class="small muted">${st ? `Stop-loss${st.kind === 'super' ? ' (super order)' : ''}` : '<b class="down">No stop-loss</b>'}</span>
+      <button class="step" data-tstep="${esc(p._key)}" title="Step">step ₹${t.step}</button></div>
+    <div class="tv"><b>₹${px(t.value)}</b> <span class="small ${loss > 0 ? 'down' : 'up'}">${bad ? 'would fill at once' :
+        (loss > 0 ? `₹${Math.round(loss).toLocaleString('en-IN')} at risk` : `locks ₹${Math.round(-loss).toLocaleString('en-IN')} profit`) + (away !== null ? ` · ${away.toFixed(1)}% away` : '')}</span></div>
+    <div class="trail-row"><button class="tb" data-tm="${esc(p._key)}" aria-label="Lower the stop">−</button>
+      <button class="tb" data-tp="${esc(p._key)}" aria-label="Raise the stop">+</button>
+      <button class="tgo ${changed && !bad ? '' : 'off'}" data-tgo="${esc(p._key)}" ${changed && !bad ? '' : 'disabled'}>${st ? 'Move stop' : 'Add stop'}</button></div>
+  </div>`;
+}
+async function trailClick(e) {
+  const b = e.target.closest('[data-tm],[data-tp],[data-tstep],[data-tgo]'); if (!b) return false;
+  const k = b.dataset.tm || b.dataset.tp || b.dataset.tstep || b.dataset.tgo;
+  const p = (S.positions || []).find(x => x._key === k); if (!p) return true;
+  const {t, st, tick, net} = trailState(p);
+  if (b.dataset.tm || b.dataset.tp) {
+    t.value = roundTo(t.value + (b.dataset.tp ? 1 : -1) * t.step, tick);
+    t.touched = true;
+  } else if (b.dataset.tstep) {
+    const near = STEPS.filter(s => s >= tick);
+    t.step = near[(near.indexOf(t.step) + 1) % near.length];
+  } else if (b.dataset.tgo) {
+    b.disabled = true; b.textContent = 'Sending…';
+    try {
+      await api('/api/stop/move', {key: k, trigger: t.value, order_id: st ? st.order_id : '', kind: st ? st.kind : '', trail: st ? st.trail || 0 : 0});
+      toast(`${st ? 'Stop moved' : 'Stop placed'}: ${p._name} at ₹${px(t.value)}`, 'ok');
+      delete S.trail[k];
+      setTimeout(loadPositions, 600);
+    } catch (er) { toast(er.message, 'bad', 7000); }
+  }
+  renderPositions();
+  return true;
+}
+
 // ---- positions --------------------------------------------------------------------------------------------
 async function loadPositions() {
   let r;
   try { r = await api('/api/positions'); } catch (e) { $('#positions').innerHTML = `<div class="item muted">${esc(e.message)}</div>`; return; }
+  S.posResp = r;
+  renderPositions();
+}
+function renderPositions() {
+  const r = S.posResp; if (!r) return;
   S.positions = r.positions;
   S.posKeys = r.positions.filter(p => +p.netQty).map(p => p._key);
   const open = r.positions.filter(p => +p.netQty), closed = r.positions.filter(p => !+p.netQty);
@@ -794,6 +856,7 @@ async function loadPositions() {
       <div class="name">${esc(p._name || p.tradingSymbol)} <span class="tag">${esc(p.productType)}</span></div>
       <div class="sub">${net ? `${net > 0 ? 'Long' : 'Short'} ${Math.abs(net).toLocaleString('en-IN')} @ ₹${px(avg)} · LTP ₹<span data-q="${esc(p._key)}">${px(p._ltp)}</span>` :
         `Closed · bought ${(+p.buyQty).toLocaleString('en-IN')} @ ₹${px(p.buyAvg)}, sold @ ₹${px(p.sellAvg)}`}</div>
+      ${net ? trailHtml(p) : ''}
       ${net ? `<div class="ord-actions"><button data-exit="${esc(p._key)}" data-net="${net}" data-prod="${esc(p.productType)}">Exit</button>
         <button data-add="${esc(p._key)}" data-net="${net}" data-prod="${esc(p.productType)}">Add</button>
         <button data-conv="${esc(p._key)}">Convert</button></div>` : ''}
@@ -803,6 +866,7 @@ async function loadPositions() {
   $('#exitAll').classList.toggle('hidden', !open.length);
 }
 $('#positions').onclick = async e => {
+  if (await trailClick(e)) return;
   const x = e.target.closest('[data-exit],[data-add]');
   if (x) {
     const net = +x.dataset.net, key = x.dataset.exit || x.dataset.add;

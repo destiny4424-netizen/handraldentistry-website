@@ -32,7 +32,7 @@ from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "24 Nov 2026 · TradingView charts, ATM ±2 chain"
+VERSION = "24 Nov 2026 · trail stops with − / +"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -312,6 +312,8 @@ def positions_view(pos):
         p["_key"] = k
         p["_name"] = it["name"] if it else p.get("tradingSymbol")
         p["_lot"] = it["lot"] if it else 1
+        p["_tick"] = it["tick"] if it else 0.05
+        p["_mult"] = p.get("_mult") or ((it.get("mult") or 1) if it and it["seg"] == "MCX_COMM" else 1)
         if int(p.get("netQty") or 0):
             keys.append(k)
             lq = QUOTES.get(k)
@@ -323,6 +325,96 @@ def positions_view(pos):
                 if cost:
                     p["_ltp"] = round(cost + float(p.get("unrealizedProfit") or 0) / (net * float(p.get("_mult") or 1)), 2)
     return pos, keys
+
+
+WORKING = ("PENDING", "TRANSIT", "TRIGGERED", "PART_TRADED")
+
+
+def attach_stops(pos):
+    """The stop-loss working for each open position: a pending SL / SL-M order on the closing side, or the
+    stop-loss leg of a Super order. Each position gets p["_stops"] (usually one)."""
+    open_ = [p for p in pos if int(p.get("netQty") or 0)]
+    if not open_:
+        return pos
+    try:
+        orders = D.orders()
+    except dhanlib.DhanError:
+        orders = []
+    try:
+        sup = D.super_orders()
+    except dhanlib.DhanError:
+        sup = []
+    for p in open_:
+        net, sid, seg = int(p["netQty"]), str(p.get("securityId")), p.get("exchangeSegment")
+        close_side, entry_side = ("SELL", "BUY") if net > 0 else ("BUY", "SELL")
+        stops = []
+        for o in orders:
+            if str(o.get("securityId")) == sid and o.get("exchangeSegment") == seg and o.get("transactionType") == close_side \
+                    and o.get("orderType") in ("STOP_LOSS", "STOP_LOSS_MARKET") and o.get("orderStatus") in WORKING \
+                    and not o.get("legName"):
+                stops.append({"kind": "order", "order_id": str(o["orderId"]), "trigger": float(o.get("triggerPrice") or 0),
+                              "price": float(o.get("price") or 0), "type": o["orderType"],
+                              "qty": int(o.get("remainingQuantity") or o.get("quantity") or 0)})
+        for s in sup:
+            if str(s.get("securityId")) != sid or s.get("exchangeSegment") != seg or s.get("transactionType") != entry_side:
+                continue
+            for leg in s.get("legDetails") or []:
+                if leg.get("legName") == "STOP_LOSS_LEG" and leg.get("orderStatus") in WORKING:
+                    stops.append({"kind": "super", "order_id": str(s["orderId"]), "trigger": float(leg.get("price") or 0),
+                                  "trail": float(leg.get("trailingJump") or 0),
+                                  "qty": int(leg.get("remainingQuantity") or 0)})
+        p["_stops"] = stops
+    return pos
+
+
+def stop_side_ok(net, trigger, ltp):
+    """A stop must stay on the losing side of the price, or it fills at once."""
+    if not ltp:
+        return ""
+    if net > 0 and trigger >= ltp:
+        return f"A stop for a long position must be below the price (₹{ltp:,.2f}); ₹{trigger:,.2f} would sell right away."
+    if net < 0 and trigger <= ltp:
+        return f"A stop for a short position must be above the price (₹{ltp:,.2f}); ₹{trigger:,.2f} would buy right away."
+    return ""
+
+
+def move_stop(b):
+    """Move a position's stop-loss to a new trigger (the +/- buttons), or add one if it has none."""
+    key = str(b.get("key") or "")
+    it = INST.get(key)
+    if not it:
+        return 400, {"error": "Unknown instrument"}
+    pos = positions_view(get_positions())[0]
+    p = next((x for x in pos if x.get("_key") == key and int(x.get("netQty") or 0)), None)
+    if not p:
+        return 400, {"error": "There is no open position in this instrument any more."}
+    net = int(p["netQty"])
+    trigger = round_tick(float(b.get("trigger") or 0), it["tick"])
+    if trigger <= 0:
+        return 400, {"error": "Choose the stop price."}
+    ltp = float((QUOTES.get(key) or {}).get("ltp") or p.get("_ltp") or 0)
+    bad = stop_side_ok(net, trigger, ltp)
+    if bad:
+        return 400, {"error": bad}
+    oid, kind = str(b.get("order_id") or ""), b.get("kind")
+    if not oid:                                        # no stop yet: place an SL-M for the whole position
+        return place({"key": key, "side": "SELL" if net > 0 else "BUY", "qty": abs(net), "product": p.get("productType"),
+                      "type": "STOP_LOSS_MARKET", "trigger": trigger, "validity": "DAY"})
+    if kind == "super":
+        r = D.modify_super_leg(oid, "STOP_LOSS_LEG", {"stopLossPrice": trigger, "trailingJump": float(b.get("trail") or 0)})
+    else:
+        o = D.order(oid)
+        if o.get("orderStatus") not in WORKING:
+            return 400, {"error": f"That stop order is {str(o.get('orderStatus') or 'gone').lower()} now; refresh."}
+        otype = o.get("orderType") or "STOP_LOSS_MARKET"
+        price = 0.0
+        if otype == "STOP_LOSS":                       # keep the same gap between trigger and limit price
+            gap = float(o.get("price") or 0) - float(o.get("triggerPrice") or 0)
+            price = round_tick(trigger + gap, it["tick"])
+        r = D.modify_order(oid, {"orderType": otype, "quantity": int(o.get("quantity") or abs(net)), "price": price,
+                                 "triggerPrice": trigger, "validity": o.get("validity") or "DAY"})
+    audit("stop_moved", sym=it["sym"], order_id=oid, trigger=trigger, reply=r)
+    return 200, {"ok": True, "trigger": trigger}
 
 
 def reduces_position(o, positions):
@@ -873,6 +965,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"trades": D.trades_today()})
         if path == "/api/positions":
             pos, keys = positions_view(get_positions())
+            attach_stops(pos)
             want(keys)
             return self.send(200, {"positions": pos, "pnl": round(today_pnl(pos), 2), "limits": limits()})
         if path == "/api/holdings":
@@ -995,6 +1088,9 @@ class Handler(BaseHTTPRequestHandler):
                                          "validity": b.get("validity") or "DAY", "legName": b.get("leg") or ""})
             audit("order_modified", order_id=oid, change=b, reply=r)
             return self.send(200, {"ok": True, "reply": r})
+        if path == "/api/stop/move":
+            code, r = move_stop(b)
+            return self.send(code, r)
         if path == "/api/order/cancel":
             oid = str(b["order_id"])
             r = D.cancel_super(oid, b.get("leg") or "ENTRY_LEG") if b.get("super") else D.cancel_order(oid)
