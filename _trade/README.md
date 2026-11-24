@@ -51,6 +51,16 @@ What's moving among the liquid F&O stocks (about 200, those with futures). Tap a
   build-up, short covering, long unwinding.
 - **Sectors:** the average % change of each sector's F&O stocks (the scanner's sector list).
 
+**"F&O · good volume only"** (on by default, in the Market tab and on the watchlist):
+- **Good volume** is the scanner's liquidity rule: over the last 20 sessions the stock traded on average at least
+  ₹200 crore and 5 lakh shares a day, and today it has traded at least 0.8× its usual volume for this time of day.
+  "Change" edits the three numbers (saved in settings.json as `liquidity`).
+- **Market tab:** gainers, losers, breakouts, volume shockers and 52-week lists show only stocks that pass. Rows show
+  their ₹ crore a day. Switch the filter off to see every F&O stock.
+- **Watchlist:** stocks that aren't F&O, or are thin today, are hidden, with "N hidden · Show all". Indices, futures
+  and options are always shown. Rows are tagged F&O, with today's volume against usual ("1.4× vol"). Search marks
+  F&O stocks too.
+
 Prices come in one request per kind, refreshed every 20 seconds while the tab is open. The 15-minute candles take
 about a minute for all stocks. Yesterday's futures OI is read once a day. The daily candles (20-day volume, 52-week)
 are the auto-trader's, downloaded each morning. `movers.py`.

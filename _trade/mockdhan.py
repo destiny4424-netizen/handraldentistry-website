@@ -602,7 +602,9 @@ class Handler(BaseHTTPRequestHandler):
                                        "high": round(max(px, i["prev"]) * 1.004, 2), "low": round(min(px, i["prev"]) * 0.996, 2)}
                     if mf.group(1) == "quote":
                         t = i["tick"]
-                        row.update(net_change=round(px - i["prev"], 2), volume=random.randint(10000, 900000),
+                        uv = usual_volume(i)
+                        row.update(net_change=round(px - i["prev"], 2),
+                                   volume=int(uv * random.uniform(0.9, 1.6)) if uv else random.randint(10000, 900000),
                                    average_price=px, oi=random.randint(0, 500000) if i["kind"] not in ("EQUITY", "INDEX") else 0,
                                    buy_quantity=12000, sell_quantity=9800, last_trade_time=datetime.now(IST).strftime("%d/%m/%Y %H:%M:%S"),
                                    upper_circuit_limit=round(max(i["prev"], px) * (20 if i["opt"] else 1.2), 2),
@@ -663,6 +665,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 DAILY = {}
+THIN = {"WIPRO": 40, "TATASTEEL": 60}                   # low-volume stocks, to test the "good volume" filter
+
+
+def usual_volume(i):
+    """Average daily shares of a stock in the made-up history (for today's volume in quotes)."""
+    if i["kind"] != "EQUITY":
+        return 0
+    d = daily_series(i, "2000-01-01", "2100-01-01")["volume"][-20:]
+    return sum(d) / len(d) if d else 0
 
 
 def daily_series(i, frm, to):
@@ -690,7 +701,12 @@ def daily_series(i, frm, to):
             out.append([d, o, h, l, c, rng.randint(200000, 2000000)])
             px = c
         scale = i["px"] / px
-        DAILY[key] = [[r[0]] + [x * scale for x in r[1:5]] + [r[5]] for r in out]
+        rows = [[r[0]] + [x * scale for x in r[1:5]] + [r[5]] for r in out]
+        if i["kind"] == "EQUITY":                        # realistic traded value: ₹300-2,500 Cr a day, two thin ones
+            cr = THIN.get(i["sym"]) or 300 + zlib.crc32(i["sym"].encode()) % 2200
+            for r in rows:
+                r[5] = int(cr * 1e7 / r[4] * rng.uniform(0.7, 1.3))
+        DAILY[key] = rows
     rows = [r for r in DAILY[key] if frm <= r[0].isoformat() < to]
     ts = lambda d: int(datetime(d.year, d.month, d.day, tzinfo=IST).timestamp())
     out = {"timestamp": [ts(r[0]) for r in rows], "open": [round(r[1], 2) for r in rows],

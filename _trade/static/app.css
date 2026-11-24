@@ -240,3 +240,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .mk-bar .u { background: var(--up); } .mk-bar .d { background: var(--down); margin-left: auto; }
 #mkTabs { margin-bottom: 4px; }
 @media (max-width: 430px) { .tabs button { font-size: 10px; } .tabs button i { font-size: 16px; } }
+.wl-filter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+.chip-toggle { padding: 5px 12px; border-radius: 20px; border: 1px solid var(--line); background: var(--card); font-size: 12px; }
+.chip-toggle.on { background: var(--upbg); color: var(--up); border-color: var(--up); font-weight: 600; }
+.tag.fno { background: rgba(47, 129, 247, .15); color: var(--buy); }
+.tag.low { background: var(--warnbg); color: var(--warn); }
+#mkRule a { color: var(--buy); }

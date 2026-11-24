@@ -37,6 +37,7 @@
     <div class="search"><input id="q" type="search" placeholder="Search stocks, indices, futures, options  (e.g. nifty 26000 ce)" autocomplete="off" spellcheck="false"></div>
     <div id="results" class="results hidden"></div>
     <div class="wl-head"><div id="wlTabs" class="chips"></div><button id="wlEdit" class="ghost sm">Edit</button></div>
+    <div class="wl-filter"><button id="wlFilter" class="chip-toggle">F&amp;O · good volume</button><span id="wlHidden" class="muted small"></span></div>
     <div id="wl" class="list"></div>
     <div id="wlEmpty" class="empty hidden">This list is empty. Search above and tap ＋ to add stocks, indices, futures or options.</div>
   </section>
@@ -49,6 +50,8 @@
       <button data-m="highs">52-week high</button><button data-m="lows">52-week low</button>
       <button data-m="buildup">OI build-up</button><button data-m="sectors">Sectors</button>
     </div>
+    <div class="wl-filter"><button id="mkGood" class="chip-toggle">F&amp;O · good volume only</button></div>
+    <div id="mkRule" class="muted small"></div>
     <div id="mkNote" class="muted small" style="margin:8px 0"></div>
     <div id="mkList" class="list"></div>
   </section>
