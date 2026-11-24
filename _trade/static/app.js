@@ -363,7 +363,13 @@ function closeSheet() {
   S.sheetKey = null; S.ticket = null;
   if (lwc) { try { lwc.remove(); } catch (e) { /* gone */ } lwc = null; }
 }
-$('#sheet').addEventListener('click', e => { if (e.target.classList.contains('sheet-bg') || e.target.closest('.sh-close')) closeSheet(); });
+$('#sheet').addEventListener('click', e => {
+  if (e.target.classList.contains('sheet-bg') || e.target.closest('.sh-close')) return closeSheet();
+  const ob = e.target.closest('[data-obuy]');
+  if (ob) return openTicket(ob.dataset.obuy, 'BUY');
+  const me = e.target.closest('[data-mexp]');
+  if (me && S.mini) { S.mini.expiry = me.dataset.mexp; loadMiniChain(S.mini.key); }
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').classList.contains('hidden')) closeSheet(); });
 
 async function ensureInfo(key) {
@@ -378,46 +384,58 @@ async function openInstrument(key) {
   if (!it) return toast('Unknown instrument', 'bad');
   S.ticket = null; S.sheetKey = key;
   const tradable = it.kind !== 'INDEX';
-  const hasChain = it.kind === 'INDEX' || it.kind === 'EQUITY' || it.opt || it.kind.startsWith('FUT');
+  const ul = (it.kind === 'INDEX' || it.kind === 'EQUITY') ? it.sym : it.ul;
   openSheet(`<div class="sh-head"><div><h2>${esc(shortName(it))} ${kindTag(it)}</h2><div class="muted small">${esc(it.name)}${it.lot > 1 ? ' · lot size ' + it.lot : ''}</div></div>
     <button class="sh-close" aria-label="Close">✕</button></div>
     <div><span class="bigprice" id="shLtp">–</span> <span id="shChg" class="chg"></span></div>
-    <div class="stats" id="shStats"></div>
     <div class="chips tf" id="tf">${['1', '5', '15', '60', 'D'].map(t => `<button data-tf="${t}" class="${t === '5' ? 'on' : ''}">${t === 'D' ? 'Day' : t + 'm'}</button>`).join('')}</div>
     <div class="chart" id="chart"></div>
-    <div class="tv-row"><a id="shTV" class="ghost sm tv-link" target="_blank" rel="noopener">Open in TradingView ↗</a>
-      <span class="muted small">pinch or scroll to zoom · drag to go back in time</span></div>
-    <div class="section-title">Market depth</div><div class="depth" id="depth"><div class="muted small">Waiting for prices…</div></div>
-    <div class="ord-actions" style="margin-top:12px">
-      <button id="shWl">${inWl(key) ? '✓ In watchlist' : '＋ Watchlist'}</button>
-      ${hasChain ? `<button id="shChain">Option chain</button>` : ''}
-    </div>
-    ${tradable ? `<div class="bs"><button class="b-buy" id="shBuy">BUY</button><button class="b-sell" id="shSell">SELL</button></div>`
-      : '<div class="muted small" style="margin-top:12px">An index can\'t be bought itself: open its option chain, or search for its futures.</div>'}`);
+    <div id="miniChain"></div>
+    <div class="ord-actions" style="margin-top:12px"><button id="shWl">${inWl(key) ? '✓ In watchlist' : '＋ Watchlist'}</button></div>
+    ${tradable ? `<div class="bs"><button class="b-buy" id="shBuy">BUY</button><button class="b-sell" id="shSell">SELL</button></div>` : ''}`);
   updateSheetQuote();
-  const tv = tvSymbol(it);
-  if (tv) $('#shTV').href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tv);
-  else $('#shTV').classList.add('hidden');
   $('#shWl').onclick = () => { toggleWl(key); $('#shWl').textContent = inWl(key) ? '✓ In watchlist' : '＋ Watchlist'; };
-  if ($('#shChain')) $('#shChain').onclick = () => { S.chainUl = it.ul || it.sym; S.chainExp = it.opt ? it.expiry : ''; closeSheet(); showTab('chain'); };
   if (tradable) { $('#shBuy').onclick = () => openTicket(key, 'BUY'); $('#shSell').onclick = () => openTicket(key, 'SELL'); }
   $('#tf').onclick = e => { const b = e.target.closest('button'); if (!b) return; $$('#tf button').forEach(x => x.classList.toggle('on', x === b)); drawChart(key, b.dataset.tf); };
   drawChart(key, '5');
   pollQuotes();
+  S.mini = {key, ul, expiry: it.opt ? it.expiry : ''};
+  loadMiniChain(key);
+  clearInterval(S.miniTimer);
+  S.miniTimer = setInterval(() => { if (S.sheetKey !== key || document.hidden) { if (S.sheetKey !== key) clearInterval(S.miniTimer); return; } loadMiniChain(key); }, 5000);
 }
 function updateSheetQuote() {
   const q = S.quotes[S.sheetKey]; if (!q || !$('#shLtp')) return;
   $('#shLtp').textContent = px(q.ltp);
   $('#shChg').textContent = `${signed(q.chg)} (${signed(q.pct, v => Number(v).toFixed(2))}%)`;
   $('#shChg').className = 'chg ' + cls(q.chg);
-  $('#shStats').innerHTML = [['Open', q.open], ['High', q.high], ['Low', q.low], ['Prev close', q.prev]]
-    .map(([l, v]) => `<div>${l}<b>${px(v)}</b></div>`).join('') +
-    (q.vol ? `<div>Volume<b>${big(q.vol)}</b></div>` : '') + (q.oi ? `<div>OI<b>${big(q.oi)}</b></div>` : '') +
-    (q.avg ? `<div>Avg price<b>${px(q.avg)}</b></div>` : '') + (q.uc ? `<div>Circuit<b class="small">${px(q.lc)}–${px(q.uc)}</b></div>` : '');
-  if (q.bids && q.bids.length) {
-    const tb = (rows, c) => `<table>${rows.map(r => `<tr><td class="${c}">${px(r[0])}</td><td>${big(r[1])}</td></tr>`).join('')}</table>`;
-    $('#depth').innerHTML = `<div><div class="muted small">Bids</div>${tb(q.bids, 'up')}</div><div><div class="muted small">Offers</div>${tb(q.asks, 'down')}</div>`;
-  }
+}
+
+// The underlying's options under the chart: ATM, 2 in the money and 2 out of the money, with Buy on each side.
+async function loadMiniChain(key) {
+  const m = S.mini; if (!m || m.key !== key || !m.ul) return;
+  let r;
+  try { r = await api(`/api/chain?ul=${encodeURIComponent(m.ul)}&expiry=${encodeURIComponent(m.expiry || '')}`); } catch (e) { return; }
+  if (S.sheetKey !== key || !$('#miniChain')) return;
+  if (!r.rows || !r.rows.length) { $('#miniChain').innerHTML = ''; return; }
+  m.expiry = r.expiry;
+  const spot = r.spot;
+  const atm = spot ? r.rows.reduce((a, x) => (a === null || Math.abs(x.strike - spot) < Math.abs(a - spot) ? x.strike : a), null) : null;
+  const i = atm === null ? Math.floor(r.rows.length / 2) : r.rows.findIndex(x => x.strike === atm);
+  const rows = r.rows.slice(Math.max(0, i - 2), i + 3);
+  const chg = o => o && o.ltp && o.prev ? (o.ltp - o.prev) / o.prev * 100 : null;
+  const side = (o, kind) => o && o.key ? `<td class="mc-b"><button class="mbuy" data-obuy="${esc(o.key)}">Buy</button></td>
+      <td class="mc-p ${kind}"><b>₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>` : `<td class="mc-b"></td><td class="mc-p"></td>`;
+  const putSide = o => o && o.key ? `<td class="mc-p pe"><b>₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>
+      <td class="mc-b"><button class="mbuy" data-obuy="${esc(o.key)}">Buy</button></td>` : `<td class="mc-p"></td><td class="mc-b"></td>`;
+  const exps = (r.expiries || []).slice(0, 3);
+  $('#miniChain').innerHTML = `<div class="mc-head"><span class="section-title" style="margin:0">Options</span>
+      <div class="chips scroll">${exps.map(x => `<button data-mexp="${x}" class="${x === r.expiry ? 'on' : ''}">${new Date(x + 'T00:00').toLocaleDateString('en-IN', {day: 'numeric', month: 'short'})}</button>`).join('')}</div></div>
+    <table class="mini-chain"><thead><tr><th colspan="2">CALL</th><th>Strike</th><th colspan="2">PUT</th></tr></thead><tbody>
+    ${rows.map(x => `<tr class="${spot && x.strike < spot ? 'itm-ce' : ''} ${spot && x.strike > spot ? 'itm-pe' : ''} ${x.strike === atm ? 'atm' : ''}">
+      ${side(x.CE, 'ce')}<td class="mc-k">${Number(x.strike).toLocaleString('en-IN')}${x.strike === atm ? '<div class="sm">ATM</div>' : ''}</td>${putSide(x.PE)}</tr>`).join('')}
+    </tbody></table>
+    <div class="muted small" style="margin-top:6px">Lot ${r.lot} · spot ₹${px(spot)} · shaded = in the money</div>`;
 }
 
 // ---- chart --------------------------------------------------------------------------------------------
@@ -461,23 +479,6 @@ async function drawChart(key, tf) {
   }
 }
 
-// TradingView symbol for "Open in TradingView" (its app opens the link if installed).
-const TV_INDEX = {NIFTY: 'NSE:NIFTY', BANKNIFTY: 'NSE:BANKNIFTY', FINNIFTY: 'NSE:CNXFINANCE', MIDCPNIFTY: 'NSE:NIFTY_MID_SELECT',
-  NIFTYNXT50: 'NSE:NIFTYJR', INDIAVIX: 'NSE:INDIAVIX', SENSEX: 'BSE:SENSEX', BANKEX: 'BSE:BANKEX'};
-function tvName(s) { return String(s || '').toUpperCase().replace(/[-&\s]/g, '_'); }
-function tvSymbol(it) {
-  if (!it) return '';
-  const ex = it.exch === 'BSE' ? 'BSE' : it.exch === 'MCX' ? 'MCX' : 'NSE';
-  if (it.kind === 'INDEX') return TV_INDEX[it.sym] || `${ex}:${tvName(it.sym)}`;
-  if (it.kind === 'EQUITY') return `${ex}:${tvName(it.sym)}`;
-  const ul = TV_INDEX[it.ul] ? TV_INDEX[it.ul].split(':')[1] : tvName(it.ul);
-  if (it.kind.startsWith('FUT')) return `${ex}:${ul}1!`;
-  if (it.opt && ex !== 'MCX' && it.expiry) {                 // e.g. NSE:NIFTY261124C26000
-    const d = it.expiry.replace(/-/g, '').slice(2);
-    return `${ex}:${ul}${d}${it.opt === 'CE' ? 'C' : 'P'}${Number(it.strike)}`;
-  }
-  return `${ex}:${ul}1!`;                                    // MCX options: the underlying future
-}
 
 // ---- order ticket ---------------------------------------------------------------------------------------
 async function openTicket(key, side, preset = {}) {
