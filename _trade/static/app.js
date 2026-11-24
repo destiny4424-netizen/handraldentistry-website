@@ -181,6 +181,11 @@ async function loadStatus() {
   try {
     const s = await api('/api/status');
     S.status = s;
+    if (!S.version) S.version = s.version;
+    else if (s.version !== S.version) {                        // the server was updated: load the new screens
+      if ($('#sheet').classList.contains('hidden') && !lockShown) location.reload();
+      else S.reloadPending = true;
+    }
     $('#demo').classList.toggle('hidden', !s.demo);
     $('#conn').className = 'dot ' + (s.connected && !s.feed_error ? 'ok' : s.connected ? 'warn' : 'bad');
     $('#conn').title = s.connected ? `Dhan ${s.client}` + (s.feed_error ? ' · ' + s.feed_error : '') : 'Dhan not connected';
@@ -378,6 +383,7 @@ function closeSheet() {
   $('#sheet').classList.add('hidden');
   document.body.style.overflow = '';
   S.sheetKey = null; S.ticket = null;
+  if (S.reloadPending) setTimeout(() => location.reload(), 300);
   if (lwc) { try { lwc.remove(); } catch (e) { /* gone */ } lwc = null; }
 }
 $('#sheet').addEventListener('click', e => {
@@ -433,9 +439,15 @@ function updateSheetQuote() {
 async function loadMiniChain(key) {
   const m = S.mini; if (!m || m.key !== key || !m.ul) return;
   let r;
-  try { r = await api(`/api/chain?ul=${encodeURIComponent(m.ul)}&expiry=${encodeURIComponent(m.expiry || '')}`); } catch (e) { return; }
+  if ($('#miniChain') && !$('#miniChain').innerHTML) $('#miniChain').innerHTML = '<div class="muted small" style="margin-top:12px">Loading options…</div>';
+  try { r = await api(`/api/chain?ul=${encodeURIComponent(m.ul)}&expiry=${encodeURIComponent(m.expiry || '')}`); }
+  catch (e) { r = {error: e.message}; }
   if (S.sheetKey !== key || !$('#miniChain')) return;
-  if (!r.rows || !r.rows.length) { $('#miniChain').innerHTML = ''; return; }
+  if (!r.rows || !r.rows.length) {
+    $('#miniChain').innerHTML = r.error && /No options found/.test(r.error) ? '' :
+      `<div class="muted small" style="margin-top:12px">Options couldn't load: ${esc(r.error || 'no strikes')}. Trying again…</div>`;
+    return;
+  }
   m.expiry = r.expiry;
   const spot = r.spot;
   const atm = spot ? r.rows.reduce((a, x) => (a === null || Math.abs(x.strike - spot) < Math.abs(a - spot) ? x.strike : a), null) : null;
