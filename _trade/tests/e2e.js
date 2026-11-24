@@ -124,14 +124,30 @@ function check(ok, what) {
   await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Stop placed')), null, {timeout: 10000});
   await page.waitForFunction(() => (document.querySelector('.trail') || {}).textContent?.includes('Stop-loss'), null, {timeout: 10000});
   check(true, 'trail: − then "Add stop" places a stop-loss');
+  const stopAtDhan = () => page.evaluate(async () => {
+    const r = await api('/api/orders');
+    const o = r.orders.find(o => o.orderType === 'STOP_LOSS_MARKET' && ['PENDING', 'TRANSIT', 'TRIGGERED'].includes(o.orderStatus));
+    return o ? o.triggerPrice : null;
+  });
+  const moves = () => page.evaluate(async () => (await api('/api/audit')).log.filter(x => x.event === 'stop_moved').length);
+  check(!(await page.$('.trail [data-tgo]')), 'trail: no "Move stop" button once a stop exists');
   const before = await page.$eval('.trail .tv b', b => parseFloat(b.textContent.replace(/[₹,]/g, '')));
+  const m0 = await moves();
   await page.click('.trail [data-tp]');
-  const after = await page.$eval('.trail .tv b', b => parseFloat(b.textContent.replace(/[₹,]/g, '')));
-  check(after > before, `trail: + raises it (${before} → ${after})`);
+  await page.waitForFunction(() => (document.querySelector('.trail-status') || {}).textContent?.includes('at Dhan ₹'), null, {timeout: 10000});
+  const one = await stopAtDhan();
+  check(one > before, `trail: one + tap moved it at Dhan by itself (${before} → ${one})`);
   await shot('7b-trail');
-  await page.click('.trail [data-tgo]');
-  await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Stop moved')), null, {timeout: 10000});
-  check(true, 'trail: "Move stop" sends it');
+  const m1 = await moves();
+  await page.click('.trail [data-tp]');
+  await page.click('.trail [data-tp]');
+  await page.click('.trail [data-tp]');
+  await page.waitForFunction(v => (document.querySelector('.trail-status') || {}).textContent?.includes('at Dhan') &&
+    parseFloat(document.querySelector('.trail .tv b').textContent.replace(/[₹,]/g, '')) > v, one, {timeout: 10000});
+  await page.waitForTimeout(500);
+  const three = await stopAtDhan(), m2 = await moves();
+  check(m1 - m0 === 1 && m2 - m1 === 1, `trail: three quick taps sent as one change (${m1 - m0}, ${m2 - m1} changes)`);
+  check(three > one, `trail: stop now at ₹${three}`);
   await page.evaluate(async () => {
     const r = await api('/api/orders');
     for (const o of r.orders.filter(o => o.orderType === 'STOP_LOSS_MARKET' && ['PENDING', 'TRANSIT', 'TRIGGERED'].includes(o.orderStatus)))

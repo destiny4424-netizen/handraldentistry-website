@@ -218,14 +218,19 @@ The bot's state and log are in `autotrader.json` in the data folder. Its daily c
 ## Trailing the stop-loss (Positions)
 Every open position shows its working stop-loss: a pending SL / SL-M order on the closing side, or a Super order's
 stop-loss leg.
-- **− / +** move the stop by a step. The step starts at about 0.2% of the price (₹0.05 to ₹500), and tapping
-  "step" changes it.
-- **Move stop** sends the new trigger to Dhan in one tap. An SL-limit order keeps the same gap to its limit price.
+- **Each − / + tap moves the stop at Dhan by itself.** There is no Move button.
+- Quick taps are combined: the app waits ¾ of a second after the last tap and sends the final level once. The
+  exchange limits how many times one order can be modified, so 100 → 103 in three taps is one change.
+- "✓ at Dhan ₹…" confirms each change. If Dhan refuses one, the screen goes back to the stop Dhan still has and says
+  so.
+- **"step"** changes the size of a tap. It starts at about 0.2% of the price (₹0.05 to ₹500).
+- An SL-limit order keeps the same gap to its limit price.
 - The line above shows what the stop means in rupees: "₹X at risk" or "locks ₹X profit", and how far it is from the
   price (with the contract size for MCX).
-- **No stop:** a position without one says so. − / + then **Add stop** places an SL-M order for the whole position.
-- **Safety:** a stop on the wrong side of the price (it would fill at once) is refused, on the phone and on the
-  server.
+- **No stop:** a position without one says so. − / + choose a level, then **Add stop** (one tap, since it places a new
+  order) puts an SL-M on the whole position.
+- **Safety:** a tap that would move the stop past the price (it would fill at once) is refused on the phone, and the
+  server refuses such a stop too.
 
 ## Safety checks (before anything reaches Dhan)
 - The instrument, side, product, order type and quantity must make sense. F&O quantity must be a whole number of

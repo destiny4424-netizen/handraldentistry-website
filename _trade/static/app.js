@@ -787,6 +787,7 @@ function trailState(p) {
   let t = S.trail[k];
   const base = st ? st.trigger : roundTo(ltp * (net > 0 ? 0.99 : 1.01), tick);
   if (!t || (st && t.orderId !== st.order_id)) t = S.trail[k] = {value: base, step: defaultStep(ltp, tick), orderId: st ? st.order_id : ''};
+  if (t.touched && st && !t.timer && !t.sending && Math.abs(st.trigger - t.value) < 1e-9) t.touched = false;
   if (!t.touched) t.value = base;                               // follow the live stop until the buttons are used
   return {t, st, ltp, tick, net};
 }
@@ -796,7 +797,8 @@ function trailHtml(p) {
   const loss = (net > 0 ? avg - t.value : t.value - avg) * qty * mult;          // > 0: lost if hit; < 0: profit locked
   const away = ltp ? Math.abs(ltp - t.value) / ltp * 100 : null;
   const bad = ltp && (net > 0 ? t.value >= ltp : t.value <= ltp);
-  const changed = !st || Math.abs(t.value - st.trigger) > 1e-9;
+  const status = t.sending || t.timer ? '<span class="muted">sending to Dhan…</span>' :
+    t.status ? t.status : st ? '<span class="muted">each − / + tap moves it at Dhan</span>' : '';
   return `<div class="trail ${bad ? 'bad' : ''}">
     <div class="trail-top"><span class="small muted">${st ? `Stop-loss${st.kind === 'super' ? ' (super order)' : ''}` : '<b class="down">No stop-loss</b>'}</span>
       <button class="step" data-tstep="${esc(p._key)}" title="Step">step ₹${t.step}</button></div>
@@ -804,25 +806,55 @@ function trailHtml(p) {
         (loss > 0 ? `₹${Math.round(loss).toLocaleString('en-IN')} at risk` : `locks ₹${Math.round(-loss).toLocaleString('en-IN')} profit`) + (away !== null ? ` · ${away.toFixed(1)}% away` : '')}</span></div>
     <div class="trail-row"><button class="tb" data-tm="${esc(p._key)}" aria-label="Lower the stop">−</button>
       <button class="tb" data-tp="${esc(p._key)}" aria-label="Raise the stop">+</button>
-      <button class="tgo ${changed && !bad ? '' : 'off'}" data-tgo="${esc(p._key)}" ${changed && !bad ? '' : 'disabled'}>${st ? 'Move stop' : 'Add stop'}</button></div>
+      ${st ? '' : `<button class="tgo ${bad ? 'off' : ''}" data-tgo="${esc(p._key)}" ${bad ? 'disabled' : ''}>Add stop</button>`}</div>
+    ${status ? `<div class="small trail-status">${status}</div>` : ''}
   </div>`;
+}
+const TRAIL_WAIT_MS = 750;                                  // quick taps are combined into one change at Dhan
+async function sendTrail(k) {
+  const t = S.trail[k]; if (!t) return;
+  t.timer = null;
+  if (t.sending) { t.again = true; return; }
+  const p = (S.positions || []).find(x => x._key === k);
+  const st = p && (p._stops || [])[0];
+  if (!p || !st) return;
+  const value = t.value;
+  t.sending = true; renderPositions();
+  try {
+    await api('/api/stop/move', {key: k, trigger: value, order_id: st.order_id, kind: st.kind, trail: st.trail || 0});
+    t.status = `<span class="up">✓ at Dhan ₹${px(value)}</span>`;
+    st.trigger = value;
+  } catch (er) {
+    toast(er.message, 'bad', 7000);
+    t.status = `<span class="down">Not moved: still ₹${px(st.trigger)}</span>`;
+    t.value = st.trigger; t.touched = false;
+  }
+  t.sending = false;
+  if (t.again || (t.touched && Math.abs(t.value - st.trigger) > 1e-9 && !t.timer)) { t.again = false; return sendTrail(k); }
+  renderPositions();
+  setTimeout(loadPositions, 800);
 }
 async function trailClick(e) {
   const b = e.target.closest('[data-tm],[data-tp],[data-tstep],[data-tgo]'); if (!b) return false;
   const k = b.dataset.tm || b.dataset.tp || b.dataset.tstep || b.dataset.tgo;
   const p = (S.positions || []).find(x => x._key === k); if (!p) return true;
-  const {t, st, tick, net} = trailState(p);
+  const {t, st, tick, net, ltp} = trailState(p);
   if (b.dataset.tm || b.dataset.tp) {
-    t.value = roundTo(t.value + (b.dataset.tp ? 1 : -1) * t.step, tick);
-    t.touched = true;
+    const v = roundTo(t.value + (b.dataset.tp ? 1 : -1) * t.step, tick);
+    if (ltp && (net > 0 ? v >= ltp : v <= ltp)) {
+      toast(`The stop can't go ${net > 0 ? 'above' : 'below'} the price (₹${px(ltp)}): it would ${net > 0 ? 'sell' : 'buy'} at once.`, 'bad');
+      return true;
+    }
+    t.value = v; t.touched = true; t.status = '';
+    if (st) { clearTimeout(t.timer); t.timer = setTimeout(() => sendTrail(k), TRAIL_WAIT_MS); }
   } else if (b.dataset.tstep) {
     const near = STEPS.filter(s => s >= tick);
     t.step = near[(near.indexOf(t.step) + 1) % near.length];
-  } else if (b.dataset.tgo) {
+  } else if (b.dataset.tgo) {                                // no stop yet: place one
     b.disabled = true; b.textContent = 'Sending…';
     try {
-      await api('/api/stop/move', {key: k, trigger: t.value, order_id: st ? st.order_id : '', kind: st ? st.kind : '', trail: st ? st.trail || 0 : 0});
-      toast(`${st ? 'Stop moved' : 'Stop placed'}: ${p._name} at ₹${px(t.value)}`, 'ok');
+      await api('/api/stop/move', {key: k, trigger: t.value});
+      toast(`Stop placed: ${p._name} at ₹${px(t.value)}`, 'ok');
       delete S.trail[k];
       setTimeout(loadPositions, 600);
     } catch (er) { toast(er.message, 'bad', 7000); }
