@@ -36,20 +36,16 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
-## Charts and TradingView
+## Charts
 - **The chart on every instrument** uses TradingView's open-source **Lightweight Charts** v4.2.3 (Apache 2.0; an
   unmodified copy in `static/vendor/` with its licence and NOTICE, the same file the scanner uses). Candles from Dhan
   (1, 5, 15 or 60 minutes, or daily) with volume. Pinch or scroll to zoom, drag to go back in time, crosshair for
   prices. Times in IST. With no live quote (e.g. after the close), the header shows the last traded price.
-- **"Open in TradingView"** opens the same instrument in the TradingView app (or website) with your own indicators
-  and drawings:
-  - stocks: `NSE:RELIANCE`, with `-` and `&` turned into `_`
-  - indices: `NSE:NIFTY`, `NSE:BANKNIFTY`, `NSE:CNXFINANCE`, `BSE:SENSEX`, …
-  - futures: the continuous contract, `NSE:RELIANCE1!`, `MCX:GOLD1!`
-  - options: `NSE:NIFTY261124C26000` (YYMMDD, C/P, strike)
-  - MCX options: the underlying future
-
-  TradingView doesn't allow its full live NSE charts to be embedded in other apps, so it is a link.
+- **Under the chart:** the options of the stock or index (or of the underlying, for a future or an option): the ATM
+  strike with 2 in-the-money and 2 out-of-the-money strikes, calls on the left and puts on the right. Each has a
+  **Buy** button that opens that option's order ticket. Up to 3 expiries, refreshed every 5 seconds. Market depth and
+  the Open/High/Low boxes were removed to keep the screen simple. (An "Open in TradingView" link was tried and
+  removed: on the iPhone it opened the website, not the app.)
 - **Option chain:** by default the ATM strike with 2 in-the-money and 2 out-of-the-money strikes on each side.
   "ATM ±2" switches to all strikes, and the choice is remembered on the phone.
 
