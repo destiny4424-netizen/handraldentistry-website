@@ -177,22 +177,22 @@ function check(ok, what) {
   await page.waitForFunction(() => document.querySelector('#positions').textContent.includes('Closed'), null, {timeout: 8000});
   check(true, 'position closed');
 
-  // option chain and buying an option with target and stop-loss
-  await page.click('#tabs button[data-tab="chain"]');
-  await page.waitForSelector('#chain td.p');
-  await page.waitForTimeout(500);
+  // options on a stock / index screen (ATM ±2, "All strikes"), and buying an option with target and stop-loss
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#wlTabs button[data-i="0"]');
+  await page.waitForSelector('#wl .item');
+  await page.click('#wl .item');
+  await page.waitForSelector('#miniChain tr.atm', {timeout: 15000});
   await shot('8-chain');
-  check(await page.$('#chain tr.atm') !== null, 'chain marks the at-the-money strike');
-  const compactRows = (await page.$$('#chain tbody tr')).length;
+  check(true, 'chain marks the at-the-money strike');
+  const compactRows = (await page.$$('#miniChain .mini-chain tbody tr')).length;
   check(compactRows === 5, `chain shows ATM ±2 by default (${compactRows} strikes)`);
-  await page.click('#chainInfo [data-all]');
-  await page.waitForFunction(() => document.querySelectorAll('#chain tbody tr').length > 5);
+  await page.click('#miniChain [data-mall]');
+  await page.waitForFunction(() => document.querySelectorAll('#miniChain .mini-chain tbody tr').length > 5);
   check(true, 'chain: "All strikes" shows the full chain');
-  await page.click('#chainInfo [data-all]');
-  await page.waitForFunction(() => document.querySelectorAll('#chain tbody tr').length === 5);
-  await page.click('#chain tr.atm td.p.ce');
-  await page.waitForSelector('#shBuy');
-  await page.click('#shBuy');
+  await page.click('#miniChain [data-mall]');
+  await page.waitForFunction(() => document.querySelectorAll('#miniChain .mini-chain tbody tr').length === 5);
+  await page.click('#miniChain tr.atm [data-obuy]');
   await page.waitForSelector('#tkSuper');
   await page.waitForFunction(() => parseFloat(document.querySelector('#tkPrice').value) > 0);
   const ltp = await page.evaluate(() => parseFloat(document.querySelector('#tkPrice').value));
@@ -231,33 +231,36 @@ function check(ok, what) {
   await page.click('#lmSave');
 
   // Market tab: gainers, losers, 15-min breakouts, sectors; tap a stock to trade it
-  await page.click('#tabs button[data-tab="market"]');
+  await page.click('#tabs button[data-tab="watch"]');
+  check(!(await page.$('#tabs button[data-tab="market"]')) && !(await page.$('#tabs button[data-tab="chain"]')), 'no Market or Options tab');
+  await page.click('#wlTabs button[data-mk="gainers"]');
   await page.waitForSelector('#mkList .item[data-key]', {timeout: 30000});
   check((await page.$$('#mkIdx .mk-card')).length >= 4, 'market: index cards');
   const g = await page.$$eval('#mkList .chg', xs => xs.map(x => parseFloat(x.textContent)));
   check(g.length > 3 && g.every((v, i) => i === 0 || v <= g[i - 1]), 'market: top gainers in order');
   await shot('24-market-gainers');
-  await page.click('#mkTabs button[data-m="losers"]');
+  await page.click('#wlTabs button[data-mk="losers"]');
   const l = await page.$$eval('#mkList .chg', xs => xs.map(x => parseFloat(x.textContent)));
   check(l.every((v, i) => i === 0 || v >= l[i - 1]), 'market: top losers in order');
-  await page.click('#mkTabs button[data-m="breakouts"]');
+  await page.click('#wlTabs button[data-mk="breakouts"]');
   await page.waitForFunction(async () => {
     if (/BREAK/.test(document.querySelector('#mkList').textContent)) return true;
     await loadMarket(); return false;
   }, null, {timeout: 120000, polling: 3000});
   check(true, 'market: 15-minute breakouts listed');
   await shot('25-market-breakouts');
-  await page.click('#mkTabs button[data-m="sectors"]');
+  await page.click('#wlTabs button[data-mk="sectors"]');
   check((await page.textContent('#mkList')).includes('Banks'), 'market: sectors');
-  await page.click('#mkTabs button[data-m="buildup"]');
-  await page.click('#mkTabs button[data-m="gainers"]');
+  await page.click('#wlTabs button[data-mk="buildup"]');
+  await page.click('#wlTabs button[data-mk="gainers"]');
   await page.click('#mkList .item[data-key]');
   await page.waitForSelector('#shBuy');
   check(true, 'market: tapping a stock opens it to trade');
   await page.click('.sh-close');
 
   // "F&O · good volume" filter: the Market lists and the watchlist hide thin stocks (WIPRO, TATASTEEL in the demo)
-  await page.click('#tabs button[data-tab="market"]');
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#wlTabs button[data-mk="gainers"]');
   await page.waitForFunction(async () => {
     if (/of \d+ pass/.test(document.querySelector('#mkRule').textContent) && (S.market.low_volume || []).length) return true;
     await loadMarket(); return false;
@@ -268,7 +271,7 @@ function check(ok, what) {
   await page.click('#mkGood');
   check(!(await page.textContent('#mkGood')).includes('✓'), 'market: the filter can be switched off');
   await page.click('#mkGood');
-  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#wlTabs button[data-i="0"]');
   await page.fill('#q', 'wipro');
   await page.waitForSelector('.res[data-key] [data-add]');
   check((await page.textContent('#results')).includes('F&O'), 'search marks F&O stocks');
@@ -458,9 +461,9 @@ function check(ok, what) {
   const desk = await browser.newPage({viewport: {width: 1280, height: 800}});
   await desk.goto(BASE);
   await desk.waitForSelector('#wl .item');
-  await desk.click('#tabs button[data-tab="chain"]');
-  await desk.waitForSelector('#chain td.p');
-  if (SHOTS) await desk.screenshot({path: `${SHOTS}/13-desktop-chain.png`});
+  await desk.click('#wlTabs button[data-mk="gainers"]');
+  await desk.waitForSelector('#mkList .item[data-key]', {timeout: 30000});
+  if (SHOTS) await desk.screenshot({path: `${SHOTS}/13-desktop-watch.png`});
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
   check(!overflow, 'no sideways scrolling on the phone');
 
