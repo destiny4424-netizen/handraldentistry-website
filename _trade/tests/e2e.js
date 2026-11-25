@@ -339,6 +339,12 @@ function check(ok, what) {
   const entry = await page.evaluate(() => parseFloat(document.querySelector('#tkPrice').value));
   const lots = await page.evaluate(() => parseInt(document.querySelector('#tkLots').value));
   check(lots === Math.floor(1500 / (entry - parseFloat(sl))), `rules: size worked out from the stop (${lots} shares)`);
+  await page.fill('#tkLots', String(lots + 7));
+  await page.dispatchEvent('#tkLots', 'input');
+  check(await page.inputValue('#tkLots') === String(lots + 7) && (await page.textContent('#tkRisk')).includes('above your'),
+    'rules: a typed quantity is kept (not reset), with a warning when it is over the risk');
+  await page.fill('#tkLots', String(lots));
+  await page.dispatchEvent('#tkLots', 'input');
   await shot('16-rules-ticket');
   await page.click('#tkReview');
   await page.waitForSelector('#cfGo');
