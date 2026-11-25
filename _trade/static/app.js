@@ -441,10 +441,14 @@ function updateSheetQuote() {
 async function loadMiniChain(key) {
   const m = S.mini; if (!m || m.key !== key || !m.ul) return;
   let r;
+  if (m.busy) return;                                  // one request at a time: a slow answer mustn't pile up more
   if ($('#miniChain') && !$('#miniChain').innerHTML) $('#miniChain').innerHTML = '<div class="muted small" style="margin-top:12px">Loading options…</div>';
+  m.busy = true;
   try { r = await api(`/api/chain?ul=${encodeURIComponent(m.ul)}&expiry=${encodeURIComponent(m.expiry || '')}`); }
   catch (e) { r = {error: e.message}; }
+  finally { m.busy = false; }
   if (S.sheetKey !== key || !$('#miniChain')) return;
+  if ((!r.rows || !r.rows.length) && $('#miniChain .mini-chain')) return;   // keep the last prices on a hiccup
   if (!r.rows || !r.rows.length) {
     $('#miniChain').innerHTML = r.error && /No options found/.test(r.error) ? '' :
       `<div class="muted small" style="margin-top:12px">Options couldn't load: ${esc(r.error || 'no strikes')}. Trying again…</div>`;
@@ -461,6 +465,7 @@ async function loadMiniChain(key) {
   const putSide = o => o && o.key ? `<td class="mc-p pe"><b>₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>
       <td class="mc-b"><button class="mbuy" data-obuy="${esc(o.key)}">Buy</button></td>` : `<td class="mc-p"></td><td class="mc-b"></td>`;
   const exps = (r.expiries || []).slice(0, 3);
+  const sb = $('#sheetBody'), keep = sb ? sb.scrollTop : 0;
   $('#miniChain').innerHTML = `<div class="mc-head"><span class="section-title" style="margin:0">Options</span>
       <button class="ghost sm ${S.miniAll ? '' : 'on-green'}" data-mall="1">${S.miniAll ? 'All strikes' : 'ATM ±2'}</button>
       <div class="chips scroll">${exps.map(x => `<button data-mexp="${x}" class="${x === r.expiry ? 'on' : ''}">${new Date(x + 'T00:00').toLocaleDateString('en-IN', {day: 'numeric', month: 'short'})}</button>`).join('')}</div></div>
@@ -469,6 +474,7 @@ async function loadMiniChain(key) {
       ${side(x.CE, 'ce')}<td class="mc-k">${Number(x.strike).toLocaleString('en-IN')}${x.strike === atm ? '<div class="sm">ATM</div>' : ''}</td>${putSide(x.PE)}</tr>`).join('')}
     </tbody></table>
     <div class="muted small" style="margin-top:6px">Lot ${r.lot} · spot ₹${px(spot)} · shaded = in the money${r.source === 'quotes' ? ' · prices from each option\'s own quote' : ''}</div>`;
+  if (sb && sb.scrollTop !== keep) sb.scrollTop = keep;
 }
 
 // ---- chart --------------------------------------------------------------------------------------------
@@ -586,9 +592,10 @@ function renderTicket() {
       <label class="toggle"><input type="checkbox" id="tkIoc" ${t.validity === 'IOC' ? 'checked' : ''}> IOC (fill now or cancel)</label>
       <label class="toggle"><input type="checkbox" id="tkAmo" ${t.amo ? 'checked' : ''}> After-market order (AMO)</label>
       ${!t.eq ? `<label class="toggle"><input type="checkbox" id="tkSlice" ${t.slice ? 'checked' : ''}> Split into exchange-size pieces (for very large quantities)</label>` : ''}
+      <label class="toggle"><input type="checkbox" id="tkRevPref" ${pref('review', false) ? 'checked' : ''}> Show a review screen before sending</label>
     </details>
     <div id="tkMsg"></div>
-    <button class="go ${t.side === 'BUY' ? 'b-buy' : 'b-sell'}" id="tkReview" style="width:100%;margin-top:6px">Review ${t.side === 'BUY' ? 'buy' : 'sell'} order</button>
+    <button class="go ${t.side === 'BUY' ? 'b-buy' : 'b-sell'}" id="tkReview" style="width:100%;margin-top:6px">${pref('review', false) ? `Review ${t.side === 'BUY' ? 'buy' : 'sell'} order` : `${t.side} now`}</button>
   </div>`);
   syncTicketFields();
   const body = $('#sheetBody');
@@ -600,7 +607,29 @@ function renderTicket() {
   if ($('#tkConfirm')) $('#tkConfirm').onchange = () => { t.confirm = $('#tkConfirm').checked; };
   $('#tkSuper').onchange = () => { readTicket(); t.superOn = $('#tkSuper').checked; if (t.superOn && !['LIMIT', 'MARKET'].includes(t.type)) t.type = 'LIMIT'; renderTicket(); };
   ['tkLots', 'tkPrice', 'tkTrig', 'tkTgt', 'tkSl'].forEach(id => { const el = $('#' + id); if (el) el.oninput = () => { if (id === 'tkPrice') t.priceTouched = true; if (id === 'tkLots') t.lotsTouched = true; readTicket(); syncTicketFields(); }; });
-  $('#tkReview').onclick = reviewOrder;
+  $('#tkRevPref').onchange = () => { setPref('review', $('#tkRevPref').checked); readTicket(); renderTicket(); };
+  $('#tkReview').onclick = () => (pref('review', false) ? reviewOrder() : sendNow());
+}
+// One tap: straight to Dhan. The server still runs every check (loss limit, rules, size, double tap); only an
+// order above the order-size limit comes back to the review screen for an "I'm sure".
+async function sendNow() {
+  readTicket();
+  const t = S.ticket, btn = $('#tkReview');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  const cid = 'mt' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  try {
+    const r = await api('/api/order', ticketBody({cid}));
+    if (r.armed) { closeSheet(); toast(r.message, 'ok', 8000); showTab('orders'); return; }
+    const o = (r.orders || [])[0] || {};
+    closeSheet();
+    toast(`${t.side === 'BUY' ? 'Bought' : 'Sold'}: ${r.sym} · ${o.orderStatus || 'sent'}${o.orderId ? ' · #' + o.orderId : ''}`, 'ok', 6000);
+    setTimeout(() => { loadOrders(); loadPositions(); loadFunds(); }, 600);
+    if (S.tab !== 'orders' && S.tab !== 'positions') showTab('orders');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = `${t.side} now`;
+    if (e.data && e.data.needs_big_ok) return reviewOrder();
+    $('#tkMsg').innerHTML = ((e.data && e.data.problems) || [e.message]).map(p => `<div class="badbox">${esc(p)}</div>`).join('');
+  }
 }
 function readTicket() {
   const t = S.ticket; if (!t || !$('#tkLots')) return;

@@ -75,13 +75,24 @@ function check(ok, what) {
   await page.fill('#tkLots', '5');
   await page.dispatchEvent('#tkLots', 'input');
   await shot('4-ticket');
+  check((await page.textContent('#tkReview')).includes('BUY now'), 'ticket: one-tap BUY now (no review screen)');
+  await page.click('#tkReview');
+  await page.waitForSelector('.toast.ok');
+  check((await page.textContent('.toast.ok')).includes('Bought'), 'market order placed with one tap');
+  await page.evaluate(() => setPref('review', true));      // the flows below check the review screen
+  await page.waitForSelector('#tab-orders.on');
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#wl .item');
+  await page.waitForSelector('#shBuy');
+  await page.click('#shBuy');
+  await page.waitForSelector('#tkReview');
   await page.click('#tkReview');
   await page.waitForSelector('#cfGo');
-  check((await page.textContent('#sheetBody')).includes('Margin needed'), 'confirm screen shows margin');
+  check((await page.textContent('#sheetBody')).includes('Margin needed'), 'review switched on: confirm screen shows margin');
   await shot('5-confirm');
-  await page.click('#cfGo');
-  await page.waitForSelector('.toast.ok');
-  check((await page.textContent('.toast.ok')).includes('Order sent'), 'market order placed');
+  await page.click('#cfBack');
+  await page.click('.sh-close');
+  await page.click('#tabs button[data-tab="orders"]');
   await page.waitForSelector('#tab-orders.on');
   await page.click('#orderFilter button[data-f="all"]');
   await page.waitForFunction(() => document.querySelector('#orders').textContent.includes('TRADED'));
