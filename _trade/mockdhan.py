@@ -10,6 +10,7 @@ import json
 import math
 import random
 import re
+import struct
 import sys
 import threading
 import time
@@ -421,6 +422,11 @@ class Handler(BaseHTTPRequestHandler):
         path = u.path
         if path.endswith("scrip-master.csv"):
             return self.reply(200, M.scrip_csv(), "text/csv")
+        if path == "/mock/feed":                      # tests: make the live stream lie, or go down
+            n = int(self.headers.get("Content-Length") or 0)
+            b = json.loads(self.rfile.read(n) or b"{}")
+            FEED.update({k: bool(v) for k, v in b.items() if k in ("bad_prices", "down")})
+            return self.reply(200, {"ok": True})
         if path == "/mock/pin":                       # tests: hold one price still
             n = int(self.headers.get("Content-Length") or 0)
             b = json.loads(self.rfile.read(n) or b"{}")
@@ -750,6 +756,128 @@ def check_order(b, super_=False):
 
 def pub(o):
     return {k: v for k, v in o.items() if not k.startswith("_")}
+
+
+# ---- the live market feed (Dhan's v2 WebSocket), same binary packets ---------------------------------------
+SEG_CODE = {"IDX_I": 0, "NSE_EQ": 1, "NSE_FNO": 2, "NSE_CURRENCY": 3, "BSE_EQ": 4, "MCX_COMM": 5, "BSE_CURRENCY": 7, "BSE_FNO": 8}
+
+
+def feed_volume(i):
+    """Today's volume in the stream, like the REST quotes give it (a stock's usual volume, a bit busier)."""
+    if "_uv" not in i:
+        i["_uv"] = usual_volume(i) if "kind" in i else 0
+    return int(i["_uv"] * 1.2) if i["_uv"] else 500000
+
+
+def packet_ticker(seg, sid, ltp):
+    return struct.pack("<BhBi", 2, 16, SEG_CODE[seg], int(sid)) + struct.pack("<fi", ltp, int(time.time()))
+
+
+def packet_prev(seg, sid, prev):
+    return struct.pack("<BhBi", 6, 16, SEG_CODE[seg], int(sid)) + struct.pack("<fi", prev, 0)
+
+
+def packet_quote(seg, sid, i, ltp):
+    p = i["prev"]
+    return struct.pack("<BhBi", 4, 50, SEG_CODE[seg], int(sid)) + struct.pack(
+        "<fhifiiiffff", ltp, 10, int(time.time()), ltp, feed_volume(i), 9800, 12000, p * 1.001, 0.0, max(ltp, p) * 1.004, min(ltp, p) * 0.996)
+
+
+def packet_full(seg, sid, i, ltp):
+    p, t = i["prev"], i["tick"]
+    body = struct.pack("<fhifiiiiiiffff", ltp, 10, int(time.time()), ltp, feed_volume(i), 9800, 12000, 4321, 5000, 4000,
+                       p * 1.001, 0.0, max(ltp, p) * 1.004, min(ltp, p) * 0.996)
+    depth = b"".join(struct.pack("<iihhff", 100 * (k + 1), 90 * (k + 1), k + 1, k + 1, ltp - t * (k + 1), ltp + t * (k + 1)) for k in range(5))
+    return struct.pack("<BhBi", 8, 162, SEG_CODE[seg], int(sid)) + body + depth
+
+
+def packet_disconnect(code):
+    return struct.pack("<BhBi", 50, 10, 0, 0) + struct.pack("<h", code)
+
+
+FEED = {"bad_prices": False, "down": False, "conns": 0, "subs": []}       # test switches and what was asked
+
+
+def serve_feed(port):
+    """The pretend live feed on ws://127.0.0.1:port/ . A wrong token gets Dhan's disconnect packet (809)."""
+    import socketserver
+    import wsclient
+
+    class H(socketserver.BaseRequestHandler):
+        def handle(self):
+            sock = self.request
+            head = b""
+            while b"\r\n\r\n" not in head:
+                c = sock.recv(1024)
+                if not c:
+                    return
+                head += c
+            lines = head.decode("latin-1").split("\r\n")
+            hdr = {k.strip().lower(): v.strip() for k, _, v in (ln.partition(":") for ln in lines[1:])}
+            q = parse_qs(urlparse(lines[0].split(" ")[1]).query)
+            if FEED["down"]:
+                sock.sendall(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
+                return
+            sock.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                          f"Sec-WebSocket-Accept: {wsclient.accept_key(hdr.get('sec-websocket-key', ''))}\r\n\r\n").encode())
+            send_lock = threading.Lock()
+
+            def send(data):
+                with send_lock:
+                    sock.sendall(wsclient.frame(wsclient.BINARY, data, False))
+            if q.get("token", [""])[0] != TOKEN or q.get("clientId", [""])[0] != CLIENT:
+                send(packet_disconnect(809))
+                return
+            FEED["conns"] += 1
+            subs = {}                                  # (seg, id) -> request code
+            alive = [True]
+
+            def reader():
+                try:
+                    while alive[0]:
+                        _fin, op, data = wsclient.read_frame(sock)
+                        if op == wsclient.CLOSE:
+                            break
+                        if op != wsclient.TEXT:
+                            continue
+                        m = json.loads(data)
+                        code = m.get("RequestCode")
+                        FEED["subs"].append(m)
+                        if code == 12:
+                            break
+                        for x in m.get("InstrumentList", []):
+                            k = (x["ExchangeSegment"], str(x["SecurityId"]))
+                            if code in (15, 17, 21):
+                                subs[k] = code
+                                i = M.inst.get(k)
+                                if i:
+                                    send(packet_prev(k[0], k[1], i["prev"]))
+                            elif code in (16, 18, 22):
+                                subs.pop(k, None)
+                except Exception:
+                    pass
+                alive[0] = False
+            threading.Thread(target=reader, daemon=True).start()
+            try:
+                while alive[0] and not FEED["down"]:
+                    time.sleep(0.5)
+                    for k, code in list(subs.items()):
+                        i = M.inst.get(k)
+                        if not i:
+                            continue
+                        ltp = M.q(i) * (1.5 if FEED["bad_prices"] else 1)
+                        send(packet_ticker(*k, ltp) if code == 15 else packet_quote(*k, i, ltp) if code == 17 else packet_full(*k, i, ltp))
+            except OSError:
+                pass
+            alive[0] = False
+            FEED["conns"] -= 1
+
+    class S(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+    srv = S(("127.0.0.1", port), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
 
 
 def serve(port=3099, tick_every=1.0):

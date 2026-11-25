@@ -40,6 +40,20 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
+## Live prices
+Prices come from **Dhan's live market feed**: one WebSocket connection (`wss://api-feed.dhan.co`) that Dhan pushes
+prices down about every second, for everything on screen (watchlist, indices, positions, the open instrument and the
+options shown under its chart). It needs the Dhan Data API subscription.
+
+- Only the **price** is taken from the stream. Volume, OI, depth, circuits and the previous close come from Dhan's
+  REST quotes, asked every 10 seconds while the stream is up.
+- Those quotes also **cross-check** the stream: if most prices differ by more than 3% (and ₹1) twice in a row,
+  the stream is dropped for an hour.
+- If the stream isn't connected, goes quiet, or is dropped, the app goes back to asking Dhan once a second, as
+  before. Nothing else changes.
+- Account → Dhan login shows which one is in use ("Live stream from Dhan" or "Asked every second", with the reason).
+- `MT_STREAM=0` switches the stream off; `MT_DHAN_FEED` changes its address.
+
 ## Charts
 - **The chart on every instrument** uses TradingView's open-source **Lightweight Charts** v4.2.3 (Apache 2.0; an
   unmodified copy in `static/vendor/` with its licence and NOTICE, the same file the scanner uses). Candles from Dhan
@@ -336,6 +350,8 @@ insights maths.
 
 ## Files
 - `trade.py`: web server, order checks, live price feed, insights sync
+- `stream.py`: Dhan's live market feed (WebSocket): subscriptions, the binary price packets, reconnects
+- `wsclient.py`: a small WebSocket client (standard library only)
 - `dhan.py`: Dhan v2 REST client (orders, super orders, portfolio, funds, quotes, option chain, charts)
 - `instruments.py`: Dhan's scrip master, search, option-chain lookups
 - `insights.py`: round trips, statistics, habits

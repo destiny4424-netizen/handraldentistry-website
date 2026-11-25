@@ -31,9 +31,10 @@ from webpush import Push                                # noqa: E402
 from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
+import stream                                           # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "25 Nov 2026 · option chain prices live every second"
+VERSION = "25 Nov 2026 · live price stream from Dhan"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -44,6 +45,8 @@ PORT = int(os.environ.get("MT_PORT", "3050"))
 DATA = Path(os.environ.get("MT_DATA_DIR") or (HERE / ".data-demo" if DEMO else Path.home() / ".meridian-trade"))
 API_BASE = os.environ.get("MT_DHAN_API", "https://api.dhan.co/v2")
 MASTER = os.environ.get("MT_MASTER_URL", MASTER_URL)
+FEED_URL = os.environ.get("MT_DHAN_FEED", "wss://api-feed.dhan.co")       # Dhan's live market feed (WebSocket)
+STREAM_ON = os.environ.get("MT_STREAM", "1") != "0"
 
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
@@ -144,6 +147,76 @@ def want(keys):
             WANT[k] = t
 
 
+STREAM = None                                          # stream.Stream once main() starts it
+STREAM_PREV = {}                                       # key -> previous close from the stream, until a price comes
+_rest_at = [0.0]
+_strikes = [0]
+
+
+def with_change(q):
+    ltp, prev = q.get("ltp") or 0, q.get("prev") or 0
+    if ltp and prev:
+        q["chg"] = round(ltp - prev, 2)
+        q["pct"] = round(100 * (ltp - prev) / prev, 2)
+    return q
+
+
+def on_stream(key, f):
+    """A price packet from Dhan's live feed. Only the price is taken from it (that is what the cross-check with
+    Dhan's own quotes verifies); volume, OI, depth and the rest come from those quotes every 10 seconds."""
+    if "prev" in f and f["prev"]:
+        STREAM_PREV[key] = f["prev"]
+    ltp = f.get("ltp")
+    if not ltp:
+        return                                         # nothing to show until a price comes
+    q = dict(QUOTES.get(key) or {})
+    q["ltp"] = ltp
+    if q.get("high"):
+        q["high"] = max(q["high"], ltp)
+    if q.get("low"):
+        q["low"] = min(q["low"], ltp)
+    if not q.get("prev") and STREAM_PREV.get(key):
+        q["prev"] = STREAM_PREV[key]
+    q.setdefault("chg", 0)
+    q.setdefault("pct", 0)
+    q["t"] = q["st"] = time.time()
+    q["src"] = "stream"
+    QUOTES[key] = with_change(q)
+
+
+def merge_rest(key, new):
+    """A REST quote while the stream is up: keep the stream's live price, take the rest from Dhan's quote.
+    Returns the quote and, when both had a price, (rest ltp, stream ltp) for the cross-check."""
+    old = QUOTES.get(key)
+    if not (old and old.get("src") == "stream" and time.time() - old.get("st", 0) < 5):
+        return new, None
+    m = dict(new)
+    m["ltp"] = old["ltp"]                              # the newer live price; everything else from Dhan's quote
+    if m.get("high"):
+        m["high"] = max(m["high"], m["ltp"])
+    if m.get("low"):
+        m["low"] = min(m["low"], m["ltp"])
+    if not m.get("prev") and old.get("prev"):
+        m["prev"] = old["prev"]
+    m.update(src="stream", st=old["st"], t=old["t"])
+    return with_change(m), (new.get("ltp") or 0, old.get("ltp") or 0)
+
+
+def cross_check(pairs):
+    """Stream prices against Dhan's own quotes. Two checks in a row (about 20 seconds apart) with most prices off
+    by more than 3% (and ₹1): something is wrong with the stream, so stop using it for an hour."""
+    pairs = [(a, b) for a, b in pairs if a > 0 and b > 0]
+    if not pairs or not STREAM:
+        return
+    bad = sum(1 for a, b in pairs if abs(a - b) > max(0.03 * a, 1.0))
+    _strikes[0] = _strikes[0] + 1 if bad * 2 >= len(pairs) and bad else 0
+    if _strikes[0] >= 2:
+        _strikes[0] = 0
+        STREAM.distrust("Live stream prices didn't match Dhan's own quotes, so the app went back to asking "
+                        "every second (it tries the stream again in an hour)")
+        audit("stream_off", reason="mismatch", sample=pairs[:3])
+
+
 def feed():
     while True:
         time.sleep(1.05)
@@ -154,8 +227,14 @@ def feed():
             keys = [k for k, w in list(WANT.items()) if t - w < 20]
             for k in [k for k, w in list(WANT.items()) if t - w > 120]:
                 WANT.pop(k, None)
+            if STREAM:
+                STREAM.set_keys(keys)
             if not keys:
                 continue
+            streaming = bool(STREAM and STREAM.healthy())
+            if streaming and t - _rest_at[0] < 10:     # the stream brings the prices; ask Dhan only every 10 s
+                continue
+            _rest_at[0] = t
             idx = [k for k in keys if k.startswith("IDX_I:")]
             rest = [k for k in keys if not k.startswith("IDX_I:")]
             _flip[0] ^= 1
@@ -168,8 +247,17 @@ def feed():
                     seg, sid = k.split(":")
                     by.setdefault(seg, []).append(sid)
                 got = D.quote(by, "quote")
+            pairs = []
             for (seg, sid), q in got.items():
-                QUOTES[f"{seg}:{sid}"] = shape_quote(q)
+                k = f"{seg}:{sid}"
+                new = shape_quote(q)
+                if streaming:
+                    new, pair = merge_rest(k, new)
+                    if pair:
+                        pairs.append(pair)
+                QUOTES[k] = new
+            if streaming:
+                cross_check(pairs)
             STATUS["feed_error"] = ""
         except dhanlib.DhanError as e:
             STATUS["feed_error"] = str(e)
@@ -1008,6 +1096,7 @@ def status():
             "token_expires": datetime.fromtimestamp(exp, IST).strftime("%d %b %H:%M") if exp else None,
             "ip": PUBLIC_IP, "limits": limits(), "instruments": len(INST.by_key), "inst_error": INST.error,
             "sync": STATUS["sync"], "sync_at": STATUS["sync_at"], "feed_error": STATUS["feed_error"],
+            "feed_mode": STREAM.mode()[0] if STREAM else "polling", "feed_note": STREAM.mode()[1] if STREAM else "",
             "fills": STORE.count()[0], "time": now().strftime("%H:%M:%S"),
             "watchlists": one_list(SETTINGS.get("watchlists") or default_watch())}
 
@@ -1482,10 +1571,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global API_BASE, MASTER
+    global API_BASE, MASTER, FEED_URL, STREAM
     if DEMO:
         import mockdhan
         mockdhan.serve(3099)
+        mockdhan.serve_feed(3098)
+        FEED_URL = "ws://127.0.0.1:3098/"
         API_BASE = "http://127.0.0.1:3099/v2"
         D.base = API_BASE
         INST.url = "http://127.0.0.1:3099/scrip-master.csv"
@@ -1510,6 +1601,8 @@ def main():
     global MOVERS
     MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"), QUOTES)
     threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()
+    STREAM = stream.Stream(FEED_URL, lambda: (D.client_id, D.token) if D.ready else None, on_stream, enabled=STREAM_ON)
+    threading.Thread(target=STREAM.run, daemon=True).start()
     for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)

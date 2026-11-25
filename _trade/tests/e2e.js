@@ -266,6 +266,13 @@ function check(ok, what) {
   await page.click('#lmSave');
   await page.waitForSelector('.toast.ok');
   await shot('12-account');
+  const feedOk = await page.waitForFunction(() => api('/api/status').then(s => s.feed_mode === 'stream'), null, {timeout: 20000, polling: 1000}).then(() => true, () => false);
+  check(feedOk, "prices: Dhan's live stream is in use");
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#tabs button[data-tab="account"]');
+  await page.waitForSelector('#feedMode');
+  check((await page.textContent('#feedMode')).includes('Live stream from Dhan'), 'account: shows prices come from the live stream');
+
 
   // loss limit blocks a new order (the demo account has lost a little on the round trip, or not:
   // set the limit tiny and check either the block or a placed order, then reset)
@@ -472,6 +479,18 @@ function check(ok, what) {
   await page.waitForSelector('#pinOff');
   await page.click('#pinOff');
   await page.waitForSelector('#pinOn');
+
+  // the stream lies: the app notices within about 20 seconds and goes back to asking every second
+  await page.click('#tabs button[data-tab="watch"]');
+  await fetch(MOCK + '/mock/feed', {method: 'POST', body: JSON.stringify({bad_prices: true})});
+  const fellBack = await page.waitForFunction(() => api('/api/status').then(s => s.feed_mode === 'polling' && /didn't match/.test(s.feed_note)),
+    null, {timeout: 60000, polling: 2000}).then(() => true, () => false);
+  check(fellBack, "prices: a stream that disagrees with Dhan's quotes is dropped");
+  await fetch(MOCK + '/mock/feed', {method: 'POST', body: JSON.stringify({bad_prices: false})});
+  const k0 = await page.$eval('#wl .item[data-key]', e => e.dataset.key);
+  const p0 = await page.evaluate(k => S.quotes[k] && S.quotes[k].ltp, k0);
+  const moving = await page.waitForFunction(([k, v]) => S.quotes[k] && S.quotes[k].ltp !== v, [k0, p0], {timeout: 15000}).then(() => true, () => false);
+  check(moving, 'prices: still moving after the fallback (asked every second)');
 
   // desktop layout
   const desk = await browser.newPage({viewport: {width: 1280, height: 800}});
