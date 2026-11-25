@@ -33,7 +33,7 @@ from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "25 Nov 2026 · Rules mode removed, Limit / Market only, stop-loss optional"
+VERSION = "25 Nov 2026 · candle logo on the iPhone home screen"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -1090,6 +1090,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.static(path[len("/static/"):])
         if path in ("/manifest.webmanifest", "/icon.svg", "/icon.png"):
             return self.static(path[1:])
+        if path in ("/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"):   # where iPhones look on their own
+            return self.static("icon.png")
         if path == "/sw.js":                             # the service worker must come from the site's root
             return self.static("sw.js")
         if not path.startswith("/api/"):
