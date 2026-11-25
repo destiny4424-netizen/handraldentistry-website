@@ -1242,6 +1242,8 @@ async function loadAccount() {
       ${s.token_expires ? `<div class="kv"><span>Token valid until</span><b>${esc(s.token_expires)}</b></div>` : ''}
       ${s.connected ? '<div class="muted small">Renewed automatically before it expires, so you paste it only once.</div>' : ''}
       ${s.token_note ? `<div class="muted small">${esc(s.token_note)}</div>` : ''}
+      ${s.connected ? `<div class="kv" id="feedMode"><span>Prices</span><b class="${s.feed_mode === 'stream' ? 'up' : ''}">${s.feed_mode === 'stream' ? '● Live stream from Dhan' : 'Asked every second'}</b></div>
+      ${s.feed_note ? `<div class="muted small">${esc(s.feed_note)}</div>` : ''}` : ''}
       <div class="formrow" style="margin-top:10px"><div class="field"><label>Client ID</label><input id="dhId" autocomplete="off"></div>
       <div class="field"><label>Access token</label><input id="dhTok" type="password" autocomplete="off" placeholder="from web.dhan.co"></div></div>
       <button class="ghost" id="dhSave" style="margin-top:10px">Save &amp; test</button>
