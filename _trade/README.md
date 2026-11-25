@@ -63,7 +63,7 @@ to open it and trade. The full option chain is on each stock's or index's own sc
 "ATM ±2 / All strikes" switch.
 
 The market lists cover the liquid F&O stocks (about 200, those with futures).
-- **Indices** (NIFTY, BANK NIFTY, FIN NIFTY, MIDCAP SELECT, SENSEX, VIX) and **breadth** (how many are up or down).
+- **Indices** (NIFTY, BANK NIFTY, SENSEX) and **breadth** (how many are up or down).
 - **Top gainers / top losers:** 15 each by % change today, with volume against usual.
 - **15-min breakouts:** the first 15-minute candle (9:15–9:30) is the range. A later 15-minute candle closing above
   its high (or below its low) is a breakout (breakdown), and so is a close through yesterday's high or low. Each

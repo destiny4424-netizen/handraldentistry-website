@@ -273,7 +273,8 @@ function check(ok, what) {
   check(!(await page.$('#tabs button[data-tab="market"]')) && !(await page.$('#tabs button[data-tab="chain"]')), 'no Market or Options tab');
   await page.click('#wlTabs button[data-mk="gainers"]');
   await page.waitForSelector('#mkList .item[data-key]', {timeout: 30000});
-  check((await page.$$('#mkIdx .mk-card')).length >= 4, 'market: index cards');
+  const idxNames = await page.$$eval('#mkIdx .mk-card', cs => cs.map(c => c.querySelector('.small').textContent.trim()));
+  check(idxNames.join(',') === 'NIFTY,BANKNIFTY,SENSEX', `market: index cards NIFTY, BANK NIFTY, SENSEX only (${idxNames})`);
   const g = await page.$$eval('#mkList .chg', xs => xs.map(x => parseFloat(x.textContent)));
   check(g.length > 3 && g.every((v, i) => i === 0 || v <= g[i - 1]), 'market: top gainers in order');
   await shot('24-market-gainers');

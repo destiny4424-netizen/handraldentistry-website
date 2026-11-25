@@ -1,6 +1,6 @@
 """The Market tab: what's moving among the liquid F&O stocks (about 200, the ones with futures).
 
-  indices       NIFTY, BANK NIFTY, FIN NIFTY, MIDCAP SELECT, SENSEX, INDIA VIX
+  indices       NIFTY, BANK NIFTY, SENSEX
   breadth       how many F&O stocks are up, down or flat today
   gainers       top 15 by % change today            losers   bottom 15
   volume        volume shockers: today's volume against the 20-day average, adjusted for how much of the
@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from picks import sector_of                               # the scanner's sector list
 
 IST = timezone(timedelta(hours=5, minutes=30))
-INDICES = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "INDIAVIX"]
+INDICES = ["NIFTY", "BANKNIFTY", "SENSEX"]        # the cards above the watchlist (owner: no FIN NIFTY, MIDCAP, VIX)
 # "Good volume", the scanner's own liquidity rule: on average at least ₹200 crore and 5 lakh shares traded a day
 # (last 20 sessions), and today at least 0.8x the usual volume for this time of day.
 LIQ_DEFAULTS = {"min_turnover_cr": 200, "min_avg_lakh": 5, "min_rvol": 0.8}
