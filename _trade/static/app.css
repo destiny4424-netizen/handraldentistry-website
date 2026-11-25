@@ -262,6 +262,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .trail .tb:active { background: var(--line); }
 .trail .tv { font-variant-numeric: tabular-nums; margin-bottom: 8px; }
 .trail .tv b { font-size: 17px; }
+.tin-w { font-size: 17px; font-weight: 700; display: inline-flex; align-items: center; gap: 2px; }
+.tin { width: 96px; font: inherit; font-weight: 700; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.tin:focus { outline: 2px solid var(--accent); border-color: transparent; }
 .trail .tgo { flex: 1.6; height: 44px; border-radius: 12px; background: var(--buy); color: #fff; font-weight: 700; font-size: 14px; }
 .trail .tgo.off { background: var(--line); color: var(--muted); }
 .trail .trail-status { margin-top: 6px; }
