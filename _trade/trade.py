@@ -33,7 +33,7 @@ from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "24 Nov 2026 · Quick tab: 1-OTM option, limit buy, stop-loss after the fill"
+VERSION = "25 Nov 2026 · Option chains skip an expiry once it has closed"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -777,6 +777,9 @@ def chain(ul, expiry):
             spot, data = fetch_chain(ul, under, expiry)
         except dhanlib.DhanError as e:
             err = e
+            later = [x for x in expiries if x > expiry]
+            if "Invalid Expiry" in str(e) and later:    # Dhan has already retired this expiry: the next one
+                return chain(ul, later[0])
         if not data:                                   # no chain from Dhan: the options' own prices
             try:
                 data, source = quotes_chain(keys), "quotes"

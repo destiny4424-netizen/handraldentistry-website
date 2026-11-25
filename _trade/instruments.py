@@ -179,10 +179,15 @@ class Instruments:
         out.sort(key=lambda t: t[:6])
         return [public(t[-1]) for t in out[:limit]]
 
-    def chain_info(self, ul):
-        """Expiries and strikes of one underlying's options."""
+    def chain_info(self, ul, now=None):
+        """Expiries of one underlying's options that can still be traded: an expiry is gone after 15:30 on
+        its day (Dhan's option chain then answers "Invalid Expiry Date"), even before the list is reloaded."""
+        t = now or datetime.now(IST)
+        today = t.strftime("%Y-%m-%d")
+        closed = (t.hour, t.minute) >= (15, 30)
         ex = self.opts.get(ul) or {}
-        return sorted(ex)
+        live = [e for e in sorted(ex) if e > today or (e == today and not closed)]
+        return live or sorted(ex)[-1:]
 
     def chain_keys(self, ul, expiry):
         return (self.opts.get(ul) or {}).get(expiry) or {}

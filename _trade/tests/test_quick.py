@@ -36,6 +36,18 @@ class Picks(unittest.TestCase):
         self.assertEqual((m["used"], m["remaining"], m["risk"]), (24000.0, 26000.0, 7200.0))
 
 
+class ExpiryDay(unittest.TestCase):
+    def test_expiry_gone_after_the_close(self):
+        from datetime import datetime
+        import instruments
+        inst = instruments.Instruments.__new__(instruments.Instruments)
+        inst.opts = {"RELIANCE": {"2026-11-24": {}, "2026-12-29": {}}}
+        at = lambda h, m: datetime(2026, 11, 24, h, m, tzinfo=instruments.IST)
+        self.assertEqual(inst.chain_info("RELIANCE", at(10, 0))[0], "2026-11-24")   # still trading
+        self.assertEqual(inst.chain_info("RELIANCE", at(18, 51)), ["2026-12-29"])    # evening of expiry day
+        self.assertEqual(inst.chain_info("RELIANCE", datetime(2026, 11, 25, 7, 0, tzinfo=instruments.IST)), ["2026-12-29"])
+
+
 class FakeDhan:
     def __init__(self):
         self.status, self.filled, self.avg = "PENDING", 0, 24.0
