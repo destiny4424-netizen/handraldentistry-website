@@ -345,3 +345,13 @@ table.mini-chain { width: 100%; border-collapse: collapse; font-variant-numeric:
 .sc-stats td.up { color: var(--up); } .sc-stats td.down { color: var(--down); }
 .sc-bt { margin: 8px 2px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .sc-note { color: var(--text); }
+/* Insights and Auto open from the Account tab */
+.acc-links { display: grid; gap: 8px; margin: 4px 0 6px; }
+.acc-links button { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; color: var(--text); cursor: pointer; }
+.acc-links i { font-style: normal; font-size: 20px; color: var(--accent); width: 24px; text-align: center; }
+.acc-links span { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.acc-links b { font-size: 15px; } .acc-links small { color: var(--muted); font-size: 12px; }
+.acc-links em { font-style: normal; color: var(--muted); font-size: 20px; }
+@media (min-width: 760px) { .acc-links { grid-template-columns: 1fr 1fr; } }
+.back-acc { margin: 0 0 10px; }

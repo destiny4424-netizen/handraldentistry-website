@@ -211,7 +211,8 @@ async function loadFunds() {
 // ---- tabs ------------------------------------------------------------------------------------------
 function showTab(t) {
   S.tab = t;
-  $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  const nav = ['insights', 'auto'].includes(t) ? 'account' : t;      // Insights and Auto open from the Account tab
+  $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === nav));
   $$('.tab').forEach(s => s.classList.toggle('on', s.id === 'tab-' + t));
   if (t === 'orders') loadOrders();
   if (t === 'watch') loadPlan();
@@ -226,6 +227,7 @@ function showTab(t) {
 }
 $('#account').addEventListener('click', e => { if (e.target.closest('#accJournal')) openJournal(); });
 $('#tabs').onclick = e => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); };
+document.addEventListener('click', e => { const g = e.target.closest('[data-go]'); if (g) showTab(g.dataset.go); });
 
 // ---- quotes ----------------------------------------------------------------------------------------
 function visibleKeys() {
@@ -1678,7 +1680,7 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   if (S.pinSet && !pinToken()) showLock();
   swReg();
   const h = location.hash.replace('#', '');
-  if (['watch', 'quick', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
+  if (['watch', 'quick', 'screener', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
   if (h === 'market' || h === 'chain') setTimeout(() => showTab('watch'), 0);
   if (h === 'journal') setTimeout(() => openJournal(), 800);
   await loadStatus();
