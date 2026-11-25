@@ -28,7 +28,7 @@ function check(ok, what) {
   const pin = (seg, id, px) => fetch(MOCK + '/mock/pin', {method: 'POST', body: JSON.stringify({seg, id, px})});
 
   await page.goto(BASE);
-  await apiPost('/api/rules/settings', {on: false});      // the plain trading flows first; Rules mode is tested below
+  await apiPost('/api/rules/settings', {on: true});       // Rules mode is gone: this must not switch it back on
   await page.reload();
   await page.waitForSelector('#wl .item');
   await page.waitForFunction(() => [...document.querySelectorAll('#wl .ltp')].some(e => /\d/.test(e.textContent)), null, {timeout: 10000});
@@ -72,6 +72,10 @@ function check(ok, what) {
   await page.waitForSelector('#shBuy');
   await page.click('#shBuy');
   await page.waitForSelector('#tkReview');
+  const types = await page.$$eval('#tkType button', bs => bs.map(b => b.textContent.trim()));
+  check(types.join(',') === 'Limit,Market', `ticket: only Limit and Market (${types})`);
+  check(!(await page.$('.rules')) && !(await page.$('#tkSuper')) && (await page.textContent('#superBox')).includes('Stop-loss price (optional)'),
+    'ticket: no Rules mode box; stop-loss shown and optional');
   await page.click('#tkType button[data-v="MARKET"]');
   await page.fill('#tkLots', '5');
   await page.dispatchEvent('#tkLots', 'input');
@@ -228,10 +232,9 @@ function check(ok, what) {
   await page.click('#miniChain [data-mall]');
   await page.waitForFunction(() => document.querySelectorAll('#miniChain .mini-chain tbody tr').length === 5);
   await page.click('#miniChain tr.atm [data-obuy]');
-  await page.waitForSelector('#tkSuper');
+  await page.waitForSelector('#tkSl');
   await page.waitForFunction(() => parseFloat(document.querySelector('#tkPrice').value) > 0);
   const ltp = await page.evaluate(() => parseFloat(document.querySelector('#tkPrice').value));
-  await page.check('#tkSuper');
   await page.fill('#tkTgt', String((ltp * 1.5).toFixed(1)));
   await page.fill('#tkSl', String((ltp * 0.7).toFixed(1)));
   await page.click('#tkReview');
@@ -321,83 +324,23 @@ function check(ok, what) {
   check((await page.textContent('#wl')).includes('low vol'), 'watchlist: "Show all" brings it back, marked low vol');
   await page.click('#wlFilter');
 
-  // Rules mode: level first, wait for the reaction, risk first, the daily plan and journal
-  await apiPost('/api/rules/settings', {on: true, confirm_default: true});
+  // Rules mode is gone: an opening order with no stop-loss and no level goes straight to Dhan
   const SBIN = 'NSE_EQ:3045';
-  let lv = await page.evaluate(k => fetch('/api/rules/levels?key=' + k).then(r => r.json()), SBIN);
-  const L = lv.levels[0];
-  await pin('NSE_EQ', '3045', L.price);
   await page.click('#tabs button[data-tab="watch"]');
   if (await page.$('#wlTabs button[data-i="0"]')) await page.click('#wlTabs button[data-i="0"]');
   await page.waitForSelector(`#wl .item[data-key="${SBIN}"]`);
-  await page.waitForTimeout(3000);                         // the price feed picks up the pinned price
   await page.click(`#wl .item[data-key="${SBIN}"]`);
   await page.waitForSelector('#shBuy');
   await page.click('#shBuy');
-  await page.waitForSelector('.rules #tkLevels button.on');
-  check(true, 'rules: the ticket picks the level price is at');
+  await page.waitForSelector('#tkReview');
+  await page.waitForTimeout(1500);
+  check(!(await page.$('.rules')), 'rules: no Rules mode box on the ticket');
+  await page.waitForFunction(() => parseFloat(document.querySelector('#tkPrice').value) > 0);
   await page.click('#tkReview');
-  await page.waitForFunction(() => document.querySelector('#tkMsg').textContent.includes('Rule 3'));
-  check(true, 'rules: no stop-loss, no order');
-  const sl = (L.price * 0.99).toFixed(2);
-  await page.fill('#tkSl', sl);
-  await page.dispatchEvent('#tkSl', 'input');
-  const entry = await page.evaluate(() => parseFloat(document.querySelector('#tkPrice').value));
-  const lots = await page.evaluate(() => parseInt(document.querySelector('#tkLots').value));
-  check(lots === Math.floor(1500 / (entry - parseFloat(sl))), `rules: size worked out from the stop (${lots} shares)`);
-  await page.fill('#tkLots', String(lots + 7));
-  await page.dispatchEvent('#tkLots', 'input');
-  check(await page.inputValue('#tkLots') === String(lots + 7) && (await page.textContent('#tkRisk')).includes('above your'),
-    'rules: a typed quantity is kept (not reset), with a warning when it is over the risk');
-  await page.fill('#tkLots', String(lots));
-  await page.dispatchEvent('#tkLots', 'input');
-  await shot('16-rules-ticket');
-  await page.click('#tkReview');
-  await page.waitForSelector('#cfGo');
-  check((await page.textContent('#cfGo')).includes('Wait for confirmation'), 'rules: confirm screen says it will wait');
-  await shot('17-rules-confirm');
-  await page.click('#cfGo');
-  await page.waitForSelector('#tab-orders.on');
-  await page.waitForFunction(() => document.querySelector('#armed').textContent.includes('WAITING'));
-  check(true, 'rules: order waits for the reaction, nothing sent to Dhan');
-  await shot('18-rules-waiting');
-  await page.click('[data-unarm]');
-  await page.waitForFunction(() => document.querySelector('#armed').textContent.includes('CANCELLED'));
-  check(true, 'rules: a waiting order can be cancelled');
-  await page.click('#tabs button[data-tab="watch"]');
-  await page.click(`#wl .item[data-key="${SBIN}"]`);
-  await page.waitForSelector('#shBuy');
-  await page.click('#shBuy');
-  await page.waitForSelector('.rules #tkLevels button.on');
-  await page.uncheck('#tkConfirm');
-  await page.fill('#tkSl', sl);
-  await page.dispatchEvent('#tkSl', 'input');
-  await page.click('#tkReview');
-  await page.waitForSelector('#cfGo');
-  await page.click('#cfGo');
-  await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Order sent'))
-    || (document.querySelector('#cfMsg') || {}).textContent, null, {timeout: 10000});
-  check([...await page.$$eval('.toast', ts => ts.map(t => t.textContent))].some(t => t.includes('Order sent')),
-    'rules: level + stop + size: order sent with its stop');
-  // far from every level: no trade
-  lv = await page.evaluate(k => fetch('/api/rules/levels?key=' + k).then(r => r.json()), SBIN);
-  let farPx = null;
-  for (let k = 1; k <= 12 && !farPx; k++) for (const sgn of [1, -1]) {
-    const p = +(L.price * (1 + sgn * k * 0.008)).toFixed(2);
-    if (lv.levels.every(x => Math.abs(x.price - p) > lv.tol * 1.5)) { farPx = p; break; }
-  }
-  if (farPx) {
-    await pin("NSE_EQ", "3045", farPx);
-    await page.click('#tabs button[data-tab="watch"]');
-    await page.waitForTimeout(3000);
-    await page.click(`#wl .item[data-key="${SBIN}"]`);
-    await page.waitForSelector('#shBuy');
-    await page.click('#shBuy');
-    await page.waitForFunction(() => (document.querySelector('.rules') || {}).textContent?.includes('No level near'));
-    check(true, 'rules: no level near the price, no trade');
-    await shot('19-rules-nolevel');
-    await page.click('.sh-close');
-  }
+  if (await page.waitForSelector('#cfGo', {timeout: 3000}).then(() => true, () => false)) await page.click('#cfGo');   // review screen is on
+  const sentNoStop = await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => /Bought|Order sent/.test(t.textContent)), null, {timeout: 10000}).then(() => true, () => false);
+  check(sentNoStop, 'rules: a limit buy with no stop-loss is sent');
+  check(!(await page.textContent('#tab-account').catch(() => '')).includes('Rules mode on'), 'rules: no Rules mode settings');
   // no plan card on the watchlist; the journal is under Account
   await page.click('#tabs button[data-tab="watch"]');
   check(!(await page.$('#planCard')), "no Today's plan card on the watchlist");

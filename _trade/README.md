@@ -19,11 +19,12 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - OI and change in OI, IV and delta, LTP with % change
   - ITM strikes are shaded and the ATM strike is marked. Tap a price to trade it.
 - **Order ticket:**
-  - Buy or sell, as Limit, Market, SL or SL-M
+  - Buy or sell, as Limit or Market
   - Intraday, Delivery (CNC), MTF, or Carry forward (NRML) for F&O
   - Quantity in lots
   - IOC, after-market orders, and slicing for very large quantities
-  - **Super order:** entry, target, stop-loss and trailing jump in one order (Dhan's Super Order)
+  - **Stop-loss, target and trailing jump, all optional.** Fill in a stop-loss or a target and the order goes as a
+    Dhan Super Order with those legs; leave them empty and it's a plain order
 - **Confirm screen before every order:**
   - quantity, price, order value
   - margin needed and money available (Dhan's margin calculator)
@@ -128,9 +129,13 @@ How it works:
   too: without a PIN token (valid 8 hours) every API call is refused, not just hidden.
 - 5 wrong PINs lock it for 15 minutes. "Forgot PIN?" clears it with the sign-in password.
 
-## Rules mode (your manual trades)
-On by default. Every manual order that **opens** a position must follow four rules; closing a position is never
-blocked. It can't be switched off while the market is open (Account → Rules mode).
+## Rules mode (removed)
+**Removed from the app on 25 Nov 2026 at the owner's request.** The server switches it off when it starts, drops any
+order still waiting for a reaction, and the settings call can no longer switch it on. Orders are no longer checked
+against levels, and a stop-loss is optional. The journal (Account) still works. The old behaviour is kept below for
+reference; `rules.py` still holds it.
+
+Every manual order that **opened** a position had to follow four rules; closing a position was never blocked.
 
 1. **Level first.** The ticket lists the key levels of the stock, or of the underlying for futures and options:
    - yesterday's high and low, and last week's high and low
