@@ -41,7 +41,7 @@ function check(ok, what) {
   await page.fill('#q', 'sbin');
   await page.waitForSelector('.res[data-key]');
   check((await page.textContent('#results')).includes('SBIN'), 'search finds SBIN');
-  await page.click('.res[data-key] [data-add]');
+  check((await page.textContent('.res[data-key] [data-add]')).includes('✓'), 'search shows SBIN is already in the watchlist');
   await page.fill('#q', 'nifty 26000 ce');
   await page.waitForFunction(() => document.querySelector('#results').textContent.includes('26,000 CE'));
   check(true, 'search finds an option by strike');
@@ -50,7 +50,8 @@ function check(ok, what) {
   await page.dispatchEvent('#q', 'input');
 
   // instrument sheet and a market buy
-  await page.click('#wlTabs button[data-i="1"]');
+  check(!(await page.$('#wlTabs button[data-i]')) && !(await page.textContent('#wlTabs')).includes('Indices'), 'watchlist: no Indices / My stocks buttons');
+  check(!(await page.textContent('#wl')).includes('INDIAVIX'), 'watchlist: indices only in the cards above');
   await page.waitForSelector('#wl .item');
   await page.click('#wl .item');
   await page.waitForSelector('#shBuy');
@@ -190,7 +191,7 @@ function check(ok, what) {
 
   // options on a stock / index screen (ATM ±2, "All strikes"), and buying an option with target and stop-loss
   await page.click('#tabs button[data-tab="watch"]');
-  await page.click('#wlTabs button[data-i="0"]');
+  if (await page.$('#wlTabs button[data-i="0"]')) await page.click('#wlTabs button[data-i="0"]');
   await page.waitForSelector('#wl .item');
   await page.click('#wl .item');
   await page.waitForSelector('#miniChain tr.atm', {timeout: 15000});
@@ -286,7 +287,7 @@ function check(ok, what) {
   await page.click('#mkGood');
   check(!(await page.textContent('#mkGood')).includes('✓'), 'market: the filter can be switched off');
   await page.click('#mkGood');
-  await page.click('#wlTabs button[data-i="0"]');
+  if (await page.$('#wlTabs button[data-i="0"]')) await page.click('#wlTabs button[data-i="0"]');
   await page.fill('#q', 'wipro');
   await page.waitForSelector('.res[data-key] [data-add]');
   check((await page.textContent('#results')).includes('F&O'), 'search marks F&O stocks');
@@ -308,7 +309,7 @@ function check(ok, what) {
   const L = lv.levels[0];
   await pin('NSE_EQ', '3045', L.price);
   await page.click('#tabs button[data-tab="watch"]');
-  await page.click('#wlTabs button[data-i="0"]');
+  if (await page.$('#wlTabs button[data-i="0"]')) await page.click('#wlTabs button[data-i="0"]');
   await page.waitForSelector(`#wl .item[data-key="${SBIN}"]`);
   await page.waitForTimeout(3000);                         // the price feed picks up the pinned price
   await page.click(`#wl .item[data-key="${SBIN}"]`);
@@ -382,8 +383,8 @@ function check(ok, what) {
   await page.fill('#jFix', 'No trades before 9:30');
   await shot('21-journal');
   await page.click('#jSave');
-  await page.waitForSelector('.toast.ok');
-  check((await page.textContent('.toast.ok')).includes('Journal saved'), 'journal saved from Account');
+  const jSaved = await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Journal saved')), null, {timeout: 8000}).then(() => true, () => false);
+  check(jSaved, 'journal saved from Account');
   await apiPost('/api/rules/settings', {on: false});
 
   // auto-trader: the edge check runs, the bot starts on paper, and hands-off blocks a manual buy
@@ -400,7 +401,8 @@ function check(ok, what) {
   await page.evaluate(() => window.scrollTo(0, 900));
   await shot('15-auto-more');
   await page.click('#tabs button[data-tab="watch"]');
-  await page.click('#wlTabs button[data-i="1"]');
+  check(!(await page.$('#wlTabs button[data-i]')) && !(await page.textContent('#wlTabs')).includes('Indices'), 'watchlist: no Indices / My stocks buttons');
+  check(!(await page.textContent('#wl')).includes('INDIAVIX'), 'watchlist: indices only in the cards above');
   await page.click('#wl .item');
   await page.waitForSelector('#shBuy');
   await page.click('#shBuy');
