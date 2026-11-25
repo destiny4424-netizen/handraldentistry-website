@@ -42,7 +42,7 @@ function showLock() {
   lockShown = true;
   const el = document.createElement('div');
   el.id = 'lock';
-  el.innerHTML = `<div class="lock-box"><div class="brand big"><span class="logo">◆</span> Handral <b>Trading Desk</b></div>
+  el.innerHTML = `<div class="lock-box"><div class="brand big"><img class="logo" src="/icon.svg" alt=""> Handral <b>Trading Desk</b></div>
     <p class="muted">Enter your PIN</p>
     <input id="pinIn" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off">
     <button class="primary" id="pinGo">Unlock</button><p id="pinErr" class="error"></p>

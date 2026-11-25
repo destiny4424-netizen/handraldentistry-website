@@ -33,7 +33,7 @@ from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "25 Nov 2026 · big live LTP and P&L on positions"
+VERSION = "25 Nov 2026 · new candle H logo"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -1088,7 +1088,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.static("index.html" if self.signed_in() else "login.html")
         if path.startswith("/static/"):
             return self.static(path[len("/static/"):])
-        if path in ("/manifest.webmanifest", "/icon.svg"):
+        if path in ("/manifest.webmanifest", "/icon.svg", "/icon.png"):
             return self.static(path[1:])
         if path == "/sw.js":                             # the service worker must come from the site's root
             return self.static("sw.js")
