@@ -50,6 +50,13 @@ same droplet), compactly:
 - **Swing:** today's swing setups (from 11:00; final list at 3 PM) and the swing trades still running.
 - **Performance & backtest:** this month's live results next to the scanner's latest backtest (trades, win rate,
   average and total R, profit factor, max drawdown). **Run backtest** starts a new one on the scanner.
+- **Check a stock:** type any NSE stock at the top and press **Check**. It runs the scanner's own rules
+  (`_scanner/intraday.py`, `_scanner/swing.py`) on that stock right away, with the desk's Dhan connection:
+  - **Intraday:** if a key level broke today, the scanner's entry, stop-loss and targets, and which of its 5 checks
+    pass (all 5 = a scanner pick). If none broke, the nearest level above and below with entry (the level), stop
+    (0.6 × the 15-minute ATR) and targets (next levels, or 1.5R / 3R). Before 9:15 it plans today from yesterday.
+  - **Swing:** the scanner's daily-chart setup if there is one today.
+  - **Trade** opens the ticket with that side, stop-loss and target 1 filled in. Answers are kept for 30 seconds.
 - Tap a pick to open the ticket with its side, stop-loss and target 1 filled in. The price stays at the LTP: the
   entry is a trigger ("buy above"), so check that price has crossed it before sending.
 

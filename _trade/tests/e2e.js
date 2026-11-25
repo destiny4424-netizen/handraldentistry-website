@@ -511,6 +511,25 @@ function check(ok, what) {
       && (await page.textContent('.sc-note')).includes('Screener'), 'screener: tapping a pick opens the ticket with its stop-loss and target');
     await page.click('.sh-close');
   }
+  // Check a stock: the scanner's rules on any stock, right away
+  await page.fill('#scSym', 'sbin');
+  await page.click('#scGo');
+  const lkOk = await page.waitForSelector('#scOut .lk', {timeout: 20000}).then(() => true, () => false);
+  check(lkOk && /Entry\s*[\d,.]+\s*SL\s*[\d,.]+\s*Exit\s*[\d,.]+/.test(await page.textContent('#scOut .lk-plan')),
+    'screener: checking a stock gives entry, stop-loss and exit');
+  check((await page.textContent('#scOut')).includes('Intraday') && (await page.textContent('#scOut')).includes('Swing'),
+    'screener: the check covers intraday and swing');
+  await shot('30-screener-check');
+  const lkSl = await page.$eval('#scOut .lk-plan', e => JSON.parse(e.dataset.lk).sl);
+  await page.click('#scOut .lk-trade');
+  await page.waitForSelector('#tkSl');
+  check(await page.inputValue('#tkSl') === String(lkSl) && (await page.textContent('#sheetBody h2')).includes('SBIN'),
+    "screener: Trade opens the stock's ticket with the stop-loss filled in");
+  await page.click('.sh-close');
+  await page.fill('#scSym', 'NOTASTOCK');
+  await page.click('#scGo');
+  await page.waitForSelector('#scOut .badbox');
+  check((await page.textContent('#scOut')).includes("isn't an NSE stock"), 'screener: an unknown name gets a clear message');
 
   // the stream lies: the app notices within about 20 seconds and goes back to asking every second
   await page.click('#tabs button[data-tab="watch"]');

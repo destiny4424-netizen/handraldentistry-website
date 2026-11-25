@@ -61,6 +61,11 @@
     <div id="qkList" class="list"></div>
   </section>
   <section id="tab-screener" class="tab">
+    <form class="sc-look" id="scLook" autocomplete="off">
+      <input id="scSym" list="scUls" placeholder="Check a stock, e.g. SBIN" spellcheck="false" autocapitalize="characters">
+      <datalist id="scUls"></datalist><button class="go b-buy" id="scGo">Check</button>
+    </form>
+    <div id="scOut"></div>
     <div class="seg" id="scSeg"><button data-v="intraday" class="on">Intraday</button><button data-v="swing">Swing</button></div>
     <div id="scBody"><div class="muted small">Loading the scanner…</div></div>
   </section>
