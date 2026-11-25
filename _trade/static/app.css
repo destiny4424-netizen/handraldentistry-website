@@ -130,6 +130,7 @@ table.chain { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
 .sheet { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
 .sheet-bg { position: absolute; inset: 0; background: rgba(0, 0, 0, .5); }
 .sheet-body { position: relative; width: 100%; max-width: 560px; max-height: 92vh; overflow: auto; background: var(--bg2);
+  max-height: calc(100dvh - env(safe-area-inset-top) - 20px); overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   border-radius: 18px 18px 0 0; padding: 16px 16px calc(18px + env(safe-area-inset-bottom)); box-shadow: var(--shadow);
   animation: up .18s ease-out; }
 @media (min-width: 700px) { .sheet { align-items: center; } .sheet-body { border-radius: 18px; } }
@@ -137,7 +138,9 @@ table.chain { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
 .sh-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: -16px -16px 10px;
   padding: 16px 16px 10px; position: sticky; top: -16px; z-index: 6; background: var(--bg2); border-radius: 18px 18px 0 0; }
 .sh-head h2 { margin: 0; font-size: 18px; }
-.sh-close { font-size: 22px; color: var(--muted); padding: 0 4px; }
+.sh-close { font-size: 22px; color: var(--muted); padding: 0 4px; min-width: 44px; min-height: 40px; }
+.sheet { overscroll-behavior: contain; touch-action: pan-y; }
+#miniChain { min-height: 260px; }
 .bigprice { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; font-size: 12px; }
 .stats div { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }

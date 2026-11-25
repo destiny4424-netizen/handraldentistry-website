@@ -33,7 +33,7 @@ from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "25 Nov 2026 · Option chains skip an expiry once it has closed"
+VERSION = "25 Nov 2026 · One-tap buy, faster options, the close button stays on screen"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -759,6 +759,27 @@ def quotes_chain(keys):
     return oc
 
 
+CHAIN_BUSY = set()
+
+
+def _refresh_chain(ul, under, expiry, keys):
+    ck = (ul, expiry)
+    try:
+        try:
+            spot, data, source = *fetch_chain(ul, under, expiry), "chain"
+        except dhanlib.DhanError:
+            spot, data, source = 0.0, {}, "chain"
+        if not data:
+            data, source = quotes_chain(keys), "quotes"
+            spot = spot or (CHAIN_CACHE.get(ck) or (0, 0.0))[1]
+        if data:
+            CHAIN_CACHE[ck] = (time.time(), spot, data, source)
+    except Exception:
+        pass
+    finally:
+        CHAIN_BUSY.discard(ck)
+
+
 def chain(ul, expiry):
     expiries = INST.chain_info(ul)
     if not expiries:
@@ -769,8 +790,14 @@ def chain(ul, expiry):
     spot, data, source = 0.0, {}, "chain"
     ck = (ul, expiry)
     hit = CHAIN_CACHE.get(ck)
-    if hit and time.time() - hit[0] < 4:
+    age = time.time() - hit[0] if hit else None
+    if hit and age < 4:
         spot, data, source = hit[1], hit[2], hit[3]
+    elif hit and age < 120 and under:                  # answer at once with the last chain, refresh behind
+        spot, data, source = hit[1], hit[2], hit[3]
+        if ck not in CHAIN_BUSY:
+            CHAIN_BUSY.add(ck)
+            threading.Thread(target=_refresh_chain, args=(ul, under, expiry, keys), daemon=True).start()
     elif under:
         err = None
         try:
