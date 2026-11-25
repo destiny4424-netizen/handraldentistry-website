@@ -134,6 +134,12 @@ function check(ok, what) {
   await page.click('#tabs button[data-tab="positions"]');
   await page.waitForSelector('[data-exit]');
   await page.waitForTimeout(1500);
+  await page.waitForSelector('.live-box [data-lltp]');
+  const lb = await page.$eval('.live-box', b => b.textContent);
+  check(/LTP\s*₹[\d,]+\.\d\d/.test(lb) && /P&L\s*[−-]?₹[\d,]+\.\d\d/.test(lb), 'positions: big live LTP and P&L box');
+  const ltp1 = await page.$eval('.live-box [data-lltp]', e => e.textContent);
+  await page.waitForFunction(v => document.querySelector('.live-box [data-lltp]').textContent !== v, ltp1, {timeout: 15000})
+    .then(() => check(true, 'positions: the live box follows the price'), () => check(false, 'positions: the live box follows the price'));
   await shot('7-positions');
   // trail the stop-loss with the buttons: add one, move it up, then tidy up (cancel it) for the rest of the test
   await page.waitForSelector('.trail [data-tm]');

@@ -274,6 +274,7 @@ function updateQuotes() {
   });
   if (S.sheetKey) updateSheetQuote();
   if (S.ticket) updateTicketQuote();
+  if (S.tab === 'positions') updateLiveBoxes();
 }
 
 // ---- watchlists ----------------------------------------------------------------------------------
@@ -928,6 +929,41 @@ async function loadPositions() {
   S.posResp = r;
   renderPositions();
 }
+// The big live box on an open position: LTP and P&L, updated with every price tick.
+function livePl(p, ltp) {
+  const net = +p.netQty, avg = net > 0 ? +p.buyAvg : +p.sellAvg, mult = +p._mult || 1;
+  if (!ltp || !avg) return (+p.realizedProfit || 0) + (+p.unrealizedProfit || 0);
+  return (+p.realizedProfit || 0) + net * (ltp - avg) * mult;
+}
+function liveBox(p, pl, avg, where) {
+  const k = p._key, ltp = +(S.quotes[k]?.ltp || p._ltp || 0), net = +p.netQty;
+  const plNow = ltp ? livePl(p, ltp) : pl;
+  const move = ltp && avg ? (ltp - avg) / avg * 100 * (net > 0 ? 1 : -1) : null;
+  return `<div class="live-box ${where} ${cls(plNow)}" data-live="${esc(k)}" data-where="${where}">
+    <div class="lb-row"><span class="lb-l">LTP</span><span class="lb-ltp" data-lltp="${esc(k)}">₹${px(ltp)}</span></div>
+    <div class="lb-row"><span class="lb-l">P&amp;L</span><span class="lb-pl ${cls(plNow)}" data-lpl="${esc(k)}">${inr(plNow, 2)}</span></div>
+    <div class="lb-move ${cls(move)}" data-lmove="${esc(k)}">${move === null ? '' : `${move > 0 ? '▲' : '▼'} ${Math.abs(move).toFixed(2)}% ${move >= 0 ? 'in your favour' : 'against you'}`}</div>
+    ${p.realizedProfit ? `<div class="small muted">booked ${inr(p.realizedProfit, 2)}</div>` : ''}
+  </div>`;
+}
+function updateLiveBoxes() {
+  $$('[data-live]').forEach(box => {
+    const k = box.dataset.live, q = S.quotes[k];
+    const p = (S.positions || []).find(x => x._key === k);
+    if (!q || !q.ltp || !p) return;
+    const net = +p.netQty, avg = net > 0 ? +p.buyAvg : +p.sellAvg;
+    const pl = livePl(p, q.ltp), move = avg ? (q.ltp - avg) / avg * 100 * (net > 0 ? 1 : -1) : null;
+    const l = box.querySelector('[data-lltp]'), plEl = box.querySelector('[data-lpl]'), mv = box.querySelector('[data-lmove]');
+    const before = l.textContent;
+    l.textContent = '₹' + px(q.ltp);
+    if (before !== l.textContent && q._dir) { l.classList.remove('flash-up', 'flash-down'); void l.offsetWidth; l.classList.add('flash-' + q._dir); }
+    plEl.textContent = inr(pl, 2);
+    plEl.className = 'lb-pl ' + cls(pl);
+    box.className = `live-box ${box.dataset.where} ${cls(pl)}`;
+    if (move !== null) { mv.textContent = `${move > 0 ? '▲' : '▼'} ${Math.abs(move).toFixed(2)}% ${move >= 0 ? 'in your favour' : 'against you'}`; mv.className = 'lb-move ' + cls(move); }
+  });
+}
+
 function renderPositions() {
   const r = S.posResp; if (!r) return;
   if (document.activeElement && document.activeElement.matches('.tin')) return;   // don't wipe a price being typed
@@ -947,11 +983,12 @@ function renderPositions() {
       <div class="name">${esc(p._name || p.tradingSymbol)} <span class="tag">${esc(p.productType)}</span></div>
       <div class="sub">${net ? `${net > 0 ? 'Long' : 'Short'} ${Math.abs(net).toLocaleString('en-IN')} @ ₹${px(avg)} · LTP ₹<span data-q="${esc(p._key)}">${px(p._ltp)}</span>` :
         `Closed · bought ${(+p.buyQty).toLocaleString('en-IN')} @ ₹${px(p.buyAvg)}, sold @ ₹${px(p.sellAvg)}`}</div>
+      ${net ? liveBox(p, pl, avg, 'lb-inline') : ''}
       ${net ? trailHtml(p) : ''}
       ${net ? `<div class="ord-actions"><button data-exit="${esc(p._key)}" data-net="${net}" data-prod="${esc(p.productType)}">Exit</button>
         <button data-add="${esc(p._key)}" data-net="${net}" data-prod="${esc(p.productType)}">Add</button>
         <button data-conv="${esc(p._key)}">Convert</button></div>` : ''}
-    </div><div class="right"><div class="ltp ${cls(pl)}">${inr(pl, 2)}</div>${net && p.realizedProfit ? `<div class="small muted">booked ${inr(p.realizedProfit, 2)}</div>` : ''}</div></div>`;
+    </div>${net ? liveBox(p, pl, avg, 'lb-side') : `<div class="right"><div class="ltp ${cls(pl)}">${inr(pl, 2)}</div></div>`}</div>`;
   };
   $('#positions').innerHTML = r.positions.length ? [...open, ...closed].map(row).join('') : '<div class="item muted">No positions today.</div>';
   $('#exitAll').classList.toggle('hidden', !open.length);

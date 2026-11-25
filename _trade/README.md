@@ -33,6 +33,7 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   stop legs, and see Dhan's reason for each rejection.
 - **Positions:**
   - live P&L, with Exit (opens a closing ticket), Add and Convert (intraday ↔ delivery/NRML)
+  - each open position has a big box with its LTP and P&L in large type, green or red, updated with every price tick, and how far price has moved for or against you (on a laptop it sits on the right of the card; on a phone, under the name)
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
