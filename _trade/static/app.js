@@ -223,6 +223,7 @@ function showTab(t) {
   if (t === 'watch') loadMarket();
   window.scrollTo(0, 0);
 }
+$('#account').addEventListener('click', e => { if (e.target.closest('#accJournal')) openJournal(); });
 $('#tabs').onclick = e => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); };
 
 // ---- quotes ----------------------------------------------------------------------------------------
@@ -1128,6 +1129,8 @@ async function loadAccount() {
   let hv = 0, hc = 0;
   (h.holdings || []).forEach(x => { hc += x.totalQty * x.avgCostPrice; hv += x.totalQty * (x._ltp || x.avgCostPrice); });
   el.innerHTML = `
+    <div class="section-title">Trading journal</div>
+    <div class="box"><button class="ghost sm" id="accJournal">✎ Write today's journal</button></div>
     <div class="section-title">Phone notifications</div>
     <div class="box" id="pushBox"><span class="muted small">Loading…</span></div>
     <div class="section-title">App lock (PIN)</div>
@@ -1220,34 +1223,7 @@ async function loadAccount() {
 }
 
 // ---- routine: today's plan and the journal (rule ④) -------------------------------------------------------
-async function loadPlan() {
-  let p;
-  try { p = await api('/api/rules/plan'); } catch (e) { return; }
-  S.plan = p;
-  const now = new Date(), after = now.getHours() * 60 + now.getMinutes() >= 15 * 60 + 30;
-  const open = !!S.planOpen;
-  const bits = [];
-  if (p.fix_today) bits.push(`<div class="warnbox">Yesterday you wrote: “${esc(p.fix_today)}”</div>`);
-  bits.push(`<div class="kv"><span>Trades left today</span><b>${p.trades_left} of ${p.max_trades}</b></div>`);
-  if (p.loss_left !== null) bits.push(`<div class="kv"><span>Loss you can still take</span><b class="${p.loss_left <= 0 ? 'down' : ''}">${inr(Math.max(0, p.loss_left))}</b></div>`);
-  bits.push(`<div class="kv"><span>Today's P&amp;L</span><b class="${cls(p.day_pnl)}">${inr(p.day_pnl)}</b></div>`);
-  bits.push(`<div class="kv"><span>Rules mode</span><b>${p.rules.on ? `On · ${p.rules.risk_pct}% risk = ${inr(p.rules.capital * p.rules.risk_pct / 100)}` : '<span class="down">Off</span>'}</b></div>`);
-  if (p.bot_setups.length || p.bot_positions.length) bits.push(`<div class="kv"><span>Auto-trader</span><b>${p.bot_setups.length} setup(s) waiting · ${p.bot_positions.length} open</b></div>`);
-  if (p.waiting.length) bits.push(`<div class="kv"><span>Waiting for confirmation</span><b>${p.waiting.map(a => esc(a.name)).join(', ')}</b></div>`);
-  bits.push(p.near_levels.length ? `<div class="small muted" style="margin-top:6px">At a level now (your watchlist):</div>` +
-      p.near_levels.map(n => `<div class="kv plan-lv" data-key="${esc(n.key)}"><span>${esc(n.sym)}</span><b>${esc(n.level)} ${px(n.price)} <span class="small muted">${n.dist_pct > 0 ? '+' : ''}${n.dist_pct}%</span></b></div>`).join('')
-    : '<div class="small muted" style="margin-top:6px">None of your watchlist stocks is at a level. No level, no trade: waiting is fine.</div>');
-  const jBtn = after || p.journal_done ? `<button class="${p.journal_done ? 'ghost sm' : 'primary'}" id="jrnBtn" style="${p.journal_done ? '' : 'padding:6px 12px'}">${p.journal_done ? '✓ Journal done' : "Write today's journal"}</button>` : '';
-  $('#planCard').innerHTML = `<div class="card plan" style="margin:0 0 12px">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-      <h3 style="margin:0;cursor:pointer" id="planToggle">${after ? 'After the close' : "Today's plan"} <span class="muted small">${open ? '▾' : '▸'}</span></h3>
-      <div style="display:flex;gap:8px;align-items:center">${p.streak ? `<span class="pill ok">${p.streak}-day journal streak</span>` : ''}${jBtn}</div></div>
-    ${open ? bits.join('') : `<div class="small muted" style="margin-top:4px">${p.trades_left} trades left · ${p.near_levels.length} watchlist stock(s) at a level${p.fix_today ? " · yesterday's note inside" : ''}</div>`}
-  </div>`;
-  $('#planToggle').onclick = () => { S.planOpen = !open; loadPlan(); };
-  if ($('#jrnBtn')) $('#jrnBtn').onclick = () => openJournal();
-  $$('#planCard .plan-lv').forEach(x => x.onclick = () => openInstrument(x.dataset.key));
-}
+function loadPlan() { /* the Today's plan card was taken off the watchlist */ }
 async function openJournal(day) {
   let v;
   try { v = await api('/api/rules/journal' + (day ? '?day=' + day : '')); } catch (e) { return toast(e.message, 'bad'); }
@@ -1272,7 +1248,7 @@ async function openJournal(day) {
   $('#jFollow').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; followed = b.dataset.v; $$('#jFollow button').forEach(x => x.classList.toggle('on', x === b)); };
   $('#jMood').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; mood = +b.dataset.v; $$('#jMood button').forEach(x => x.classList.toggle('on', x === b)); };
   $('#jSave').onclick = async () => {
-    try { await api('/api/rules/journal', {day: v.day, followed, good: $('#jGood').value, fix: $('#jFix').value, mood}); closeSheet(); toast('Journal saved', 'ok'); loadPlan(); }
+    try { await api('/api/rules/journal', {day: v.day, followed, good: $('#jGood').value, fix: $('#jFix').value, mood}); closeSheet(); toast('Journal saved', 'ok'); }
     catch (er) { toast(er.message, 'bad'); }
   };
 }
