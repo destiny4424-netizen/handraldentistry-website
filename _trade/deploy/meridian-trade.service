@@ -15,6 +15,9 @@ Environment=MT_HOST=127.0.0.1
 # 3050: the clinic server uses 3030, Handral Books 3020 and the scanner 3040.
 Environment=MT_PORT=3050
 Environment=MT_DATA_DIR=/var/lib/meridian-trade
+# The Meridian scanner's settings (OBS_PASSWORD), so the Screener tab can sign in to it on 127.0.0.1:3040.
+# systemd reads this as root before starting the app; the "-" means it's fine if the scanner isn't installed.
+EnvironmentFile=-/etc/default/orderblock-scanner
 # MT_PASSWORD, MT_PUBLIC_URL and MT_PUBLIC_IP are written here by web.sh; the file survives updates.
 EnvironmentFile=-/etc/default/meridian-trade
 ExecStart=/usr/bin/python3 /opt/meridian-trade/repo/_trade/trade.py

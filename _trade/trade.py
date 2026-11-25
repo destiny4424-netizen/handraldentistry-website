@@ -32,9 +32,10 @@ from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 import stream                                           # noqa: E402
+import screener                                         # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "25 Nov 2026 · live price stream from Dhan"
+VERSION = "26 Nov 2026 · Screener tab: intraday and swing picks from the scanner"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -47,6 +48,7 @@ API_BASE = os.environ.get("MT_DHAN_API", "https://api.dhan.co/v2")
 MASTER = os.environ.get("MT_MASTER_URL", MASTER_URL)
 FEED_URL = os.environ.get("MT_DHAN_FEED", "wss://api-feed.dhan.co")       # Dhan's live market feed (WebSocket)
 STREAM_ON = os.environ.get("MT_STREAM", "1") != "0"
+SCANNER_URL = os.environ.get("MT_SCANNER_URL", "http://127.0.0.1:3040")    # the Meridian scanner on this droplet
 
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
@@ -148,6 +150,35 @@ def want(keys):
 
 
 STREAM = None                                          # stream.Stream once main() starts it
+SCANNER = None                                         # screener.Scanner once main() starts it
+
+
+def stock_key(sym):
+    """The NSE (or BSE) stock a scanner symbol is, for the ticket."""
+    k = INST.under.get(sym) or ""
+    return k if k.startswith(("NSE_EQ:", "BSE_EQ:")) else None
+
+
+def start_demo_scanner():
+    """--demo: run the real Meridian scanner in its own demo mode next to the desk (port 3041)."""
+    import atexit
+    import signal
+    import subprocess
+    app = HERE.parent / "_scanner" / "app.py"
+    if not app.exists():
+        return "", ""
+    folder = DATA / "scanner-demo"
+    folder.mkdir(parents=True, exist_ok=True)
+    pw = "demo-scanner"
+    env = dict(os.environ, OBS_CLOUD="1", OBS_PASSWORD=pw, OBS_HOST="127.0.0.1", OBS_PORT="3041",
+               OBS_SETTINGS_DIR=str(folder))
+    for k in ("DHAN_CLIENT_ID", "DHAN_ACCESS_TOKEN"):
+        env.pop(k, None)
+    proc = subprocess.Popen([sys.executable, str(app)], cwd=str(app.parent), env=env,
+                            stdout=open(folder / "scanner.log", "ab"), stderr=subprocess.STDOUT)
+    atexit.register(proc.terminate)
+    signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+    return "http://127.0.0.1:3041", pw
 STREAM_PREV = {}                                       # key -> previous close from the stream, until a price comes
 _rest_at = [0.0]
 _strikes = [0]
@@ -1218,6 +1249,8 @@ class Handler(BaseHTTPRequestHandler):
             liq = MOVERS.liquidity_for(keys, QUOTES) if q.get("liq") and MOVERS else {}
             return self.send(200, {"quotes": {k: QUOTES.get(k) for k in keys}, "info": info, "liq": liq,
                                    "error": STATUS["feed_error"]})
+        if path == "/api/screener":
+            return self.send(200, SCANNER.view() if SCANNER else {"ok": False, "error": "Screener not started."})
         if path == "/api/chain":
             r = chain(q.get("ul", "NIFTY"), q.get("expiry", ""))
             return self.send(200, r)
@@ -1500,6 +1533,14 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self.send(400, {"error": err})
             return self.send(200, {"ok": True, "cfg": RULES.cfg()})
+        if path == "/api/screener/backtest":
+            try:
+                SCANNER._get("/api/state")                 # signs in if needed
+                SCANNER._req("/api/backtest", {})
+                SCANNER.slow_at = 0
+                return self.send(200, {"ok": True})
+            except Exception as e:
+                return self.send(502, {"error": f"The scanner didn't start the backtest: {e}"})
         if path.startswith("/api/auto/"):
             act = path[len("/api/auto/"):]
             err = ""
@@ -1571,7 +1612,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global API_BASE, MASTER, FEED_URL, STREAM
+    global API_BASE, MASTER, FEED_URL, STREAM, SCANNER
+    scan_url, scan_pw = SCANNER_URL, os.environ.get("OBS_PASSWORD") or os.environ.get("MT_SCANNER_PASSWORD", "")
+    if DEMO and not os.environ.get("MT_SCANNER_URL"):
+        scan_url, scan_pw = start_demo_scanner()
+    SCANNER = screener.Scanner(scan_url, scan_pw, key_of=stock_key)
     if DEMO:
         import mockdhan
         mockdhan.serve(3099)
