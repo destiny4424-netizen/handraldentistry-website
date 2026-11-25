@@ -1492,7 +1492,12 @@ S.qk = null;
 let qkUlsLoaded = false;
 // ---- screener: the Meridian scanner's intraday and swing picks --------------------------------------------
 S.scSeg = pref('scSwing', false) ? 'swing' : 'intraday';
+let scUlsLoaded = false;
 async function loadScreener() {
+  if (!scUlsLoaded) {
+    api('/api/underlyings').then(r => { $('#scUls').innerHTML = (r.list || []).filter(u => !/NIFTY|SENSEX|BANKEX|VIX/.test(u))
+      .map(u => `<option value="${esc(u)}">`).join(''); scUlsLoaded = true; }).catch(() => {});
+  }
   let v;
   try { v = await api('/api/screener'); } catch (e) { v = {ok: false, error: e.message}; }
   S.sc = v;
@@ -1552,6 +1557,59 @@ function renderScreener() {
     let n = 0; el.querySelectorAll('.sc-row').forEach(r => { r.dataset.sci = n++; });
   }
 }
+// Check a stock: the scanner's rules on any stock, right now
+function lkPlan(x, title) {
+  const t = x.t2 && x.t2 !== x.t1 ? `${px(x.t1)} / ${px(x.t2)}` : px(x.t1);
+  return `<div class="lk-plan" data-lk='${esc(JSON.stringify({side: x.side, sl: x.sl, t1: x.t1, t2: x.t2, entry: x.entry}))}'>
+    <div class="sc-top"><span class="pill ${x.side === 'BUY' ? 'buy' : 'sell'}">${x.side}</span><b class="lk-title">${title}</b><button class="ghost sm lk-trade">Trade</button></div>
+    <div class="sc-lv"><span>Entry <b>${px(x.entry)}</b></span><span>SL <b class="down">${px(x.sl)}</b></span><span>Exit <b class="up">${t}</b></span></div>
+    ${x.action ? `<div class="muted small">${esc(x.action)}</div>` : ''}</div>`;
+}
+function renderLookup(r) {
+  const el = $('#scOut');
+  if (!r) { el.innerHTML = ''; return; }
+  if (r.error || !r.ok) { el.innerHTML = `<div class="badbox">${esc(r.error || 'No answer')}</div>`; return; }
+  S.lk = r;
+  const i = r.intraday, s = r.swing;
+  let intra;
+  if (i.found) {
+    intra = `<div class="lk-verdict ${i.valid ? 'up' : 'warn'}">${esc(i.verdict)}</div>
+      ${lkPlan(i, esc(i.basis))}
+      <div class="lk-checks">${i.checks.map(c => `<span class="${c.ok ? 'up' : 'down'}">${c.ok ? '✓' : '✗'} ${esc(c.name)}</span>`).join('')}</div>
+      ${i.extended ? '<div class="muted small">Price is already more than 1R past the entry: wait for a retest.</div>' : ''}`;
+  } else {
+    intra = `<div class="lk-verdict">${esc(i.verdict)}</div>${(i.plans || []).map(p => lkPlan(p, `${esc(p.level)} · ${p.away_pct}% away`)).join('')}`;
+  }
+  if (i.late) intra += '<div class="muted small">After 2 PM: the scanner takes no fresh intraday entries.</div>';
+  const sw = s.found ? `${lkPlan(s, `Swing · ${esc(s.basis || '')}${s.score ? ' · score ' + Math.round(s.score) : ''}`)}
+      ${(s.why || []).length ? `<div class="muted small">${s.why.map(esc).join(' · ')}</div>` : ''}` : `<div class="lk-verdict">${esc(s.verdict)}</div>`;
+  el.innerHTML = `<div class="card lk">
+    <div class="lk-head"><b>${esc(r.sym)}</b> <span>₹${px(r.price)}</span><span class="muted small">${r.live ? 'live' : 'last session'} · candles to ${esc(r.at)}${i.vwap ? ' · VWAP ' + px(i.vwap) : ''}</span>
+      <button class="lk-close" aria-label="Close">✕</button></div>
+    <div class="section-title">Intraday</div>${intra}
+    <div class="section-title">Swing</div>${sw}
+    <div class="muted small" style="margin-top:6px">By the Meridian scanner's rules. Entry is a trigger: wait for price to cross it.</div></div>`;
+}
+async function runLookup() {
+  const sym = $('#scSym').value.trim().toUpperCase();
+  if (!sym) return;
+  const btn = $('#scGo'); btn.disabled = true; btn.textContent = '…';
+  $('#scOut').innerHTML = `<div class="muted small" style="margin:8px 2px">Checking ${esc(sym)}…</div>`;
+  let r;
+  try { r = await api('/api/lookup?sym=' + encodeURIComponent(sym)); } catch (e) { r = {error: e.message}; }
+  btn.disabled = false; btn.textContent = 'Check';
+  renderLookup(r);
+}
+$('#scLook').onsubmit = e => { e.preventDefault(); $('#scSym').blur(); runLookup(); };
+$('#scSym').addEventListener('change', () => { if ($('#scUls').querySelector(`option[value="${CSS.escape($('#scSym').value.trim().toUpperCase())}"]`)) runLookup(); });
+$('#scOut').onclick = e => {
+  if (e.target.closest('.lk-close')) { $('#scOut').innerHTML = ''; $('#scSym').value = ''; return; }
+  const b = e.target.closest('.lk-trade'); if (!b || !S.lk) return;
+  const x = JSON.parse(b.closest('[data-lk]').dataset.lk);
+  const t = x.t2 && x.t2 !== x.t1 ? `₹${px(x.t1)} / ₹${px(x.t2)}` : `₹${px(x.t1)}`;
+  openTicket(S.lk.key, x.side, {sl: String(x.sl), target: String(x.t1),
+    note: `${S.lk.sym}: ${x.side === 'BUY' ? 'buy above' : 'sell below'} ₹${px(x.entry)} · SL ₹${px(x.sl)} · exit ${t}. Stop-loss and target 1 are filled in.`});
+};
 $('#scSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.scSeg = b.dataset.v; setPref('scSwing', S.scSeg === 'swing'); renderScreener(); };
 $('#scBody').onclick = async e => {
   if (e.target.closest('#scRunBt')) {

@@ -33,9 +33,10 @@ from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 import stream                                           # noqa: E402
 import screener                                         # noqa: E402
+import lookup                                           # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · menu: Positions 3rd, then Orders, Screener, Account"
+VERSION = "26 Nov 2026 · Screener: check any stock for entry, stop-loss and target"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -151,6 +152,7 @@ def want(keys):
 
 STREAM = None                                          # stream.Stream once main() starts it
 SCANNER = None                                         # screener.Scanner once main() starts it
+LOOKUP = lookup.Lookup(D)                              # Screener → check any stock by the scanner's rules
 
 
 def stock_key(sym):
@@ -1249,6 +1251,18 @@ class Handler(BaseHTTPRequestHandler):
             liq = MOVERS.liquidity_for(keys, QUOTES) if q.get("liq") and MOVERS else {}
             return self.send(200, {"quotes": {k: QUOTES.get(k) for k in keys}, "info": info, "liq": liq,
                                    "error": STATUS["feed_error"]})
+        if path == "/api/lookup":
+            sym = (q.get("sym") or "").strip().upper()
+            key = stock_key(sym)
+            if not key:
+                return self.send(200, {"ok": False, "error": f"{sym or 'That'} isn't an NSE stock in Dhan's list."})
+            qt = QUOTES.get(key) or {}
+            ltp = qt.get("ltp") if time.time() - qt.get("t", 0) < 15 else None
+            want([key])
+            try:
+                return self.send(200, LOOKUP.check(sym, key, ltp, (INST.under.get("NIFTY") or ":").split(":")[1], demo=DEMO))
+            except dhanlib.DhanError as e:
+                return self.send(502, {"error": str(e)})
         if path == "/api/screener":
             return self.send(200, SCANNER.view() if SCANNER else {"ok": False, "error": "Screener not started."})
         if path == "/api/chain":
