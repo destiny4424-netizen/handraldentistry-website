@@ -251,7 +251,7 @@ function check(ok, what) {
   check(true, 'super order placed');
 
   // insights
-  await page.click('#tabs button[data-tab="insights"]');
+  await page.click('#tabs button[data-tab="account"]'); await page.click('.acc-links [data-go="insights"]');
   await page.waitForSelector('.kpi');
   await page.waitForTimeout(400);
   check((await page.textContent('#insights')).includes("What's costing you"), 'insights shows habits');
@@ -266,6 +266,15 @@ function check(ok, what) {
   await page.click('#lmSave');
   await page.waitForSelector('.toast.ok');
   await shot('12-account');
+  check(!(await page.$('#tabs button[data-tab="insights"]')) && !(await page.$('#tabs button[data-tab="auto"]'))
+    && (await page.$$('#tabs button')).length === 6, 'menu: Insights and Auto are not on the bottom menu (6 tabs)');
+  await page.click('.acc-links [data-go="insights"]');
+  await page.waitForSelector('#tab-insights.on');
+  check(await page.$eval('#tabs button[data-tab="account"]', b => b.classList.contains('on')), 'account: Insights opens from Account, Account stays lit');
+  await page.click('#tab-insights .back-acc');
+  await page.waitForSelector('#tab-account.on');
+  check(true, 'account: "← Account" goes back');
+
   const feedOk = await page.waitForFunction(() => api('/api/status').then(s => s.feed_mode === 'stream'), null, {timeout: 20000, polling: 1000}).then(() => true, () => false);
   check(feedOk, "prices: Dhan's live stream is in use");
   await page.click('#tabs button[data-tab="watch"]');
@@ -397,7 +406,7 @@ function check(ok, what) {
   check(true, 'Quick: Down picks a put');
 
   // auto-trader: the edge check runs, the bot starts on paper, and hands-off blocks a manual buy
-  await page.click('#tabs button[data-tab="auto"]');
+  await page.click('#tabs button[data-tab="account"]'); await page.click('.acc-links [data-go="auto"]');
   await page.waitForSelector('#auto .pnl-card');
   check((await page.textContent('#auto')).includes('PAPER'), 'auto-trader starts in paper mode');
   await page.waitForFunction(() => /PASSED|NO EDGE YET/.test(document.querySelector('#auto').textContent), null, {timeout: 60000});
@@ -423,7 +432,7 @@ function check(ok, what) {
   await page.waitForFunction(() => (document.querySelector('#cfMsg') || {}).textContent?.includes('Hands off'));
   check(true, 'hands-off refuses a manual buy while the bot runs');
   await page.click('.sh-close');
-  await page.click('#tabs button[data-tab="auto"]');
+  await page.click('#tabs button[data-tab="account"]'); await page.click('.acc-links [data-go="auto"]');
   await page.waitForSelector('#auPause');
   await page.click('#auPause');
   await page.waitForSelector('#auStart');

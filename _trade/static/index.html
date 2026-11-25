@@ -27,8 +27,6 @@
   <button data-tab="screener"><i>◎</i><span>Screener</span></button>
   <button data-tab="orders"><i>⇄</i><span>Orders</span><b id="ordersBadge" class="badge hidden"></b></button>
   <button data-tab="positions"><i>◧</i><span>Positions</span></button>
-  <button data-tab="auto"><i>⚙</i><span>Auto</span></button>
-  <button data-tab="insights"><i>✦</i><span>Insights</span></button>
   <button data-tab="account"><i>◉</i><span>Account</span></button>
 </nav>
 <main id="main">
@@ -77,15 +75,21 @@
     <div class="row-end"><button id="exitAll" class="danger ghost">Exit all positions</button></div>
   </section>
   <section id="tab-insights" class="tab">
+    <button class="ghost sm back-acc" data-go="account">← Account</button>
     <div class="ins-head"><div class="chips" id="insDays"><button data-d="30">30 days</button><button data-d="90" class="on">90 days</button><button data-d="365">1 year</button><button data-d="0">All</button></div>
       <button id="syncBtn" class="ghost sm">↻ Import trades</button></div>
     <div id="syncNote" class="muted small"></div>
     <div id="insights"></div>
   </section>
   <section id="tab-auto" class="tab">
+    <button class="ghost sm back-acc" data-go="account">← Account</button>
     <div id="auto"></div>
   </section>
   <section id="tab-account" class="tab">
+    <div class="acc-links">
+      <button data-go="insights"><i>✦</i><span><b>Insights</b><small>Your P&amp;L, habits and what's costing you</small></span><em>›</em></button>
+      <button data-go="auto"><i>⚙</i><span><b>Auto-trader</b><small>The swing bot on MTF, its trades and backtest</small></span><em>›</em></button>
+    </div>
     <div id="account"></div>
   </section>
 </main>

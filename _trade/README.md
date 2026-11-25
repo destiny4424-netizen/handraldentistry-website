@@ -38,6 +38,8 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - live P&L, with Exit (opens a closing ticket), Add and Convert (intraday ↔ delivery/NRML)
   - each open position has a big box with its LTP and P&L in large type, green or red, updated with every price tick, and how far price has moved for or against you (on a laptop it sits on the right of the card; on a phone, under the name)
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
+- **Menu:** Watchlist, Quick, Screener, Orders, Positions, Account. **Insights** and the **Auto-trader** open from the
+  two buttons at the top of Account ("← Account" goes back).
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
 ## Screener (the Meridian scanner's picks)
