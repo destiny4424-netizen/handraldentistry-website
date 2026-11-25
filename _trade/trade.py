@@ -35,7 +35,7 @@ import stream                                           # noqa: E402
 import screener                                         # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · Insights and Auto open from the Account tab"
+VERSION = "26 Nov 2026 · menu: Positions 3rd, then Orders, Screener, Account"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
