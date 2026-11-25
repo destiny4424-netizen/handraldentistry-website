@@ -7,7 +7,7 @@ self.addEventListener('push', e => {
   let m = {};
   try { m = e.data ? e.data.json() : {}; } catch (err) { m = {title: 'Handral Trading Desk', body: e.data ? e.data.text() : ''}; }
   e.waitUntil(self.registration.showNotification(m.title || 'Handral Trading Desk', {
-    body: m.body || '', tag: m.tag || undefined, icon: '/icon.svg', badge: '/icon.svg',
+    body: m.body || '', tag: m.tag || undefined, icon: '/icon.png', badge: '/icon.png',
     data: {url: m.url || '/'}, timestamp: (m.ts || Date.now() / 1000) * 1000,
   }));
 });

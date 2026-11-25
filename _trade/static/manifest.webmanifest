@@ -1,2 +1,2 @@
 {"name": "Handral Trading Desk", "short_name": "Handral Desk", "start_url": "/", "display": "standalone",
- "background_color": "#0f1419", "theme_color": "#0f1419", "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]}
+ "background_color": "#0f1419", "theme_color": "#0f1419", "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}, {"src": "/icon.png", "sizes": "512x512", "type": "image/png"}]}

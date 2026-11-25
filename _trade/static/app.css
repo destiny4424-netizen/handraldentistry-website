@@ -36,7 +36,8 @@ button { cursor: pointer; border: 0; background: none; }
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: var(--bg2); border-bottom: 1px solid var(--line); }
 .brand { font-size: 16px; letter-spacing: .2px; display: flex; align-items: center; gap: 6px; }
 .brand.big { font-size: 22px; justify-content: center; }
-.logo { color: var(--accent); }
+.logo { width: 22px; height: 22px; border-radius: 5px; display: block; }
+.brand.big .logo { width: 34px; height: 34px; border-radius: 8px; }
 .top-right { display: flex; align-items: center; gap: 12px; }
 .funds { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
