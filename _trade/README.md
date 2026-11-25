@@ -40,6 +40,22 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.
 
+## Screener (the Meridian scanner's picks)
+The **Screener** tab shows the picks of the Meridian scanner (`_scanner/`, the orderblock-scanner service on the
+same droplet), compactly:
+- **Intraday:** today's picks, locked in when each first appears, with **entry, stop-loss and exit** (target 1 /
+  target 2) and where each stands (waiting, triggered, T1 hit, SL hit, or the result in R).
+- **Swing:** today's swing setups (from 11:00; final list at 3 PM) and the swing trades still running.
+- **Performance & backtest:** this month's live results next to the scanner's latest backtest (trades, win rate,
+  average and total R, profit factor, max drawdown). **Run backtest** starts a new one on the scanner.
+- Tap a pick to open the ticket with its side, stop-loss and target 1 filled in. The price stays at the LTP: the
+  entry is a trigger ("buy above"), so check that price has crossed it before sending.
+
+How it connects: the desk signs in to the scanner on `127.0.0.1:3040` with the scanner's own password. The desk's
+systemd unit loads `/etc/default/orderblock-scanner`, so the password (`OBS_PASSWORD`) arrives with nothing to copy.
+Picks are re-read every 20 seconds, performance and backtest every 5 minutes (every 20 seconds while a backtest runs).
+`MT_SCANNER_URL` changes the address. `--demo` starts the real scanner in its demo mode on port 3041.
+
 ## Live prices
 Prices come from **Dhan's live market feed**: one WebSocket connection (`wss://api-feed.dhan.co`) that Dhan pushes
 prices down about every second, for everything on screen (watchlist, indices, positions, the open instrument and the
@@ -350,6 +366,7 @@ insights maths.
 
 ## Files
 - `trade.py`: web server, order checks, live price feed, insights sync
+- `screener.py`: the Screener tab's link to the Meridian scanner (sign-in, picks, performance, backtest)
 - `stream.py`: Dhan's live market feed (WebSocket): subscriptions, the binary price packets, reconnects
 - `wsclient.py`: a small WebSocket client (standard library only)
 - `dhan.py`: Dhan v2 REST client (orders, super orders, portfolio, funds, quotes, option chain, charts)

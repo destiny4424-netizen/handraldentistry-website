@@ -480,6 +480,27 @@ function check(ok, what) {
   await page.click('#pinOff');
   await page.waitForSelector('#pinOn');
 
+  // Screener: the Meridian scanner's picks (trade.py --demo runs the real scanner in its demo mode)
+  await page.click('#tabs button[data-tab="screener"]');
+  const scOk = await page.waitForFunction(() => document.querySelector('#scBody .sc-row') && document.querySelector('.sc-stats'),
+    null, {timeout: 90000, polling: 1000}).then(() => true, () => false);
+  check(scOk, 'screener: intraday picks and the performance / backtest table');
+  if (scOk) {
+    check(/Entry\s*[\d,.]+\s*SL\s*[\d,.]+\s*Exit\s*[\d,.]+/.test(await page.textContent('.sc-row')), 'screener: each pick shows entry, stop-loss and exit');
+    check((await page.$$eval('.sc-stats th', t => t.map(x => x.textContent).join(' '))).includes('Backtest'), 'screener: live and backtest side by side');
+    await shot('28-screener');
+    await page.click('#scSeg button[data-v="swing"]');
+    check((await page.textContent('#scBody')).includes("Today's setups") && !!(await page.$('.sc-stats')), 'screener: swing setups, running trades and their stats');
+    await shot('29-screener-swing');
+    await page.click('#scSeg button[data-v="intraday"]');
+    const pick = await page.evaluate(() => { S.sc.intraday.rows[0].key = 'NSE_EQ:3045'; renderScreener(); return S.sc.intraday.rows[0]; });
+    await page.click('.sc-row');
+    await page.waitForSelector('#tkSl');
+    check(await page.inputValue('#tkSl') === String(pick.sl) && await page.inputValue('#tkTgt') === String(pick.t1)
+      && (await page.textContent('.sc-note')).includes('Screener'), 'screener: tapping a pick opens the ticket with its stop-loss and target');
+    await page.click('.sh-close');
+  }
+
   // the stream lies: the app notices within about 20 seconds and goes back to asking every second
   await page.click('#tabs button[data-tab="watch"]');
   await fetch(MOCK + '/mock/feed', {method: 'POST', body: JSON.stringify({bad_prices: true})});

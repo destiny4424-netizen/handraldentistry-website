@@ -220,6 +220,7 @@ function showTab(t) {
   if (t === 'account') loadAccount();
   if (t === 'auto') loadAuto();
   if (t === 'quick') loadQuick();
+  if (t === 'screener') loadScreener();
   if (t === 'watch') loadMarket();
   window.scrollTo(0, 0);
 }
@@ -543,7 +544,8 @@ async function openTicket(key, side, preset = {}) {
   const q = S.quotes[key];
   S.ticket = {key, it, side, eq, lot, product: preset.product || 'INTRADAY', type: preset.type || 'LIMIT',
     lots: preset.qty ? Math.max(1, Math.round(preset.qty / lot)) : 1, price: preset.price ?? (q ? q.ltp : ''), trigger: '',
-    superOn: false, target: '', sl: '', trail: '', validity: 'DAY', amo: false, slice: false, exit: !!preset.exit, priceTouched: !!preset.price};
+    superOn: false, target: preset.target ?? '', sl: preset.sl ?? '', trail: '', validity: 'DAY', amo: false, slice: false, exit: !!preset.exit,
+    priceTouched: !!preset.price, note: preset.note || ''};
   renderTicket();
   pollQuotes();
 }
@@ -583,6 +585,7 @@ function renderTicket() {
       <div class="muted small"><span id="tkLtp">${px(S.quotes[t.key]?.ltp)}</span> · ${esc(it.name)}</div></div>
       <button class="sh-close" aria-label="Close">✕</button></div>
     ${t.exit ? '<div class="okbox">Closing your position. Check the quantity and price, then review.</div>' : ''}
+    ${t.note ? `<div class="okbox sc-note">${esc(t.note)}</div>` : ''}
     <div class="side"><button data-side="BUY" class="buy ${t.side === 'BUY' ? 'on' : ''}">BUY</button><button data-side="SELL" class="sell ${t.side === 'SELL' ? 'on' : ''}">SELL</button></div>
     <div class="seg" id="tkProd">${products.map(([v, l]) => `<button data-v="${v}" class="${t.product === v ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="seg" id="tkType">${types.map(([v, l]) => `<button data-v="${v}" class="${t.type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
@@ -1485,6 +1488,83 @@ function renderAuto(a) {
 // ---- Quick: a stock's 1-OTM option, a limit buy, and the stop-loss placed once it fills ---------------------
 S.qk = null;
 let qkUlsLoaded = false;
+// ---- screener: the Meridian scanner's intraday and swing picks --------------------------------------------
+S.scSeg = pref('scSwing', false) ? 'swing' : 'intraday';
+async function loadScreener() {
+  let v;
+  try { v = await api('/api/screener'); } catch (e) { v = {ok: false, error: e.message}; }
+  S.sc = v;
+  if (S.tab === 'screener') renderScreener();
+}
+function scLevels(x) {
+  const t = x.t2 && x.t2 !== x.t1 ? `${px(x.t1)} / ${px(x.t2)}` : px(x.t1);
+  return `<div class="sc-lv"><span>Entry <b>${px(x.entry)}</b></span><span>SL <b class="down">${px(x.sl)}</b></span><span>Exit <b class="up">${t}</b></span></div>`;
+}
+function scStatus(x) {
+  if (x.r !== null && x.r !== undefined) return `<span class="sc-st ${cls(x.r)}">${x.r > 0 ? '+' : ''}${x.r}R</span>`;
+  const s = x.status || '', c = /^Not /i.test(s) ? '' : /SL|stop/i.test(s) ? 'down' : /T1|T2|Triggered|Target/i.test(s) ? 'up' : '';
+  return `<span class="sc-st ${c}">${esc(s.replace('Waiting for trigger', 'Waiting'))}</span>`;
+}
+function scRows(rows, empty) {
+  if (!rows.length) return `<div class="muted small sc-empty">${empty}</div>`;
+  return `<div class="list sc-list">${rows.map((x, i) => `<div class="item sc-row" data-sci="${i}">
+      <div class="sc-top"><b>${esc(x.sym)}</b> <span class="pill ${x.side === 'BUY' ? 'buy' : 'sell'}">${x.side}</span>${scStatus(x)}</div>
+      ${scLevels(x)}</div>`).join('')}</div>`;
+}
+function scStats(live, bt) {
+  const f = (a, k, sfx = '') => (!a || a[k] === null || a[k] === undefined ? '–' : a[k] + sfx);
+  const c = (a, k) => (a && a[k] !== null && a[k] !== undefined ? cls(a[k]) : '');
+  const row = (label, k, sfx, colour) => `<tr><td>${label}</td><td class="${colour ? c(live, k) : ''}">${f(live, k, sfx)}</td><td class="${colour ? c(bt, k) : ''}">${f(bt, k, sfx)}</td></tr>`;
+  return row('Trades', 'closed', '') + row('Win rate', 'win_rate', '%') + row('Avg per trade', 'avg_r', 'R', 1) +
+    row('Total', 'total_r', 'R', 1) + row('Profit factor', 'profit_factor', '') +
+    `<tr><td>Max drawdown</td><td>–</td><td class="down">${f(bt, 'max_drawdown', 'R')}</td></tr>`;
+}
+function scMonth(m) {
+  return m ? new Date(m + '-01T00:00').toLocaleDateString('en-IN', {month: 'short', year: 'numeric'}) : 'this month';
+}
+function renderScreener() {
+  const v = S.sc, seg = S.scSeg, el = $('#scBody');
+  $$('#scSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === seg));
+  if (!v) return;
+  if (!v.ok) { el.innerHTML = `<div class="badbox">${esc(v.error || 'The scanner is not available.')}</div>`; return; }
+  const head = `<div class="muted small sc-head">${v.last_scan ? `Scanned ${esc(v.last_scan)}` : esc(v.message || 'Waiting for the first scan')}${v.next_scan ? ` · next ${esc(v.next_scan)}` : ''}${v.demo ? ' · <b>demo data</b>' : ''}${v.error ? ` · <span class="down">${esc(v.error)}</span>` : ''}</div>`;
+  let list;
+  if (seg === 'intraday') {
+    S.scList = v.intraday.rows;
+    const d = v.intraday.today || {};
+    list = scRows(S.scList, 'No intraday picks yet today. Scans run every 15 minutes from 9:30.') +
+      (d.count ? `<div class="muted small sc-day">Today: ${d.count} picks · ${d.triggered || 0} triggered · ${d.wins || 0} won · ${d.losses || 0} lost · <b class="${cls(d.total_r)}">${d.total_r > 0 ? '+' : ''}${d.total_r || 0}R</b></div>` : '');
+  } else {
+    S.scList = [...v.swing.rows, ...v.swing.running];
+    list = `<div class="section-title">Today's setups</div>${scRows(v.swing.rows, `Swing setups come from ${esc(v.swing.from || '11:00')}; the final list is at 3 PM.`)}
+      <div class="section-title">Running</div>${scRows(v.swing.running, 'No swing trade running.')}`;
+    if (v.swing.caution) list += `<div class="muted small sc-day">${esc(v.swing.caution)}</div>`;
+  }
+  const key = seg === 'intraday' ? 'intraday' : 'swing', bt = v.backtest || {};
+  el.innerHTML = head + list + `<div class="section-title">Performance &amp; backtest</div>
+    <table class="sc-stats"><thead><tr><th></th><th>Live · ${esc(scMonth(v.perf.month))}</th><th>Backtest${bt.sessions ? ` · ${bt.sessions} days` : ''}</th></tr></thead>
+      <tbody>${scStats(v.perf[key], bt[key])}</tbody></table>
+    <div class="sc-bt muted small">${bt.ran_at ? `Backtest ran ${esc(bt.ran_at)}${bt.from ? ` (${esc(bt.from)} – ${esc(bt.to)})` : ''}. ` : ''}R = multiples of the risk (entry to stop).
+      <button class="ghost sm" id="scRunBt" ${bt.job === 'running' ? 'disabled' : ''}>${bt.job === 'running' ? 'Backtest running…' : 'Run backtest'}</button></div>`;
+  if (seg === 'swing') {                               // number the rows in list order
+    let n = 0; el.querySelectorAll('.sc-row').forEach(r => { r.dataset.sci = n++; });
+  }
+}
+$('#scSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.scSeg = b.dataset.v; setPref('scSwing', S.scSeg === 'swing'); renderScreener(); };
+$('#scBody').onclick = async e => {
+  if (e.target.closest('#scRunBt')) {
+    try { await api('/api/screener/backtest', {}); toast('Backtest started on the scanner. It takes a few minutes.', 'ok', 6000); } catch (er) { toast(er.message, 'bad'); }
+    return;
+  }
+  const r = e.target.closest('.sc-row'); if (!r) return;
+  const x = (S.scList || [])[+r.dataset.sci]; if (!x) return;
+  if (!x.key) return toast(`${x.sym} isn't in Dhan's list`, 'bad');
+  const t = x.t2 && x.t2 !== x.t1 ? `₹${px(x.t1)} / ₹${px(x.t2)}` : `₹${px(x.t1)}`;
+  openTicket(x.key, x.side, {sl: String(x.sl), target: String(x.t1),
+    note: `Screener: ${x.side === 'BUY' ? 'buy above' : 'sell below'} ₹${px(x.entry)} · SL ₹${px(x.sl)} · exit ${t}. Stop-loss and target 1 are filled in.`});
+};
+setInterval(() => { if (!document.hidden && S.tab === 'screener') loadScreener(); }, 20000);
+
 async function loadQuick() {
   if (!qkUlsLoaded) {
     try { const r = await api('/api/underlyings'); $('#qkUls').innerHTML = (r.list || []).map(u => `<option value="${esc(u)}">`).join(''); qkUlsLoaded = true; } catch (e) { /* later */ }
