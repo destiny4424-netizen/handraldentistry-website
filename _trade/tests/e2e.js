@@ -372,21 +372,18 @@ function check(ok, what) {
     await shot('19-rules-nolevel');
     await page.click('.sh-close');
   }
-  // the daily plan and the journal
+  // no plan card on the watchlist; the journal is under Account
   await page.click('#tabs button[data-tab="watch"]');
-  await page.waitForSelector('#planToggle');
-  await page.click('#planToggle');
-  await page.waitForFunction(() => document.querySelector('#planCard').textContent.includes('Trades left'));
-  check(true, 'plan card shows the day');
-  await shot('20-plan');
-  await page.evaluate(() => openJournal());
+  check(!(await page.$('#planCard')), "no Today's plan card on the watchlist");
+  await page.click('#tabs button[data-tab="account"]');
+  await page.click('#accJournal');
   await page.waitForSelector('#jSave');
   await page.click('#jFollow button[data-v="partly"]');
   await page.fill('#jFix', 'No trades before 9:30');
   await shot('21-journal');
   await page.click('#jSave');
-  await page.waitForFunction(() => document.querySelector('#planCard').textContent.includes('journal streak'));
-  check(true, 'journal saved; streak shows');
+  await page.waitForSelector('.toast.ok');
+  check((await page.textContent('.toast.ok')).includes('Journal saved'), 'journal saved from Account');
   await apiPost('/api/rules/settings', {on: false});
 
   // auto-trader: the edge check runs, the bot starts on paper, and hands-off blocks a manual buy
