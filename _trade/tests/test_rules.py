@@ -69,6 +69,7 @@ class Checks(unittest.TestCase):
         trade.RULES = self.r
         trade.BOT = None
         self.r.place_fn = trade.place
+        self.r.s["settings"]["on"] = True                        # the engine itself, switched on by hand
         trade.RECENT.clear()
         trade.SETTINGS["limits"] = {}
         self.key = next(k for k, i in trade.INST.by_key.items() if i["sym"] == "INFY" and i["seg"] == "NSE_EQ")
@@ -154,6 +155,24 @@ class Checks(unittest.TestCase):
         self.r.candles15 = lambda k: []
         self.r.tick()
         self.assertEqual(a["status"], "invalid")
+
+    def test_switched_off_in_the_app(self):
+        """Rules mode is gone from the app: once switched off, an opening order with no level and no stop goes
+        straight through, nothing is held for a reaction, and the settings call can't switch it back on."""
+        self.order(qty=20, super={"sl": self.level["price"] - 10}, confirm=True)
+        a = self.r.s["armed"][0]
+        self.r.switch_off()
+        self.assertEqual(a["status"], "cancelled")
+        trade.RECENT.clear()
+        code, r = self.order(level="", qty=500)
+        self.assertEqual(code, 200, r)
+        self.assertNotIn("armed", r)
+        self.clock.t = datetime(2026, 11, 18, 16, 0, tzinfo=IST)
+        b = {"on": True}
+        b.pop("on", None)                                        # what /api/rules/settings does
+        self.r.update_settings(b)
+        self.assertFalse(self.r.cfg()["on"])
+        self.assertFalse(rules.DEFAULTS["on"])
 
     def test_locked_in_market_hours(self):
         self.assertIn("can't be changed", self.r.update_settings({"on": False}))

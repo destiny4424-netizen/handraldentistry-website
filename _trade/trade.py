@@ -33,7 +33,7 @@ from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "25 Nov 2026 · new candle H logo"
+VERSION = "25 Nov 2026 · Rules mode removed, Limit / Market only, stop-loss optional"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -486,7 +486,7 @@ def place(b, internal=False, level=None):
     if BOT and BOT.hands_off() and opening:
         return 400, {"error": "Hands off: the auto-trader is on, so by hand you can only close positions. "
                               "Pause the bot (or turn Hands off off after the market closes) to trade yourself."}
-    if RULES and opening:
+    if RULES and opening and RULES.cfg()["on"]:          # Rules mode is switched off for good (owner's choice)
         probs, info = RULES.check(b, o, it, lim.get("max_trades_day"), internal=internal)
         if probs:
             return 400, {"error": " ".join(probs), "problems": probs, "rules": info}
@@ -653,7 +653,7 @@ def preview(b):
             out["opening"] = opening
             if lim and pnl <= -lim and opening:
                 out["problems"].append("You're past today's loss limit: only closing orders are allowed.")
-            if RULES and opening:
+            if RULES and opening and RULES.cfg()["on"]:
                 probs, info = RULES.check(b, o, it, limits().get("max_trades_day"))
                 out["problems"] += probs
                 info.pop("levels", None)
@@ -1398,6 +1398,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/rules/"):
             act = path[len("/api/rules/"):]
             if act == "settings":
+                b.pop("on", None)                          # Rules mode can't be switched back on from the app
                 err = RULES.update_settings(b)
             elif act == "cancel":
                 err = "" if RULES.cancel(str(b.get("id"))) else "That order is no longer waiting."
@@ -1495,6 +1496,7 @@ def main():
     global RULES
     RULES = Rules(str(DATA), D, INST, QUOTES, now, audit, demo=DEMO)
     RULES.place_fn = place
+    RULES.switch_off()
     global PUSH, ALERTS
     PUSH = Push(str(DATA), lambda: SETTINGS, save_settings,
                 os.environ.get("MT_PUBLIC_URL") or "https://localhost")

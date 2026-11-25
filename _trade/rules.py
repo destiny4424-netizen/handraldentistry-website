@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from swing import pivots, zones                          # the scanner's daily-chart tools
 
 IST = timezone(timedelta(hours=5, minutes=30))
-DEFAULTS = {"on": True, "risk_pct": 1.0, "capital": 150000, "near_atr": 0.3, "confirm_default": True}
+DEFAULTS = {"on": False, "risk_pct": 1.0, "capital": 150000, "near_atr": 0.3, "confirm_default": True}
 
 
 def atr(d, n=14):
@@ -321,6 +321,15 @@ class Rules:
             self.save()
         self.audit("rules_armed", sym=it["sym"], level=a["level"], side=a["side"], qty=a["qty"])
         return a
+
+    def switch_off(self):
+        """Rules mode is gone from the app: turn it off and drop any order still waiting for a reaction."""
+        with self.lock:
+            self.s["settings"]["on"] = False
+            for a in self.s["armed"]:
+                if a["status"] == "waiting":
+                    a["status"] = "cancelled"
+            self.save()
 
     def cancel(self, cid):
         with self.lock:

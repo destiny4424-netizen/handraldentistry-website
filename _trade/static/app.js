@@ -525,7 +525,6 @@ async function openTicket(key, side, preset = {}) {
     superOn: false, target: '', sl: '', trail: '', validity: 'DAY', amo: false, slice: false, exit: !!preset.exit, priceTouched: !!preset.price};
   renderTicket();
   pollQuotes();
-  if (!preset.exit) loadTicketRules(S.ticket);
 }
 async function loadTicketRules(t) {
   let lv;
@@ -557,13 +556,12 @@ function rulesBox(t) {
 function renderTicket() {
   const t = S.ticket, it = t.it;
   const products = t.eq ? [['INTRADAY', 'Intraday'], ['CNC', 'Delivery'], ['MTF', 'MTF']] : [['INTRADAY', 'Intraday'], ['MARGIN', 'Carry (NRML)']];
-  const types = t.rules ? [['LIMIT', 'Limit'], ['MARKET', 'Market']] : [['LIMIT', 'Limit'], ['MARKET', 'Market'], ['STOP_LOSS', 'SL'], ['STOP_LOSS_MARKET', 'SL-M']];
+  const types = [['LIMIT', 'Limit'], ['MARKET', 'Market']];
   openSheet(`<div class="ticket">
     <div class="sh-head"><div><h2>${esc(shortName(it))} ${kindTag(it)}</h2>
       <div class="muted small"><span id="tkLtp">${px(S.quotes[t.key]?.ltp)}</span> · ${esc(it.name)}</div></div>
       <button class="sh-close" aria-label="Close">✕</button></div>
     ${t.exit ? '<div class="okbox">Closing your position. Check the quantity and price, then review.</div>' : ''}
-    ${t.rules ? rulesBox(t) : ''}
     <div class="side"><button data-side="BUY" class="buy ${t.side === 'BUY' ? 'on' : ''}">BUY</button><button data-side="SELL" class="sell ${t.side === 'SELL' ? 'on' : ''}">SELL</button></div>
     <div class="seg" id="tkProd">${products.map(([v, l]) => `<button data-v="${v}" class="${t.product === v ? 'on' : ''}">${l}</button>`).join('')}</div>
     <div class="seg" id="tkType">${types.map(([v, l]) => `<button data-v="${v}" class="${t.type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
@@ -575,10 +573,9 @@ function renderTicket() {
         <div class="hint">Tick ₹${it.tick}</div></div>
       <div class="field" id="fTrig"><label>Trigger price</label><input id="tkTrig" inputmode="decimal" value="${t.trigger}"></div>
     </div>
-    <label class="toggle ${t.rules ? 'hidden' : ''}"><input type="checkbox" id="tkSuper" ${t.superOn ? 'checked' : ''}> Add target &amp; stop-loss (Super order)</label>
-    <div id="superBox" class="fields ${t.superOn ? '' : 'hidden'}">
-      <div class="field"><label>Stop-loss price${t.rules ? ' <b class="down">required</b>' : ''}</label><input id="tkSl" inputmode="decimal" value="${t.sl}"></div>
-      <div class="field"><label>Target price${t.rules ? ' (optional)' : ''}</label><input id="tkTgt" inputmode="decimal" value="${t.target}"></div>
+    <div id="superBox" class="fields ${t.exit ? 'hidden' : ''}">
+      <div class="field"><label>Stop-loss price (optional)</label><input id="tkSl" inputmode="decimal" value="${t.sl}" placeholder="none"></div>
+      <div class="field"><label>Target price (optional)</label><input id="tkTgt" inputmode="decimal" value="${t.target}" placeholder="none"></div>
       <div class="field"><label>Trailing jump (₹, optional)</label><input id="tkTrail" inputmode="decimal" value="${t.trail}"></div>
     </div>
     <details class="box"><summary class="muted">More options</summary>
@@ -594,11 +591,10 @@ function renderTicket() {
   const body = $('#sheetBody');
   body.querySelector('.side').onclick = e => { const b = e.target.closest('button'); if (!b) return; readTicket(); t.side = b.dataset.side; renderTicket(); };
   $('#tkProd').onclick = e => { const b = e.target.closest('button'); if (!b) return; readTicket(); t.product = b.dataset.v; renderTicket(); };
-  $('#tkType').onclick = e => { const b = e.target.closest('button'); if (!b) return; readTicket(); t.type = b.dataset.v; if (t.type !== 'LIMIT' && t.type !== 'MARKET') t.superOn = false; renderTicket(); };
+  $('#tkType').onclick = e => { const b = e.target.closest('button'); if (!b) return; readTicket(); t.type = b.dataset.v; renderTicket(); };
   body.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { readTicket(); t.lotsTouched = true; t.lots = Math.max(1, (parseInt(t.lots) || 1) + +b.dataset.step); $('#tkLots').value = t.lots; syncTicketFields(); });
   if ($('#tkLevels')) $('#tkLevels').onclick = e => { const b = e.target.closest('button[data-lv]'); if (!b || b.disabled) return; readTicket(); t.level = b.dataset.lv; renderTicket(); };
   if ($('#tkConfirm')) $('#tkConfirm').onchange = () => { t.confirm = $('#tkConfirm').checked; };
-  $('#tkSuper').onchange = () => { readTicket(); t.superOn = $('#tkSuper').checked; if (t.superOn && !['LIMIT', 'MARKET'].includes(t.type)) t.type = 'LIMIT'; renderTicket(); };
   ['tkLots', 'tkPrice', 'tkTrig', 'tkTgt', 'tkSl'].forEach(id => { const el = $('#' + id); if (el) el.oninput = () => { if (id === 'tkPrice') t.priceTouched = true; if (id === 'tkLots') t.lotsTouched = true; readTicket(); syncTicketFields(); }; });
   $('#tkRevPref').onchange = () => { setPref('review', $('#tkRevPref').checked); readTicket(); renderTicket(); };
   $('#tkReview').onclick = () => (pref('review', false) ? reviewOrder() : sendNow());
@@ -669,8 +665,8 @@ function ticketBody(extra = {}) {
   const t = S.ticket;
   return Object.assign({key: t.key, side: t.side, qty: (parseInt(t.lots) || 0) * t.lot, product: t.product, type: t.type,
     price: parseFloat(t.price) || 0, trigger: parseFloat(t.trigger) || 0, validity: t.validity, amo: t.amo, slice: t.slice,
-    super: t.superOn ? {target: parseFloat(t.target) || 0, sl: parseFloat(t.sl) || 0, trail: parseFloat(t.trail) || 0} : null,
-    level: t.rules ? t.level : undefined, confirm: !!(t.rules && t.confirm)}, extra);
+    super: !t.exit && (parseFloat(t.sl) || parseFloat(t.target)) ? {target: parseFloat(t.target) || 0, sl: parseFloat(t.sl) || 0, trail: parseFloat(t.trail) || 0} : null,
+  }, extra);
 }
 async function reviewOrder() {
   readTicket();
@@ -699,7 +695,7 @@ function showConfirm(r) {
       <div class="kv"><span>Price</span><b>${priceTxt}</b></div>
       <div class="kv"><span>Order</span><b>${typeName} · ${prodName}${t.validity === 'IOC' ? ' · IOC' : ''}${t.amo ? ' · AMO' : ''}</b></div>
       <div class="kv"><span>Order value</span><b>${inr(r.value)}</b></div>
-      ${t.superOn ? `<div class="kv"><span>Target / Stop-loss</span><b>${t.target ? '₹' + px(t.target) : '–'} / ${t.sl ? '₹' + px(t.sl) : '–'}${t.trail ? ' · trail ₹' + t.trail : ''}</b></div>` : ''}
+      ${!t.exit && (parseFloat(t.sl) || parseFloat(t.target)) ? `<div class="kv"><span>Target / Stop-loss</span><b>${t.target ? '₹' + px(t.target) : '–'} / ${t.sl ? '₹' + px(t.sl) : '–'}${t.trail ? ' · trail ₹' + t.trail : ''}</b></div>` : ''}
       ${r.risk !== undefined ? `<div class="kv"><span>Money at risk to stop</span><b class="down">${inr(r.risk)}</b></div>` : ''}
       ${r.reward !== undefined ? `<div class="kv"><span>Profit at target</span><b class="up">${inr(r.reward)}${r.risk ? ` · ${(r.reward / r.risk).toFixed(1)}R` : ''}</b></div>` : ''}
     </div>
@@ -1219,8 +1215,6 @@ async function loadAccount() {
     <div class="box"><div class="kv"><span>Dhan kill switch</span><b class="${kill ? 'down' : 'up'}">${kill ? 'ON: trading stopped for today' : 'Off'}</b></div>
       <div class="muted small">Stops ALL trading on your Dhan account for the rest of the day (Dhan's own kill switch). Close positions first.</div>
       <button class="ghost ${kill ? '' : 'danger'}" id="killBtn" style="margin-top:8px">${kill ? 'Turn kill switch off' : 'Stop trading for today'}</button></div>
-    <div class="section-title">Rules mode (your manual trades)</div>
-    <div class="box">${rulesSettings()}</div>
     <div class="section-title">Dhan login</div>
     <div class="box">
       <div class="kv"><span>Status</span><b>${s.connected ? `Connected · ${esc(s.client)}` : 'Not connected'}</b></div>
@@ -1238,7 +1232,6 @@ async function loadAccount() {
     <div class="box"><div class="kv"><span>Version</span><span>${esc(s.version)}</span></div>
       <div class="kv"><span>Instruments</span><span>${(s.instruments || 0).toLocaleString('en-IN')}</span></div>
       <div class="ord-actions"><button id="themeBtn">Light / dark</button><button id="logout" class="danger">Sign out</button></div></div>`;
-  bindRulesSettings();
   renderPush();
   const setPin = async () => {
     const p1 = prompt('New PIN (4–8 digits)'); if (!p1) return;
