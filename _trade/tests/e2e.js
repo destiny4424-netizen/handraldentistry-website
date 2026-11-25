@@ -266,6 +266,8 @@ function check(ok, what) {
   await page.click('#lmSave');
   await page.waitForSelector('.toast.ok');
   await shot('12-account');
+  check((await page.$$eval('#tabs button', bs => bs.map(b => b.dataset.tab).join(','))) === 'watch,quick,positions,orders,screener,account',
+    'menu: Watchlist, Quick, Positions, Orders, Screener, Account');
   check(!(await page.$('#tabs button[data-tab="insights"]')) && !(await page.$('#tabs button[data-tab="auto"]'))
     && (await page.$$('#tabs button')).length === 6, 'menu: Insights and Auto are not on the bottom menu (6 tabs)');
   await page.click('.acc-links [data-go="insights"]');
