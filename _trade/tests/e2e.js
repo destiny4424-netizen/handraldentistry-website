@@ -63,6 +63,11 @@ function check(ok, what) {
   await page.waitForSelector('#miniChain .mini-chain tbody tr', {timeout: 15000});
   const miniRows = (await page.$$('#miniChain .mini-chain tbody tr')).length;
   check(miniRows === 5 && !!(await page.$('#miniChain tr.atm')), `instrument: option chain under the chart, ATM ±2 (${miniRows} strikes)`);
+  const polled = await page.evaluate(() => { const k = visibleKeys(); return (S.mini.shown || []).length === 10 && S.mini.shown.every(x => k.includes(x)); });
+  check(polled, 'instrument: the 10 shown options ride the 1-second price feed');
+  await page.waitForFunction(() => [...document.querySelectorAll('#miniChain [data-mq]')].some(el => {
+    const q = S.quotes[el.dataset.mq]; return q && q._rt && el.textContent === '₹' + px(q.ltp); }), null, {timeout: 15000})
+    .then(() => check(true, 'instrument: option prices shown from the live feed'), () => check(false, 'instrument: option prices shown from the live feed'));
   await shot('3-instrument');
   await page.click('#miniChain tr.atm [data-obuy]');
   await page.waitForSelector('#tkReview');

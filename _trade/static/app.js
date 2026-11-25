@@ -232,6 +232,7 @@ function visibleKeys() {
   if (S.tab === 'watch') (S.wl[S.wlIdx]?.keys || []).forEach(k => keys.add(k));
   if (S.tab === 'positions' || S.tab === 'account') S.posKeys.forEach(k => keys.add(k));
   if (S.sheetKey) keys.add(S.sheetKey);
+  if (S.sheetKey && S.mini?.key === S.sheetKey) (S.mini.shown || []).forEach(k => keys.add(k));   // option chain prices, live
   if (S.ticket?.key) keys.add(S.ticket.key);
   if (S.tab === 'quick' && S.qk?.key) keys.add(S.qk.key);
   return [...keys];
@@ -252,7 +253,7 @@ async function pollQuotes() {
     }
     for (const [k, q] of Object.entries(r.quotes || {})) {
       const old = S.quotes[k];
-      if (q) { q._dir = old && old.ltp !== q.ltp ? (q.ltp > old.ltp ? 'up' : 'down') : ''; S.quotes[k] = q; }
+      if (q) { q._dir = old && old.ltp !== q.ltp ? (q.ltp > old.ltp ? 'up' : 'down') : ''; q._rt = Date.now(); S.quotes[k] = q; }
     }
     if (need.length && S.tab === 'watch') renderWl();
     updateQuotes();
@@ -275,6 +276,24 @@ function updateQuotes() {
   if (S.sheetKey) updateSheetQuote();
   if (S.ticket) updateTicketQuote();
   if (S.tab === 'positions') updateLiveBoxes();
+  if (S.mini) updateMiniChain();
+}
+// The option chain's prices from the live feed (every second), between the slower chain refreshes.
+function liveOpt(k) {
+  const q = S.quotes[k];
+  return q && q.ltp && q._rt && Date.now() - q._rt < 10000 ? q : null;
+}
+function updateMiniChain() {
+  $$('[data-mq]').forEach(el => {
+    const q = liveOpt(el.dataset.mq); if (!q) return;
+    const t = '₹' + px(q.ltp);
+    if (el.textContent !== t) {
+      el.textContent = t;
+      if (q._dir) { el.classList.remove('flash-up', 'flash-down'); void el.offsetWidth; el.classList.add('flash-' + q._dir); }
+    }
+    const c = el.nextElementSibling;
+    if (c && q.prev) { c.textContent = signed(q.pct, v => Number(v).toFixed(1)) + '%'; c.className = 'sm ' + cls(q.pct); }
+  });
 }
 
 // ---- watchlists ----------------------------------------------------------------------------------
@@ -452,10 +471,12 @@ async function loadMiniChain(key) {
   const atm = spot ? r.rows.reduce((a, x) => (a === null || Math.abs(x.strike - spot) < Math.abs(a - spot) ? x.strike : a), null) : null;
   const i = atm === null ? Math.floor(r.rows.length / 2) : r.rows.findIndex(x => x.strike === atm);
   const rows = S.miniAll ? r.rows : r.rows.slice(Math.max(0, i - 2), i + 3);
+  m.shown = rows.flatMap(x => [x.CE?.key, x.PE?.key]).filter(Boolean);
+  rows.forEach(x => ['CE', 'PE'].forEach(t => { const o = x[t], q = o && o.key && liveOpt(o.key); if (q) { o.ltp = q.ltp; if (q.prev) o.prev = q.prev; } }));
   const chg = o => o && o.ltp && o.prev ? (o.ltp - o.prev) / o.prev * 100 : null;
   const side = (o, kind) => o && o.key ? `<td class="mc-b"><button class="mbuy" data-obuy="${esc(o.key)}">Buy</button></td>
-      <td class="mc-p ${kind}"><b>₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>` : `<td class="mc-b"></td><td class="mc-p"></td>`;
-  const putSide = o => o && o.key ? `<td class="mc-p pe"><b>₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>
+      <td class="mc-p ${kind}"><b data-mq="${esc(o.key)}">₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>` : `<td class="mc-b"></td><td class="mc-p"></td>`;
+  const putSide = o => o && o.key ? `<td class="mc-p pe"><b data-mq="${esc(o.key)}">₹${px(o.ltp)}</b><div class="sm ${cls(chg(o))}">${chg(o) === null ? '' : signed(chg(o), v => v.toFixed(1)) + '%'}</div></td>
       <td class="mc-b"><button class="mbuy" data-obuy="${esc(o.key)}">Buy</button></td>` : `<td class="mc-p"></td><td class="mc-b"></td>`;
   const exps = (r.expiries || []).slice(0, 3);
   const sb = $('#sheetBody'), keep = sb ? sb.scrollTop : 0;
