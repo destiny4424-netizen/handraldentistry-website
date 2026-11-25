@@ -857,7 +857,7 @@ function trailHtml(p) {
   return `<div class="trail ${bad ? 'bad' : ''}">
     <div class="trail-top"><span class="small muted">${st ? `Stop-loss${st.kind === 'super' ? ' (super order)' : ''}` : '<b class="down">No stop-loss</b>'}</span>
       <button class="step" data-tstep="${esc(p._key)}" title="Step">step ₹${t.step}</button></div>
-    <div class="tv"><b>₹${px(t.value)}</b> <span class="small ${loss > 0 ? 'down' : 'up'}">${bad ? 'would fill at once' :
+    <div class="tv"><label class="tin-w">₹<input class="tin" data-tin="${esc(p._key)}" type="text" inputmode="decimal" enterkeyhint="done" value="${Number(t.value).toFixed(2)}" aria-label="Stop-loss price"></label> <span class="small ${loss > 0 ? 'down' : 'up'}">${bad ? 'would fill at once' :
         (loss > 0 ? `₹${Math.round(loss).toLocaleString('en-IN')} at risk` : `locks ₹${Math.round(-loss).toLocaleString('en-IN')} profit`) + (away !== null ? ` · ${away.toFixed(1)}% away` : '')}</span></div>
     <div class="trail-row"><button class="tb" data-tm="${esc(p._key)}" aria-label="Lower the stop">−</button>
       <button class="tb" data-tp="${esc(p._key)}" aria-label="Raise the stop">+</button>
@@ -927,6 +927,7 @@ async function loadPositions() {
 }
 function renderPositions() {
   const r = S.posResp; if (!r) return;
+  if (document.activeElement && document.activeElement.matches('.tin')) return;   // don't wipe a price being typed
   S.positions = r.positions;
   S.posKeys = r.positions.filter(p => +p.netQty).map(p => p._key);
   const open = r.positions.filter(p => +p.netQty), closed = r.positions.filter(p => !+p.netQty);
@@ -952,6 +953,25 @@ function renderPositions() {
   $('#positions').innerHTML = r.positions.length ? [...open, ...closed].map(row).join('') : '<div class="item muted">No positions today.</div>';
   $('#exitAll').classList.toggle('hidden', !open.length);
 }
+// Typing the stop price: applied when the keyboard closes (Done / Enter / tapping away).
+function trailTyped(inp) {
+  const k = inp.dataset.tin;
+  const p = (S.positions || []).find(x => x._key === k); if (!p) return;
+  const {t, st, tick, net, ltp} = trailState(p);
+  const v = roundTo(parseFloat(String(inp.value).replace(/[₹,\s]/g, '')), tick);
+  if (!(v > 0)) { toast('Enter a price, e.g. 5.20', 'bad'); renderPositions(); return; }
+  if (Math.abs(v - t.value) < 1e-9) { renderPositions(); return; }
+  if (ltp && (net > 0 ? v >= ltp : v <= ltp)) {
+    toast(`The stop must be ${net > 0 ? 'below' : 'above'} the price (₹${px(ltp)}), or it would ${net > 0 ? 'sell' : 'buy'} at once.`, 'bad', 6000);
+    renderPositions(); return;
+  }
+  t.value = v; t.touched = true; t.status = '';
+  if (st) { clearTimeout(t.timer); t.timer = null; sendTrail(k); }
+  renderPositions();
+}
+$('#positions').addEventListener('change', e => { if (e.target.matches('.tin')) { e.target.blur(); trailTyped(e.target); } });
+$('#positions').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('.tin')) e.target.blur(); });
+$('#positions').addEventListener('focusin', e => { if (e.target.matches('.tin')) setTimeout(() => e.target.select(), 0); });
 $('#positions').onclick = async e => {
   if (await trailClick(e)) return;
   const x = e.target.closest('[data-exit],[data-add]');

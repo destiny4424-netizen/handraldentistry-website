@@ -151,7 +151,7 @@ function check(ok, what) {
   });
   const moves = () => page.evaluate(async () => (await api('/api/audit')).log.filter(x => x.event === 'stop_moved').length);
   check(!(await page.$('.trail [data-tgo]')), 'trail: no "Move stop" button once a stop exists');
-  const before = await page.$eval('.trail .tv b', b => parseFloat(b.textContent.replace(/[₹,]/g, '')));
+  const before = await page.$eval('.trail .tin', b => parseFloat(b.value));
   const m0 = await moves();
   await page.click('.trail [data-tp]');
   await page.waitForFunction(() => (document.querySelector('.trail-status') || {}).textContent?.includes('at Dhan ₹'), null, {timeout: 10000});
@@ -163,11 +163,24 @@ function check(ok, what) {
   await page.click('.trail [data-tp]');
   await page.click('.trail [data-tp]');
   await page.waitForFunction(v => (document.querySelector('.trail-status') || {}).textContent?.includes('at Dhan') &&
-    parseFloat(document.querySelector('.trail .tv b').textContent.replace(/[₹,]/g, '')) > v, one, {timeout: 10000});
+    parseFloat(document.querySelector('.trail .tin').value) > v, one, {timeout: 10000});
   await page.waitForTimeout(500);
   const three = await stopAtDhan(), m2 = await moves();
   check(m1 - m0 === 1 && m2 - m1 === 1, `trail: three quick taps sent as one change (${m1 - m0}, ${m2 - m1} changes)`);
   check(three > one, `trail: stop now at ₹${three}`);
+  // type the stop price by hand
+  const typed = Math.round((three - 1) * 20) / 20;
+  await page.fill('.trail .tin', String(typed));
+  await page.press('.trail .tin', 'Enter');
+  await page.waitForFunction(v => (document.querySelector('.trail-status') || {}).textContent?.includes('at Dhan ₹') &&
+    Math.abs(parseFloat(document.querySelector('.trail .tin').value) - v) < 0.01, typed, {timeout: 10000});
+  await page.waitForTimeout(500);
+  check(Math.abs((await stopAtDhan()) - typed) < 0.01, `trail: typed stop ₹${typed} moved at Dhan`);
+  const ltpNow = await page.evaluate(() => { const p = S.positions.find(x => +x.netQty); return +(S.quotes[p._key]?.ltp || p._ltp); });
+  await page.fill('.trail .tin', String(Math.ceil(ltpNow + 5)));
+  await page.press('.trail .tin', 'Enter');
+  const refused = await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('must be below the price')), null, {timeout: 5000}).then(() => true, () => false);
+  check(refused, 'trail: a typed stop above the price is refused');
   await page.evaluate(async () => {
     const r = await api('/api/orders');
     for (const o of r.orders.filter(o => o.orderType === 'STOP_LOSS_MARKET' && ['PENDING', 'TRANSIT', 'TRIGGERED'].includes(o.orderStatus)))
@@ -387,6 +400,34 @@ function check(ok, what) {
   check(jSaved, 'journal saved from Account');
   await apiPost('/api/rules/settings', {on: false});
 
+  // Quick tab: 1-OTM option, limit buy, stop-loss once it fills
+  await apiPost('/api/rules/settings', {on: false});
+  await page.click('#tabs button[data-tab="quick"]');
+  await page.fill('#qkUl', 'RELIANCE');
+  await page.click('#qkUp');
+  await page.waitForSelector('#qkGo', {timeout: 15000});
+  const qName = await page.textContent('.qkp h3');
+  check(/CE|CALL/.test(qName), 'Quick: Up picks a call (' + qName.trim() + ')');
+  check(/\d/.test(await page.textContent('#qkUsed')) && /\d/.test(await page.textContent('#qkRem')), 'Quick: shows amount used and remaining');
+  const lot = await page.evaluate(() => S.qk.lot);
+  await page.click('#qkPlus');
+  check((await page.textContent('#qkQty')).includes((2 * lot).toLocaleString('en-IN')), 'Quick: + adds a lot');
+  await page.click('#qkMinus');
+  await page.click('#qkPct button[data-pct="20"]');
+  const pr = await page.evaluate(() => S.qk.price);
+  check(Math.abs(parseFloat(await page.inputValue('#qkStop')) - pr * 0.8) < 0.11, 'Quick: −20% sets the stop');
+  await page.fill('#qkPrice', String(Math.round(pr * 1.5 * 10) / 10));     // above the market: the pretend Dhan fills it
+  await shot('14-quick');
+  await page.click('#qkGo');
+  await page.waitForFunction(() => /Stop-loss in/.test(document.querySelector('#qkList').textContent), null, {timeout: 20000});
+  check(true, 'Quick: buy filled and the stop-loss went in by itself');
+  check((await page.textContent('#qkList')).includes('stop-loss placed'), 'Quick: the list says where the stop is');
+  await shot('15-quick-done');
+  await page.fill('#qkUl', 'RELIANCE');
+  await page.click('#qkDown');
+  await page.waitForFunction(() => /PE|PUT/.test(document.querySelector('.qkp h3')?.textContent || ''), null, {timeout: 15000});
+  check(true, 'Quick: Down picks a put');
+
   // auto-trader: the edge check runs, the bot starts on paper, and hands-off blocks a manual buy
   await page.click('#tabs button[data-tab="auto"]');
   await page.waitForSelector('#auto .pnl-card');
@@ -470,34 +511,6 @@ function check(ok, what) {
   await page.waitForSelector('#pinOff');
   await page.click('#pinOff');
   await page.waitForSelector('#pinOn');
-
-  // Quick tab: 1-OTM option, limit buy, stop-loss once it fills
-  await apiPost('/api/rules/settings', {on: false});
-  await page.click('#tabs button[data-tab="quick"]');
-  await page.fill('#qkUl', 'RELIANCE');
-  await page.click('#qkUp');
-  await page.waitForSelector('#qkGo', {timeout: 15000});
-  const qName = await page.textContent('.qkp h3');
-  check(/CE|CALL/.test(qName), 'Quick: Up picks a call (' + qName.trim() + ')');
-  check(/\d/.test(await page.textContent('#qkUsed')) && /\d/.test(await page.textContent('#qkRem')), 'Quick: shows amount used and remaining');
-  const lot = await page.evaluate(() => S.qk.lot);
-  await page.click('#qkPlus');
-  check((await page.textContent('#qkQty')).includes((2 * lot).toLocaleString('en-IN')), 'Quick: + adds a lot');
-  await page.click('#qkMinus');
-  await page.click('#qkPct button[data-pct="20"]');
-  const pr = await page.evaluate(() => S.qk.price);
-  check(Math.abs(parseFloat(await page.inputValue('#qkStop')) - pr * 0.8) < 0.11, 'Quick: −20% sets the stop');
-  await page.fill('#qkPrice', String(Math.round(pr * 1.5 * 10) / 10));     // above the market: the pretend Dhan fills it
-  await shot('14-quick');
-  await page.click('#qkGo');
-  await page.waitForFunction(() => /Stop-loss in/.test(document.querySelector('#qkList').textContent), null, {timeout: 20000});
-  check(true, 'Quick: buy filled and the stop-loss went in by itself');
-  check((await page.textContent('#qkList')).includes('stop-loss placed'), 'Quick: the list says where the stop is');
-  await shot('15-quick-done');
-  await page.fill('#qkUl', 'RELIANCE');
-  await page.click('#qkDown');
-  await page.waitForFunction(() => /PE|PUT/.test(document.querySelector('.qkp h3')?.textContent || ''), null, {timeout: 15000});
-  check(true, 'Quick: Down picks a put');
 
   // desktop layout
   const desk = await browser.newPage({viewport: {width: 1280, height: 800}});
