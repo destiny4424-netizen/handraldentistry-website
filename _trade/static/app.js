@@ -642,9 +642,12 @@ function syncTicketFields() {
       const mult = t.it.mult || 1;
       const maxLots = Math.floor(Math.floor(maxRisk / (Math.abs(entry - sl) * mult)) / t.lot);
       t.maxLots = maxLots;
-      if (!t.lotsTouched || (parseInt(t.lots) || 0) > maxLots) { t.lots = Math.max(0, maxLots); $('#tkLots').value = t.lots; }
-      const risk = (parseInt(t.lots) || 0) * t.lot * Math.abs(entry - sl) * mult;
-      $('#tkRisk').innerHTML = maxLots < 1 ? `<span class="down">Even ${t.lot > 1 ? '1 lot' : '1 share'} risks more than ₹${Math.round(maxRisk).toLocaleString('en-IN')} with this stop. Use a closer stop or skip.</span>` :
+      // Fill in the size from the stop until you type your own; never overwrite what you typed (the server checks it).
+      if (!t.lotsTouched) { t.lots = Math.max(1, maxLots); $('#tkLots').value = t.lots; }
+      const lots = parseInt(t.lots) || 0, risk = lots * t.lot * Math.abs(entry - sl) * mult;
+      const closest = roundTo(entry - Math.sign(entry - sl) * maxRisk / (t.lot * mult), t.it.tick || 0.05);
+      $('#tkRisk').innerHTML = maxLots < 1 ? `<span class="down">Even ${t.lot > 1 ? '1 lot' : '1 share'} risks ${inr(t.lot * Math.abs(entry - sl) * mult)}, more than ₹${Math.round(maxRisk).toLocaleString('en-IN')} with this stop. A stop at ₹${px(closest)} or closer fits, or skip.</span>` :
+        lots > maxLots ? `<span class="down">risk <b>${inr(risk)}</b> is above your ₹${Math.round(maxRisk).toLocaleString('en-IN')}: at most ${maxLots} lot${maxLots > 1 ? 's' : ''} (${(maxLots * t.lot).toLocaleString('en-IN')}) with this stop</span>` :
         `risk <b>${inr(risk)}</b> of ₹${Math.round(maxRisk).toLocaleString('en-IN')} allowed · at most ${(maxLots * t.lot).toLocaleString('en-IN')} ${t.lot > 1 ? 'units' : 'shares'}`;
     } else {
       $('#tkRisk').textContent = `set your stop-loss below; the size is worked out from it (max ₹${Math.round(maxRisk).toLocaleString('en-IN')} at risk)`;
