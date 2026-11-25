@@ -18,6 +18,8 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - expiries, spot, PCR and lot size
   - OI and change in OI, IV and delta, LTP with % change
   - ITM strikes are shaded and the ATM strike is marked. Tap a price to trade it.
+  - The option prices shown come from the live price feed (every 1–2 seconds), so they move like the watchlist;
+    Dhan's option chain (1 request every 3 seconds) still gives the strikes, spot and ATM, every 5 seconds
 - **Order ticket:**
   - Buy or sell, as Limit or Market
   - Intraday, Delivery (CNC), MTF, or Carry forward (NRML) for F&O
