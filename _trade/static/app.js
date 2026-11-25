@@ -288,8 +288,8 @@ function showView() {
 function renderWlTabs() {
   const el = $('#wlTabs');
   const onWl = S.view === 'wl';
-  el.innerHTML = S.wl.map((w, i) => `<button data-i="${i}" class="${onWl && i === S.wlIdx ? 'on' : ''}">${esc(w.name)}</button>`).join('') +
-    (S.editWl ? '<button data-new="1">+ New list</button>' : '') + '<span class="chip-sep"></span>' +
+  S.wlIdx = 0;                                         // one list of stocks; the index cards above show the indices
+  el.innerHTML = (onWl ? '' : '<button data-i="0">← My stocks</button><span class="chip-sep"></span>') +
     MK_LISTS.map(([k, l]) => `<button data-mk="${k}" class="mkchip ${S.view === k ? 'on' : ''}">${l}</button>`).join('');
   showView();
   $('#wlFilter').classList.toggle('on', S.wlGood);
@@ -300,16 +300,7 @@ function renderWlTabs() {
       S.view = S.mk = b.dataset.mk; setView(S.view);
       renderWlTabs(); renderMarket(); loadMarket(); return;
     }
-    if (b.dataset.new) {
-      const n = prompt('Name of the new watchlist'); if (!n) return;
-      S.wl.push({name: n.slice(0, 30), keys: []}); S.wlIdx = S.wl.length - 1; saveWl();
-    } else if (S.editWl && +b.dataset.i === S.wlIdx) {
-      const n = prompt('Rename this list (empty to delete it)', S.wl[S.wlIdx].name);
-      if (n === null) return;
-      if (!n.trim()) { if (S.wl.length > 1 && confirm('Delete this watchlist?')) { S.wl.splice(S.wlIdx, 1); S.wlIdx = 0; } }
-      else S.wl[S.wlIdx].name = n.slice(0, 30);
-      saveWl();
-    } else { S.wlIdx = +b.dataset.i; }
+    S.wlIdx = 0;
     S.view = 'wl'; setView('wl');
     renderWlTabs(); renderWl(); pollQuotes();
   };

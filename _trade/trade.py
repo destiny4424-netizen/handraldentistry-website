@@ -33,7 +33,7 @@ from movers import Movers                               # noqa: E402
 import quick                                            # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "25 Nov 2026 · Today's plan card off the watchlist (journal under Account)"
+VERSION = "25 Nov 2026 · One stock watchlist (no Indices / My stocks buttons) · Today's plan card off the watchlist (journal under Account)"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -52,7 +52,17 @@ LOCK = threading.RLock()
 
 DEFAULT_LIMITS = {"max_order_value": 1000000, "daily_loss_limit": 0, "max_trades_day": 5,
                   "lots_warn": 10}
-DEFAULT_WATCH = [{"name": "Indices", "keys": []}, {"name": "My stocks", "keys": []}]
+DEFAULT_WATCH = [{"name": "My stocks", "keys": []}]
+
+
+def one_list(wl):
+    """One watchlist of stocks: every saved list merged, without indices (the index cards above show them)."""
+    keys = []
+    for w in wl or []:
+        for k in w.get("keys") or []:
+            if isinstance(k, str) and not k.startswith("IDX_I:") and k not in keys:
+                keys.append(k)
+    return [{"name": "My stocks", "keys": keys[:100]}]
 
 
 def now():
@@ -999,13 +1009,12 @@ def status():
             "ip": PUBLIC_IP, "limits": limits(), "instruments": len(INST.by_key), "inst_error": INST.error,
             "sync": STATUS["sync"], "sync_at": STATUS["sync_at"], "feed_error": STATUS["feed_error"],
             "fills": STORE.count()[0], "time": now().strftime("%H:%M:%S"),
-            "watchlists": SETTINGS.get("watchlists") or default_watch()}
+            "watchlists": one_list(SETTINGS.get("watchlists") or default_watch())}
 
 
 def default_watch():
     wl = [dict(w) for w in DEFAULT_WATCH]
-    wl[0]["keys"] = [INST.under[u] for u in ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "INDIAVIX") if u in INST.under]
-    wl[1]["keys"] = [INST.under[u] for u in ("RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "SBIN", "TCS") if u in INST.under]
+    wl[0]["keys"] = [INST.under[u] for u in ("RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "SBIN", "TCS") if u in INST.under]
     return wl
 
 
@@ -1327,7 +1336,7 @@ class Handler(BaseHTTPRequestHandler):
             clean = [{"name": str(w.get("name") or "List")[:30], "keys": [k for k in (w.get("keys") or [])
                                                                           if isinstance(k, str) and k in INST.by_key][:100]}
                      for w in wl]
-            save_settings(watchlists=clean)
+            save_settings(watchlists=one_list(clean))
             return self.send(200, {"ok": True})
         if path == "/api/pin/unlock":
             return self.pin_unlock(b)
