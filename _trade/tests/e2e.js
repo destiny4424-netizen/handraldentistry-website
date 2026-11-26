@@ -511,6 +511,18 @@ function check(ok, what) {
       && (await page.textContent('.sc-note')).includes('Screener'), 'screener: tapping a pick opens the ticket with its stop-loss and target');
     await page.click('.sh-close');
   }
+  // a scanner that stopped scanning: the reason, and Scan now
+  await page.evaluate(() => { Object.assign(S.sc, {overdue: true, scan_age_min: 73, status: 'error', message: 'DH-901: access token invalid',
+    problems: [{name: 'Dhan connection', level: 'bad', text: 'Token expired. Paste a new one in Settings.'}]}); renderScreener(); });
+  check((await page.textContent('.sc-warn')).includes('access token invalid') && (await page.textContent('.sc-warn')).includes('Dhan connection'),
+    "screener: a failing scanner shows its reason");
+  await shot('31-screener-problem');
+  await page.click('#scScanNow');
+  const scanAsked = await page.waitForFunction(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Scan started')),
+    null, {timeout: 10000}).then(() => true, () => false);
+  check(scanAsked, 'screener: Scan now reaches the scanner');
+  await page.evaluate(() => loadScreener());
+
   // Check a stock: the scanner's rules on any stock, right away
   await page.fill('#scSym', 'sbin');
   await page.click('#scGo');

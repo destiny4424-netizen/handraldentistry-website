@@ -36,7 +36,7 @@ import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · Screener: check any stock for entry, stop-loss and target"
+VERSION = "26 Nov 2026 · Screener shows the scanner's problems, with Scan now"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -1547,6 +1547,14 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self.send(400, {"error": err})
             return self.send(200, {"ok": True, "cfg": RULES.cfg()})
+        if path == "/api/screener/scan":
+            try:
+                SCANNER._get("/api/state")                 # signs in if needed
+                SCANNER._req("/api/scan", {})
+                SCANNER.state_at = 0
+                return self.send(200, {"ok": True})
+            except Exception as e:
+                return self.send(502, {"error": f"The scanner didn't take the request: {e}"})
         if path == "/api/screener/backtest":
             try:
                 SCANNER._get("/api/state")                 # signs in if needed

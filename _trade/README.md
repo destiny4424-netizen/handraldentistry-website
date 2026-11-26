@@ -50,6 +50,9 @@ same droplet), compactly:
 - **Swing:** today's swing setups (from 11:00; final list at 3 PM) and the swing trades still running.
 - **Performance & backtest:** this month's live results next to the scanner's latest backtest (trades, win rate,
   average and total R, profit factor, max drawdown). **Run backtest** starts a new one on the scanner.
+- **When the scanner stops scanning:** if its last scan failed, it's still scanning, or (in market hours) it hasn't
+  scanned for 25 minutes, a box at the top shows the scanner's own message and the problems from its health report
+  (Dhan token, last scan, stocks that couldn't be fetched), with **Scan now**. Picks from an earlier day are labelled.
 - **Check a stock:** type any NSE stock at the top and press **Check**. It runs the scanner's own rules
   (`_scanner/intraday.py`, `_scanner/swing.py`) on that stock right away, with the desk's Dhan connection:
   - **Intraday:** if a key level broke today, the scanner's entry, stop-loss and targets, and which of its 5 checks

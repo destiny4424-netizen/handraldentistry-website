@@ -378,3 +378,4 @@ table.mini-chain { width: 100%; border-collapse: collapse; font-variant-numeric:
   color: var(--text); font-size: 16px; font-weight: 600; outline: none; }
 .sc-look input:focus { border-color: var(--buy); }
 .lk-plan .sc-lv { flex-wrap: wrap; white-space: normal; overflow: visible; }
+.sc-warn { margin: 0 0 8px; font-size: 13px; } .sc-warn div { margin-top: 3px; }
