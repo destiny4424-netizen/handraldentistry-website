@@ -209,3 +209,122 @@ class Instruments:
 
 def public(it):
     return {k: v for k, v in it.items() if not k.startswith("_")}
+
+
+# ---- Zerodha (Kite Connect) -------------------------------------------------------------------------------------
+KITE_MASTER_URL = "https://api.kite.trade/instruments"
+KITE_SEG = {"NSE": "NSE_EQ", "BSE": "BSE_EQ", "NFO": "NSE_FNO", "BFO": "BSE_FNO", "CDS": "NSE_CURRENCY",
+            "BCD": "BSE_CURRENCY", "MCX": "MCX_COMM"}
+KITE_INDEX_UL = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50", "SENSEX", "BANKEX", "SENSEX50"}
+EQ_SUFFIX = ("BE", "BZ", "SM", "ST")
+MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+
+class KiteInstruments(Instruments):
+    """The same lists from Zerodha's instrument file (api.kite.trade/instruments). The "security id" is Kite's
+    instrument_token, so keys look like Dhan's ("NSE_EQ:738561") and the rest of the app doesn't notice. Each
+    instrument also keeps Kite's own exchange and trading symbol ("kx", "ts") for orders and quotes."""
+
+    def __init__(self, cache_dir, url=KITE_MASTER_URL):
+        super().__init__(cache_dir, url)
+        self.cache = os.path.join(cache_dir, "kite-instruments.csv")
+        self.tok = {}                                  # token -> key
+        self.by_ts = {}                                # (kite exchange, tradingsymbol) -> key
+
+    def _parse(self):
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        by_key, items, opts, futs, under, eq_nse, tok, by_ts = {}, [], {}, {}, {}, {}, {}, {}
+        with open(self.cache, encoding="utf-8", errors="replace", newline="") as f:
+            for row in csv.DictReader(f):
+                token = (row.get("instrument_token") or "").strip()
+                ts = (row.get("tradingsymbol") or "").strip()
+                kx = (row.get("exchange") or "").strip()
+                segc = (row.get("segment") or "").strip()
+                itype = (row.get("instrument_type") or "").strip()
+                name = (row.get("name") or "").strip().strip('"')
+                if not (token and ts and kx):
+                    continue
+                expiry = (row.get("expiry") or "")[:10]
+                opt = itype if itype in ("CE", "PE") else ""
+                if segc == "INDICES":
+                    seg, kind = "IDX_I", "INDEX"
+                elif kx in ("NSE", "BSE") and itype == "EQ":
+                    base, _, suf = ts.partition("-")
+                    if suf and suf not in EQ_SUFFIX:
+                        continue                       # bonds, SGBs, rights and other non-equity series
+                    seg, kind = KITE_SEG[kx], "EQUITY"
+                elif kx in ("NFO", "BFO", "MCX", "CDS", "BCD") and itype in ("FUT", "CE", "PE"):
+                    seg = KITE_SEG[kx]
+                    fut = itype == "FUT"
+                    if kx in ("NFO", "BFO"):
+                        idx = name in KITE_INDEX_UL
+                        kind = ("FUTIDX" if idx else "FUTSTK") if fut else ("OPTIDX" if idx else "OPTSTK")
+                    elif kx == "MCX":
+                        kind = "FUTCOM" if fut else "OPTFUT"
+                    else:
+                        kind = "FUTCUR" if fut else "OPTCUR"
+                    if not expiry or expiry < today:
+                        continue
+                else:
+                    continue
+                try:
+                    lot = int(float(row.get("lot_size") or 1)) or 1
+                except ValueError:
+                    lot = 1
+                try:
+                    strike = float(row.get("strike") or 0)
+                except ValueError:
+                    strike = 0.0
+                try:
+                    tick = float(row.get("tick_size") or 0.05) or 0.05
+                except ValueError:
+                    tick = 0.05
+                if kind == "INDEX":
+                    up = ts.upper()
+                    sym = INDEX_ALIASES.get(up, up.replace(" ", "") if up.replace(" ", "") in POPULAR_INDICES else ts)
+                    ul, disp, co = sym, ts, ts
+                elif kind == "EQUITY":
+                    sym, ul, co = ts, ts, name
+                    disp = name.title() if name else ts
+                else:
+                    ul, sym, co = name, ts, name
+                    try:
+                        e = datetime.strptime(expiry, "%Y-%m-%d")
+                        when = f"{e.day:02d} {MON[e.month - 1]}"
+                    except ValueError:
+                        when = expiry
+                    if opt:
+                        st = int(strike) if strike == int(strike) else strike
+                        disp = f"{ul} {when} {st} {'CALL' if opt == 'CE' else 'PUT'}"
+                    else:
+                        disp = f"{ul} {when} FUT"
+                key = f"{seg}:{token}"
+                mult = contract = None
+                if seg == "MCX_COMM":                  # quantity in lots, as on Dhan (see mcx.py)
+                    lot, mult, contract = 1, mcx.multiplier(ul), mcx.describe(ul)
+                exch = "BSE" if kx in ("BSE", "BFO", "BCD") else "MCX" if kx == "MCX" else "NSE"
+                it = {"mult": mult, "contract": contract, "key": key, "seg": seg, "id": token, "kind": kind, "sym": sym,
+                      "exch": exch, "name": disp, "co": co, "lot": lot, "tick": tick,
+                      "expiry": expiry if kind in DERIV else "", "strike": strike if opt else 0, "opt": opt, "ul": ul,
+                      "ts": ts, "kx": kx}
+                by_key[key] = it
+                tok[token] = key
+                by_ts[(kx, ts)] = key
+                if kind in ("OPTIDX", "OPTSTK", "OPTFUT", "OPTCUR"):
+                    opts.setdefault(ul, {}).setdefault(expiry, {})[(strike, opt)] = key
+                elif kind in ("FUTIDX", "FUTSTK", "FUTCOM", "FUTCUR"):
+                    futs.setdefault(ul, []).append((expiry, key))
+                elif kind == "INDEX":
+                    under.setdefault(sym, key)
+                elif kind == "EQUITY" and exch == "NSE":
+                    eq_nse[sym] = key
+                items.append(it)
+        for s, k in eq_nse.items():
+            under.setdefault(s, k)
+        for it in items:
+            it["_s"] = " ".join((it["sym"], it["name"], it["co"])).lower()
+            it["_r"] = KIND_RANK.get(it["kind"], 9)
+        for v in futs.values():
+            v.sort()
+        self.by_key, self.items, self.opts, self.futs, self.under, self.tok, self.by_ts = \
+            by_key, items, opts, futs, under, tok, by_ts

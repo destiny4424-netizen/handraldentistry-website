@@ -18,6 +18,7 @@ main() {
   STATE=/var/lib/meridian-trade
   BRANCH=$(cat /etc/meridian-trade/branch 2>/dev/null || echo main)
   PORT=3050                         # clinic 3030, Handral Books 3020, scanner 3040
+  ZPORT=3051                        # the Zerodha copy of the desk (install-zerodha.sh), if installed
   SITE=/etc/caddy/meridian-trade.caddy
 
   if [ "${1:-}" = "--install" ]; then
@@ -54,12 +55,30 @@ log() { echo "$*"; }
 # /healthz answers exactly "ok" (the clinic server answers JSON), so another
 # program on the port never counts as Meridian Trade being up.
 healthy() {
-  local i
+  local i port=${1:-$PORT}
   for i in $(seq 1 20); do
-    [ "$(curl -fsS -m 3 "http://127.0.0.1:$PORT/healthz" 2>/dev/null)" = "ok" ] && return 0
+    [ "$(curl -fsS -m 3 "http://127.0.0.1:$port/healthz" 2>/dev/null)" = "ok" ] && return 0
     sleep 1
   done
   return 1
+}
+
+# The Zerodha desk (handral-zerodha) runs the same code; it is looked after only if it was installed.
+zerodha_on() { systemctl is-enabled --quiet handral-zerodha.service 2>/dev/null; }
+
+restart_all() {
+  systemctl restart meridian-trade.service
+  zerodha_on && systemctl restart handral-zerodha.service
+  return 0
+}
+
+healthy_all() {
+  healthy "$PORT" || return 1
+  if zerodha_on && ! healthy "$ZPORT"; then
+    log "The Zerodha desk did not answer on port $ZPORT."
+    return 1
+  fi
+  return 0
 }
 
 # The web address must point at this app's port.
@@ -139,8 +158,8 @@ update_code() {
   log "Updating Meridian Trade ${old:0:7} -> ${new:0:7}"
   git -C "$REPO" reset --quiet --hard "$new"
   sync_files
-  systemctl restart meridian-trade.service
-  if healthy; then
+  restart_all
+  if healthy_all; then
     log "Update to ${new:0:7} is running."
     rm -f "$STATE/.bad-version"
     return
@@ -150,11 +169,16 @@ update_code() {
   echo "$new" > "$STATE/.bad-version"
   git -C "$REPO" reset --quiet --hard "$old"
   sync_files
-  systemctl restart meridian-trade.service
-  healthy && log "Rolled back; ${old:0:7} is running again."
+  restart_all
+  healthy_all && log "Rolled back; ${old:0:7} is running again."
 }
 
 watchdog() {
+  if zerodha_on && ! { systemctl is-active --quiet handral-zerodha.service && healthy "$ZPORT"; }; then
+    log "Zerodha desk not answering on port $ZPORT; restarting it."
+    systemctl restart handral-zerodha.service
+    healthy "$ZPORT" || log "Still not answering. See: journalctl -u handral-zerodha -n 50"
+  fi
   if systemctl is-active --quiet meridian-trade.service && healthy; then
     return
   fi

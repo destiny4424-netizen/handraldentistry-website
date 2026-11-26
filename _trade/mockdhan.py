@@ -391,6 +391,7 @@ def err(code, typ, msg):
 
 
 M = None
+LOCAL = threading.local()                               # mockkite asks dispatch() about its own market through this
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -454,7 +455,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(code, out)
 
     def dispatch(self, method, path, b, qs):
-        m = M
+        m = getattr(LOCAL, "m", None) or M
         if path == "/orders" and method == "POST" or path == "/orders/slicing" and method == "POST":
             bad = check_order(b)
             if bad:

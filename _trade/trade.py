@@ -23,6 +23,8 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import dhan as dhanlib                                  # noqa: E402
+import kite as kitelib                                  # noqa: E402
+import kitestream                                       # noqa: E402
 import insights                                         # noqa: E402
 from autotrader import AutoTrader                       # noqa: E402
 from rules import Rules                                 # noqa: E402
@@ -34,9 +36,9 @@ import quick                                            # noqa: E402
 import stream                                           # noqa: E402
 import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
-from instruments import Instruments, MASTER_URL, public  # noqa: E402
+from instruments import Instruments, KiteInstruments, MASTER_URL, KITE_MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · stocks you trade join your watchlist by themselves"
+VERSION = "26 Nov 2026 · the desk can also run on a Zerodha account"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -50,6 +52,14 @@ MASTER = os.environ.get("MT_MASTER_URL", MASTER_URL)
 FEED_URL = os.environ.get("MT_DHAN_FEED", "wss://api-feed.dhan.co")       # Dhan's live market feed (WebSocket)
 STREAM_ON = os.environ.get("MT_STREAM", "1") != "0"
 SCANNER_URL = os.environ.get("MT_SCANNER_URL", "http://127.0.0.1:3040")    # the Meridian scanner on this droplet
+# Which broker this copy of the desk trades on: "dhan" (the owner's) or "zerodha" (Kite Connect; a second copy of the
+# desk, e.g. for a family member's account, with its own data folder, port and password). See kite.py.
+BROKER = "zerodha" if os.environ.get("MT_BROKER", "dhan").strip().lower() in ("zerodha", "kite") else "dhan"
+KITE = BROKER == "zerodha"
+BROKER_NAME = "Zerodha" if KITE else "Dhan"
+KITE_API = os.environ.get("MT_KITE_API", "https://api.kite.trade")
+KITE_FEED = os.environ.get("MT_KITE_FEED", "wss://ws.kite.trade")
+PUBLIC_URL = os.environ.get("MT_PUBLIC_URL", "").rstrip("/")
 
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
@@ -98,14 +108,34 @@ SETTINGS = load_settings()
 if not SETTINGS.get("session_key"):
     save_settings(session_key=secrets.token_hex(32))
 
-D = dhanlib.Dhan(base=API_BASE)
-INST = Instruments(str(DATA), MASTER)
+if KITE:
+    INST = KiteInstruments(str(DATA), os.environ.get("MT_MASTER_URL", KITE_MASTER_URL))
+    D = kitelib.Kite(base=KITE_API, inst=INST, data_dir=str(DATA))
+else:
+    INST = Instruments(str(DATA), MASTER)
+    D = dhanlib.Dhan(base=API_BASE)
 STORE = insights.Store(str(DATA / "trades.db"))
 STATUS = {"token_source": "", "token_note": "", "sync": "", "sync_at": None, "feed_error": ""}
 
 
 # ---- Dhan login ------------------------------------------------------------------------------
+def kite_keys():
+    """Kite Connect app's API key and secret: saved in Account, or MT_KITE_API_KEY / MT_KITE_API_SECRET."""
+    return (SETTINGS.get("kite_api_key") or os.environ.get("MT_KITE_API_KEY", "")).strip(), \
+           (SETTINGS.get("kite_api_secret") or os.environ.get("MT_KITE_API_SECRET", "")).strip()
+
+
 def pick_token():
+    if KITE:
+        D.api_key, D.api_secret = kite_keys()
+        exp = kitelib.token_expiry(SETTINGS.get("kite_at"))
+        if SETTINGS.get("kite_token") and exp and exp > time.time():
+            D.token, D.client_id = SETTINGS["kite_token"], SETTINGS.get("kite_user") or "zerodha"
+            STATUS["token_source"] = "own"
+        else:
+            D.token = D.client_id = ""
+            STATUS["token_source"] = ""
+        return
     if SETTINGS.get("client_id") and SETTINGS.get("access_token"):
         D.client_id, D.token = SETTINGS["client_id"], SETTINGS["access_token"]
         STATUS["token_source"] = "own"
@@ -124,6 +154,8 @@ def share_token_loop():
     while True:
         try:
             exp = dhanlib.token_expiry(D.token) if D.token else None
+            if KITE:                                   # the scanner runs on Dhan: nothing to hand over
+                return
             if SCANNER and D.ready and not DEMO and SCANNER.password and (exp is None or exp > time.time() + 60):
                 r = SCANNER.share_token(D.client_id, D.token)
                 if r == "handed over":
@@ -139,6 +171,19 @@ def share_token_loop():
 def keep_token():
     """Renew the token when less than 4 hours are left: a token pasted once keeps going."""
     while True:
+        if KITE:
+            try:
+                had = STATUS["token_source"] == "own"
+                if had and not D.token and SETTINGS.get("kite_token"):   # Zerodha refused it: logged out elsewhere
+                    save_settings(kite_token=None)
+                    STATUS["token_note"] = "Zerodha ended the login. Tap Log in with Zerodha."
+                pick_token()
+                if had and STATUS["token_source"] != "own":
+                    STATUS["token_note"] = "The Zerodha login ended (it lasts until 6 AM). Tap Log in with Zerodha."
+            except Exception as e:                     # never let this thread die
+                STATUS["token_note"] = f"Login check failed: {e}"
+            time.sleep(60)
+            continue
         try:
             pick_token()
             if STATUS["token_source"] == "own" and not DEMO:
@@ -453,6 +498,8 @@ def build_order(b):
 
 def get_positions():
     """Dhan's positions, with MCX open P&L corrected (see mcx.py). Used everywhere: screens, loss limit, alerts."""
+    if KITE:                                           # Zerodha's P&L is already in rupees
+        return D.positions()
     return mcx.fix_positions(D.positions(), QUOTES)
 
 
@@ -690,7 +737,9 @@ def place(b, internal=False, level=None):
         audit("order_failed", order=clean, sym=it["sym"], error=str(e), code=e.code)
         RECENT.pop(sig, None)
         msg = str(e)
-        if e.code == "DH-903" or "static" in msg.lower() or " ip" in msg.lower():
+        if KITE and ("static" in msg.lower() or " ip" in msg.lower()):
+            msg += f" Zerodha needs this server's IP ({PUBLIC_IP or 'see Account'}) as the static IP of your Kite Connect app (developers.kite.trade → your app)."
+        elif e.code == "DH-903" or "static" in msg.lower() or " ip" in msg.lower():
             msg += f" If Dhan says the IP isn't allowed, set this server's IP ({PUBLIC_IP or 'see Settings'}) as your static IP on web.dhan.co → DhanHQ Trading APIs."
         return 400, {"error": msg, "code": e.code}
     rows = r if isinstance(r, list) else [r]
@@ -1211,6 +1260,18 @@ def pin_ok(token):
 
 # ---- web server ------------------------------------------------------------------------------
 FAILED = {}
+KITE_STATES = {}                                       # Zerodha login: state -> expiry
+
+
+def brand(x):
+    """The Zerodha copy says Zerodha where the desk says Dhan (messages, pages, the app's own text)."""
+    if isinstance(x, str):
+        return x.replace("Dhan's own app", "Kite").replace("Dhan's app", "Kite").replace("Dhan", "Zerodha") if "Dhan" in x else x
+    if isinstance(x, dict):
+        return {k: brand(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [brand(v) for v in x]
+    return x
 
 
 def session_token():
@@ -1227,8 +1288,14 @@ def mask(cid):
 
 
 def status():
-    exp = dhanlib.token_expiry(D.token) if D.token else None
-    return {"version": VERSION, "demo": DEMO, "connected": D.ready, "client": mask(D.client_id),
+    exp = (kitelib.token_expiry(SETTINGS.get("kite_at")) if KITE else dhanlib.token_expiry(D.token)) if D.token else None
+    kite = {}
+    if KITE:
+        key, secret = kite_keys()
+        kite = {"kite_keys": bool(key and secret), "kite_key": mask(key), "kite_user_name": SETTINGS.get("kite_user_name"),
+                "kite_redirect": (PUBLIC_URL or "https://<this address>") + "/kite/callback",
+                "kite_keys_from_env": bool(os.environ.get("MT_KITE_API_KEY")), "super_note": D.sup_note}
+    return {**kite, "broker": BROKER, "broker_name": BROKER_NAME, "version": VERSION, "demo": DEMO, "connected": D.ready, "client": mask(D.client_id),
             "token_source": STATUS["token_source"], "token_note": STATUS["token_note"],
             "token_expires": datetime.fromtimestamp(exp, IST).strftime("%d %b %H:%M") if exp else None,
             "ip": PUBLIC_IP, "limits": limits(), "instruments": len(INST.by_key), "inst_error": INST.error,
@@ -1256,6 +1323,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- plumbing
     def send(self, code, obj, ctype="application/json", extra=None):
+        if KITE and not isinstance(obj, bytes):
+            obj = brand(obj)
         data = obj if isinstance(obj, bytes) else (obj.encode() if isinstance(obj, str) else json.dumps(obj, default=str).encode())
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -1296,6 +1365,9 @@ class Handler(BaseHTTPRequestHandler):
         p = (HERE / "static" / name).resolve()
         if not str(p).startswith(str((HERE / "static").resolve())) or not p.is_file():
             return self.send(404, "Not found", "text/plain")
+        if KITE and p.suffix in (".html", ".js") and p.name != "sw.js":
+            return self.send(200, brand(p.read_text()).encode(), "text/html; charset=utf-8" if p.suffix == ".html"
+                             else "application/javascript; charset=utf-8")
         ctype = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
                  ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
                  ".webmanifest": "application/manifest+json"}.get(p.suffix, "application/octet-stream")
@@ -1321,6 +1393,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.static("icon.png")
         if path == "/sw.js":                             # the service worker must come from the site's root
             return self.static("sw.js")
+        if path == "/kite/callback" and KITE:            # Kite's login sends the browser back here
+            return self.kite_callback(q)
         if not path.startswith("/api/"):
             return self.send(404, "Not found", "text/plain")
         if not self.signed_in():
@@ -1428,6 +1502,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, r)
         if path == "/api/killswitch":
             return self.send(200, D.kill_switch_status())
+        if path == "/api/kite/login":
+            if not KITE:
+                return self.send(404, {"error": "This desk trades on Dhan."})
+            if not (D.api_key and D.api_secret):
+                return self.send(400, {"error": "Save the Kite Connect API key and secret first."})
+            state = secrets.token_urlsafe(24)
+            KITE_STATES[state] = time.time() + 600
+            for k in [k for k, t in KITE_STATES.items() if t < time.time()]:
+                KITE_STATES.pop(k, None)
+            url = (f"/kite/callback?request_token=demo-request&status=success&state={state}" if DEMO
+                   else D.login_url(state))
+            return self.send(200, {"url": url})
         if path == "/api/auto":
             return self.send(200, BOT.view())
         if path == "/api/pin":
@@ -1554,6 +1640,8 @@ class Handler(BaseHTTPRequestHandler):
             r = D.kill_switch(on)
             audit("kill_switch", on=on, reply=r)
             return self.send(200, {"ok": True, "reply": r})
+        if path == "/api/settings/dhan" and KITE:
+            return self.send(404, {"error": "This desk trades on Zerodha."})
         if path == "/api/settings/dhan":
             cid, tok = str(b.get("client_id") or "").strip(), str(b.get("token") or "").strip()
             if not cid or len(tok) < 20:
@@ -1567,6 +1655,21 @@ class Handler(BaseHTTPRequestHandler):
             TOKEN_SHARE["wake"].set()
             pick_token()
             threading.Thread(target=sync, daemon=True).start()
+            return self.send(200, {"ok": True})
+        if path == "/api/settings/kite":
+            if not KITE:
+                return self.send(404, {"error": "This desk trades on Dhan."})
+            key, secret = str(b.get("api_key") or "").strip(), str(b.get("api_secret") or "").strip()
+            if not (key.isalnum() and secret.isalnum() and len(key) >= 6 and len(secret) >= 10):
+                return self.send(400, {"error": "Enter the API key and API secret of your Kite Connect app."})
+            save_settings(kite_api_key=key, kite_api_secret=secret, kite_token=None)
+            pick_token()
+            audit("kite_keys_saved")
+            return self.send(200, {"ok": True})
+        if path == "/api/kite/logout":
+            save_settings(kite_token=None)
+            pick_token()
+            audit("kite_logout")
             return self.send(200, {"ok": True})
         if path == "/api/settings/limits":
             lim = limits()
@@ -1704,6 +1807,36 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         self.mutate("PUT")
 
+    def kite_callback(self, q):
+        """Kite's login page sends the browser here with a one-time request_token. The state (made when the
+        Log in button was tapped, 10 minutes) proves it is our own login. The token is swapped for the day's
+        access token with the app's secret, which never leaves this server."""
+        def page(title, text, ok):
+            back = '<meta http-equiv="refresh" content="2;url=/">' if ok else ""
+            html = (f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,'
+                    f'initial-scale=1">{back}<title>{title}</title><style>body{{font:16px system-ui;background:#0f1115;'
+                    f'color:#e8e8e8;padding:40px 20px;text-align:center}}a{{color:#6cf}}</style></head><body><h2>{title}</h2>'
+                    f'<p>{text}</p><p><a href="/">Open the trading desk</a></p></body></html>')
+            return self.send(200 if ok else 400, html.encode(), "text/html; charset=utf-8")
+        state = q.get("state", "")
+        if not state or KITE_STATES.pop(state, 0) < time.time():
+            return page("Login not accepted", "This login link is old or wasn't started from the desk. Open the desk "
+                        "and tap Log in with Zerodha again.", False)
+        if q.get("status") != "success" or not q.get("request_token"):
+            return page("Zerodha login cancelled", "Nothing changed.", False)
+        try:
+            sess = D.exchange(q["request_token"])
+        except dhanlib.DhanError as e:
+            audit("kite_login_failed", error=str(e))
+            return page("Zerodha login failed", str(e).replace("<", "&lt;"), False)
+        save_settings(kite_token=sess["access_token"], kite_user=sess.get("user_id") or "",
+                      kite_user_name=sess.get("user_name") or sess.get("user_shortname") or "", kite_at=time.time())
+        STATUS["token_note"] = ""
+        pick_token()
+        audit("kite_login", user=sess.get("user_id"))
+        threading.Thread(target=sync, daemon=True).start()
+        return page("Zerodha connected ✓", "Going back to the desk…", True)
+
     def pin_unlock(self, b):
         ip, t = "pin:" + self.client_ip(), time.time()
         n, until = FAILED.get(ip, (0, 0))
@@ -1747,7 +1880,17 @@ def main():
     if DEMO and not os.environ.get("MT_SCANNER_URL"):
         scan_url, scan_pw = start_demo_scanner()
     SCANNER = screener.Scanner(scan_url, scan_pw, key_of=stock_key)
-    if DEMO:
+    if DEMO and KITE:
+        import mockkite
+        mockkite.serve(3095)
+        mockkite.serve_feed(3094)
+        D.base = "http://127.0.0.1:3095"
+        INST.url = "http://127.0.0.1:3095/instruments"
+        if not SETTINGS.get("kite_api_key"):
+            save_settings(kite_api_key=mockkite.API_KEY, kite_api_secret=mockkite.API_SECRET)
+        if not SETTINGS.get("kite_token") and os.environ.get("MT_DEMO_LOGGED_OUT") != "1":
+            save_settings(kite_token=mockkite.TOKEN, kite_user=mockkite.USER, kite_user_name="Demo Zerodha", kite_at=time.time())
+    elif DEMO:
         import mockdhan
         mockdhan.serve(3099)
         mockdhan.serve_feed(3098)
@@ -1776,13 +1919,20 @@ def main():
     global MOVERS
     MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"), QUOTES)
     threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()
-    STREAM = stream.Stream(FEED_URL, lambda: (D.client_id, D.token) if D.ready else None, on_stream, enabled=STREAM_ON)
+    if KITE:
+        STREAM = kitestream.KiteStream("ws://127.0.0.1:3094/" if DEMO else KITE_FEED,
+                                       lambda: (D.api_key, D.token) if D.ready else None, on_stream,
+                                       key_of=lambda tok: INST.tok.get(tok), enabled=STREAM_ON)
+        threading.Thread(target=D.super_loop, args=(QUOTES,), daemon=True).start()
+    else:
+        STREAM = stream.Stream(FEED_URL, lambda: (D.client_id, D.token) if D.ready else None, on_stream, enabled=STREAM_ON)
     threading.Thread(target=STREAM.run, daemon=True).start()
     for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop, share_token_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True
-    print(f"Handral Trading Desk {VERSION} on http://{HOST}:{PORT}" + ("  (DEMO: pretend Dhan account)" if DEMO else ""))
+    print(f"Handral Trading Desk ({BROKER_NAME}) {VERSION} on http://{HOST}:{PORT}" +
+          (f"  (DEMO: pretend {BROKER_NAME} account)" if DEMO else ""))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

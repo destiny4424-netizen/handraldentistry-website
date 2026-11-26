@@ -187,12 +187,14 @@ async function loadStatus() {
       else S.reloadPending = true;
     }
     $('#demo').classList.toggle('hidden', !s.demo);
+    $('#brokerTag').classList.toggle('hidden', s.broker !== 'zerodha');
     $('#conn').className = 'dot ' + (s.connected && !s.feed_error ? 'ok' : s.connected ? 'warn' : 'bad');
     $('#conn').title = s.connected ? `Dhan ${s.client}` + (s.feed_error ? ' · ' + s.feed_error : '') : 'Dhan not connected';
     const b = $('#banner');
     let msg = '';
-    if (!s.connected) msg = 'Dhan isn\'t connected yet. Open Account → Dhan login and paste your Client ID and access token.';
-    else if (s.token_note && /expired|failed/i.test(s.token_note)) msg = s.token_note;
+    if (!s.connected) msg = s.broker === 'zerodha' ? 'Not logged in to Zerodha. Open Account → Zerodha login and tap Log in with Zerodha (once each morning).'
+      : 'Dhan isn\'t connected yet. Open Account → Dhan login and paste your Client ID and access token.';
+    else if (s.token_note && /expired|failed|ended/i.test(s.token_note)) msg = s.token_note;
     else if (s.feed_error) msg = s.feed_error;
     else if (s.inst_error) msg = s.inst_error;
     b.textContent = msg;
@@ -1194,6 +1196,41 @@ async function renderPush() {
       toast('Saved', 'ok'); } catch (e) { toast(e.message, 'bad'); }
   };
 }
+// Zerodha copy of the desk: Kite Connect keys once, then "Log in with Zerodha" each morning (the login ends at 6 AM).
+function kiteBox(s) {
+  return `<div class="section-title">Zerodha login</div>
+    <div class="box">
+      <div class="kv"><span>Status</span><b class="${s.connected ? 'up' : 'down'}">${s.connected ? `Connected · ${esc(s.kite_user_name || '')} ${esc(s.client)}` : 'Not logged in'}</b></div>
+      ${s.token_expires ? `<div class="kv"><span>Login valid until</span><b>${esc(s.token_expires)}</b></div>` : ''}
+      ${s.token_note ? `<div class="muted small">${esc(s.token_note)}</div>` : ''}
+      ${s.connected ? `<div class="kv" id="feedMode"><span>Prices</span><b class="${s.feed_mode === 'stream' ? 'up' : ''}">${s.feed_mode === 'stream' ? '● Live stream from Zerodha' : 'Asked every second'}</b></div>
+      ${s.feed_note ? `<div class="muted small">${esc(s.feed_note)}</div>` : ''}` : ''}
+      ${s.super_note ? `<div class="muted small">${esc(s.super_note)}</div>` : ''}
+      ${s.kite_keys ? `<div class="ord-actions" style="margin-top:10px"><button id="kiteLogin" class="${s.connected ? 'ghost' : ''}">${s.connected ? 'Log in again' : 'Log in with Zerodha'}</button>
+        ${s.connected ? '<button id="kiteOut" class="ghost danger">Log out</button>' : ''}</div>
+        <div class="muted small" style="margin-top:6px">Opens Zerodha's own login page (your Zerodha password and TOTP go to Zerodha, not to this app). Zerodha ends every login at 6 AM, so log in once each trading morning.</div>` : ''}
+      <details style="margin-top:10px" ${s.kite_keys ? '' : 'open'}><summary class="small">Kite Connect app ${s.kite_keys ? `· key ${esc(s.kite_key)}` : '(needed once)'}</summary>
+        <div class="formrow" style="margin-top:8px"><div class="field"><label>API key</label><input id="kiKey" autocomplete="off"></div>
+        <div class="field"><label>API secret</label><input id="kiSecret" type="password" autocomplete="off"></div></div>
+        <button class="ghost" id="kiSave" style="margin-top:10px">Save</button>
+        <div class="muted small" style="margin-top:10px">Make an app on <b>developers.kite.trade</b> (Kite Connect; Zerodha charges for it) with
+          Redirect URL <code>${esc(s.kite_redirect || '')}</code>${s.ip ? ` and static IP <code>${esc(s.ip)}</code> (Zerodha needs it for orders)` : ''}, then copy its API key and secret here.</div>
+      </details>
+    </div>`;
+}
+function wireKite(s) {
+  if ($('#kiteLogin')) $('#kiteLogin').onclick = async () => {
+    try { const r = await api('/api/kite/login'); location.href = r.url; } catch (e) { toast(e.message, 'bad', 8000); }
+  };
+  if ($('#kiteOut')) $('#kiteOut').onclick = async () => {
+    if (!confirm('Log this desk out of Zerodha?')) return;
+    try { await api('/api/kite/logout', {}); await loadStatus(); loadAccount(); } catch (e) { toast(e.message, 'bad'); }
+  };
+  $('#kiSave').onclick = async () => {
+    try { await api('/api/settings/kite', {api_key: $('#kiKey').value, api_secret: $('#kiSecret').value}); toast('Saved. Now log in with Zerodha.', 'ok'); await loadStatus(); loadAccount(); }
+    catch (e) { toast(e.message, 'bad', 8000); }
+  };
+}
 async function loadAccount() {
   try { S.rulesCfg = await api('/api/rules'); } catch (e) { S.rulesCfg = {}; }
   const s = S.status || await api('/api/status');
@@ -1243,10 +1280,11 @@ async function loadAccount() {
       </div>
       <button class="ghost" id="lmSave" style="margin-top:10px">Save limits</button>
     </div>
-    <div class="box"><div class="kv"><span>Dhan kill switch</span><b class="${kill ? 'down' : 'up'}">${kill ? 'ON: trading stopped for today' : 'Off'}</b></div>
+    ${s.broker === 'zerodha' ? `<div class="box"><div class="kv"><span>Kill switch</span><b>In Kite</b></div>
+      <div class="muted small">Zerodha's kill switch can't be worked from an app: Kite → Account → Kill switch stops trading in a segment. Close positions first.</div></div>` : `<div class="box"><div class="kv"><span>Dhan kill switch</span><b class="${kill ? 'down' : 'up'}">${kill ? 'ON: trading stopped for today' : 'Off'}</b></div>
       <div class="muted small">Stops ALL trading on your Dhan account for the rest of the day (Dhan's own kill switch). Close positions first.</div>
-      <button class="ghost ${kill ? '' : 'danger'}" id="killBtn" style="margin-top:8px">${kill ? 'Turn kill switch off' : 'Stop trading for today'}</button></div>
-    <div class="section-title">Dhan login</div>
+      <button class="ghost ${kill ? '' : 'danger'}" id="killBtn" style="margin-top:8px">${kill ? 'Turn kill switch off' : 'Stop trading for today'}</button></div>`}
+    ${s.broker === 'zerodha' ? kiteBox(s) : `<div class="section-title">Dhan login</div>
     <div class="box">
       <div class="kv"><span>Status</span><b>${s.connected ? `Connected · ${esc(s.client)}` : 'Not connected'}</b></div>
       ${s.token_expires ? `<div class="kv"><span>Token valid until</span><b>${esc(s.token_expires)}</b></div>` : ''}
@@ -1260,7 +1298,7 @@ async function loadAccount() {
       <div class="field"><label>Access token</label><input id="dhTok" type="password" autocomplete="off" placeholder="from web.dhan.co"></div></div>
       <button class="ghost" id="dhSave" style="margin-top:10px">Save &amp; test</button>
       <div class="muted small" style="margin-top:10px">Get them on web.dhan.co → My Profile → <b>Access DhanHQ APIs</b>. For orders, Dhan needs this server's IP set as your <b>static IP</b> there${s.ip ? `: <code>${esc(s.ip)}</code>` : ''}.</div>
-    </div>
+    </div>`}
     <div class="section-title">Order log (this app)</div>
     <div class="box small" style="max-height:260px;overflow:auto">${(a.log || []).slice(0, 40).map(x => `<div class="kv"><span>${esc(x.at)} ${esc(x.event.replace('_', ' '))}</span><span>${esc(x.sym || x.order_id || '')}${x.error ? ' · ' + esc(x.error).slice(0, 80) : ''}</span></div>`).join('') || '<span class="muted">Nothing yet.</span>'}</div>
     <div class="section-title">App</div>
@@ -1284,11 +1322,12 @@ async function loadAccount() {
     try { const r = await api('/api/settings/limits', {daily_loss_limit: +$('#lmLoss').value || 0, max_order_value: +$('#lmMax').value || 0, lots_warn: +$('#lmLots').value || 0, max_trades_day: +$('#lmTrades').value || 5});
       S.status.limits = r.limits; toast('Limits saved', 'ok'); } catch (e) { toast(e.message, 'bad'); }
   };
-  $('#killBtn').onclick = async () => {
+  if (s.broker === 'zerodha') wireKite(s);
+  if ($('#killBtn')) $('#killBtn').onclick = async () => {
     if (!kill && prompt('Stop all trading on your Dhan account for the rest of today?\nType STOP to confirm.') !== 'STOP') return;
     try { await api('/api/killswitch', {on: !kill, confirm: 'STOP'}); toast(kill ? 'Kill switch off' : 'Trading stopped for today', 'ok'); loadAccount(); } catch (e) { toast(e.message, 'bad'); }
   };
-  $('#dhSave').onclick = async () => {
+  if ($('#dhSave')) $('#dhSave').onclick = async () => {
     try { await api('/api/settings/dhan', {client_id: $('#dhId').value, token: $('#dhTok').value}); toast('Dhan connected', 'ok'); await loadStatus(); loadAccount(); } catch (e) { toast(e.message, 'bad', 8000); }
   };
   $('#logout').onclick = async () => { await api('/api/logout', {}); location.reload(); };
