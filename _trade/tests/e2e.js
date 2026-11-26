@@ -59,6 +59,14 @@ function check(ok, what) {
   await page.waitForTimeout(800);
   await page.waitForSelector('#chart canvas');
   check(true, 'instrument chart drawn (TradingView Lightweight Charts)');
+  await page.waitForSelector('.klb', {timeout: 15000});
+  check(/HTF-KLB · key levels from the previous 1h candle/.test(await page.textContent('.klb')) && /Position/.test(await page.textContent('.klb-tbl')),
+    'chart: HTF Key Level Breakout panel (1h levels on the 5m chart)');
+  await page.click('#klbBtn');
+  await page.waitForFunction(() => !document.querySelector('.klb') && document.querySelector('#chart canvas'));
+  check(true, 'chart: HTF-KLB switches off');
+  await page.click('#klbBtn');
+  await page.waitForSelector('.klb');
   check(!(await page.$('#shTV')) && !(await page.$('#depth')), 'instrument: no TradingView link or market depth');
   await page.waitForSelector('#miniChain .mini-chain tbody tr', {timeout: 15000});
   const miniRows = (await page.$$('#miniChain .mini-chain tbody tr')).length;

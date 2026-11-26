@@ -91,6 +91,20 @@ options shown under its chart). It needs the Dhan Data API subscription.
 - `MT_STREAM=0` switches the stream off; `MT_DHAN_FEED` changes its address.
 
 ## Charts
+- **HTF Key Level Breakout (HTF-KLB):** the owner's own TradingView indicator (Pine Script v6), ported line by line
+  to `static/htfklb.js` and drawn on every chart (the **HTF-KLB** button turns it on and off; on by default):
+  - key levels = the previous **completed** higher-timeframe candle's high / low (no repainting). The higher timeframe
+    follows the script's pairing: 5m chart → 1h, 15m → 4h, 1h → Day (1m → 15m, Day → Week), or pick one in ⚙.
+  - a long when a decisive candle (body > 0.8 × ATR) opens at or under the level + 0.1 × ATR and closes above it
+    (shorts mirrored), once per level; optional retest. Entry at that close, stop 1.5 × ATR, target = the higher
+    timeframe's ATR; refused when the stop is under 1 × ATR or R:R is outside 7–9 (the script's defaults). Trail,
+    max 60 bars, 3-bar cooldown; fees (0.0472% a side) come off the R.
+  - the chart shows the HTF high / low lines, entries ("LONG 1:7.4") and exits ("TP +7.2R", "SL −1.1R"), the open
+    trade's Entry / SL / TP lines, and the script's Position / Entry / SL / TP table with this chart's results.
+    **Trade** opens the ticket with that side, SL and TP filled in. ⚙ has every input of the script.
+  - closed candles only, like the script's alerts. ATR is Wilder's (TradingView's `ta.atr`). The target needs 14+
+    higher-timeframe candles on the chart: the panel says so when there are fewer.
+  - tested on made-up candles in `tests/klb.test.js` (run by `tests/test_klb.py`).
 - **The chart on every instrument** uses TradingView's open-source **Lightweight Charts** v4.2.3 (Apache 2.0; an
   unmodified copy in `static/vendor/` with its licence and NOTICE, the same file the scanner uses). Candles from Dhan
   (1, 5, 15 or 60 minutes, or daily) with volume. Pinch or scroll to zoom, drag to go back in time, crosshair for

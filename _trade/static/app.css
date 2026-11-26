@@ -379,3 +379,15 @@ table.mini-chain { width: 100%; border-collapse: collapse; font-variant-numeric:
 .sc-look input:focus { border-color: var(--buy); }
 .lk-plan .sc-lv { flex-wrap: wrap; white-space: normal; overflow: visible; }
 .sc-warn { margin: 0 0 8px; font-size: 13px; } .sc-warn div { margin-top: 3px; }
+/* HTF Key Level Breakout on the chart */
+.klb-btn { margin-left: auto; font-weight: 700; }
+.klb-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.klb { margin: 6px 0 4px; }
+.klb-tbl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; font-variant-numeric: tabular-nums;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; margin-bottom: 4px; }
+.klb-tbl span { color: var(--muted); } .klb-tbl b { color: var(--text); margin-left: 3px; }
+.klb-tbl b.up { color: var(--up); } .klb-tbl b.down { color: var(--down); }
+.klb-tbl button { margin-left: auto; padding: 3px 10px; } .klb-tbl button + button { margin-left: 0; }
+.klb-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin-top: 6px; }
+.klb-form .toggle, .klb-form .ord-actions { grid-column: 1 / -1; }
+.klb .warn { color: var(--warn); }
