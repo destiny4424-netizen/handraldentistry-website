@@ -1248,6 +1248,8 @@ async function loadAccount() {
       ${s.token_expires ? `<div class="kv"><span>Token valid until</span><b>${esc(s.token_expires)}</b></div>` : ''}
       ${s.connected ? '<div class="muted small">Renewed automatically before it expires, so you paste it only once.</div>' : ''}
       ${s.token_note ? `<div class="muted small">${esc(s.token_note)}</div>` : ''}
+      ${s.connected && !s.demo ? `<div class="kv"><span>Screener</span><b class="${s.token_share_note ? 'down' : 'up'}">${s.token_share_note ? 'Not sharing yet' : '✓ Uses this token'}</b></div>
+      <div class="muted small">${s.token_share_note ? esc(s.token_share_note) : `The Meridian scanner uses this same Dhan token; this app renews it and hands each new one over${s.token_shared_at ? ` (last ${esc(s.token_shared_at)})` : ''}.`}</div>` : ''}
       ${s.connected ? `<div class="kv" id="feedMode"><span>Prices</span><b class="${s.feed_mode === 'stream' ? 'up' : ''}">${s.feed_mode === 'stream' ? '● Live stream from Dhan' : 'Asked every second'}</b></div>
       ${s.feed_note ? `<div class="muted small">${esc(s.feed_note)}</div>` : ''}` : ''}
       <div class="formrow" style="margin-top:10px"><div class="field"><label>Client ID</label><input id="dhId" autocomplete="off"></div>

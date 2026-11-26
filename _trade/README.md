@@ -63,6 +63,10 @@ same droplet), compactly:
 - Tap a pick to open the ticket with its side, stop-loss and target 1 filled in. The price stays at the LTP: the
   entry is a trigger ("buy above"), so check that price has crossed it before sending.
 
+**One Dhan token:** the scanner uses this app's Dhan token. The desk renews it as before and hands each new one
+to the scanner (`POST /api/keys/shared`, checked every 5 minutes and right after a renewal or a new token); the scanner
+then doesn't renew it itself. Account → Dhan login shows "Screener ✓ Uses this token".
+
 How it connects: the desk signs in to the scanner on `127.0.0.1:3040` with the scanner's own password. The desk's
 systemd unit loads `/etc/default/orderblock-scanner`, so the password (`OBS_PASSWORD`) arrives with nothing to copy.
 Picks are re-read every 20 seconds, performance and backtest every 5 minutes (every 20 seconds while a backtest runs).

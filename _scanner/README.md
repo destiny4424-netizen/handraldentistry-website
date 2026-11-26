@@ -90,6 +90,13 @@ there are about 200 stocks.
 - Your keys stay in `.env` on your computer. They are only sent to api.dhan.co. Don't share that
   file or upload it anywhere.
 
+## One Dhan token with the trading desk
+On the droplet, the trading desk (`_trade/`) hands the scanner its own Dhan token: whenever the scanner's differs
+(checked every 5 minutes, and right after the desk renews it or gets a new one), through `POST /api/keys/shared`.
+A token handed over this way is **not renewed by the scanner**: the desk renews it and hands over the new one, so the
+two never renew the same token (which could cancel the other's copy). Settings → Health says "the trading desk's
+token, renewed by the desk". A token pasted in Settings is used until the desk's next check puts its own back.
+
 ## Saved settings
 Your Dhan Client ID, access token and phone PIN are saved in
 `%APPDATA%\OrderBlockScanner\settings.json`, outside the app folder. Deleting the folder or unzipping a new
