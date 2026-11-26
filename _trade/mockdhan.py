@@ -655,9 +655,13 @@ class Handler(BaseHTTPRequestHandler):
             i = m.inst.get((b["exchangeSegment"], str(b["securityId"])))
             if not i:
                 return 400, err("DH-907", "Data_Error", "No data")
-            n = 75
             step = int(b.get("interval") or 5) * 60
             end = int(time.time()) // step * step
+            try:                                       # as far back as asked (Dhan's fromDate), like the real one
+                frm = datetime.strptime(str(b.get("fromDate"))[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST).timestamp()
+                n = max(75, min(2500, int((end - frm) // step)))
+            except (TypeError, ValueError):
+                n = 75
             px = i["px"]
             rng = random.Random(int(i["id"]))
             rows = []

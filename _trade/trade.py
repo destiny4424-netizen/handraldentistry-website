@@ -38,7 +38,7 @@ import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
 from instruments import Instruments, KiteInstruments, MASTER_URL, KITE_MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · the Zerodha desk stands on its own"
+VERSION = "27 Nov 2026 · your HTF Key Level Breakout indicator on the chart"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"

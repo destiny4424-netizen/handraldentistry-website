@@ -438,13 +438,16 @@ async function openInstrument(key) {
     <div><span class="bigprice" id="shLtp">–</span> <span id="shChg" class="chg"></span></div>
     <div class="chips tf" id="tf">${['1', '5', '15', '60', 'D'].map(t => `<button data-tf="${t}" class="${t === '5' ? 'on' : ''}">${t === 'D' ? 'Day' : t + 'm'}</button>`).join('')}</div>
     <div class="chart" id="chart"></div>
+    <div id="klb"></div>
     <div id="miniChain"></div>
     <div class="ord-actions" style="margin-top:12px"><button id="shWl">${inWl(key) ? '✓ In watchlist' : '＋ Watchlist'}</button></div>
     ${tradable ? `<div class="bs"><button class="b-buy" id="shBuy">BUY</button><button class="b-sell" id="shSell">SELL</button></div>` : ''}`);
   updateSheetQuote();
   $('#shWl').onclick = () => { toggleWl(key); $('#shWl').textContent = inWl(key) ? '✓ In watchlist' : '＋ Watchlist'; };
   if (tradable) { $('#shBuy').onclick = () => openTicket(key, 'BUY'); $('#shSell').onclick = () => openTicket(key, 'SELL'); }
-  $('#tf').onclick = e => { const b = e.target.closest('button'); if (!b) return; $$('#tf button').forEach(x => x.classList.toggle('on', x === b)); drawChart(key, b.dataset.tf); };
+  $('#tf').onclick = e => { const b = e.target.closest('button[data-tf]'); if (!b) return; $$('#tf button[data-tf]').forEach(x => x.classList.toggle('on', x === b)); drawChart(key, b.dataset.tf); };
+  $('#tf').insertAdjacentHTML('beforeend', `<button id="klbBtn" class="klb-btn ${S.klbOn ? 'on' : ''}" title="HTF Key Level Breakout">HTF-KLB</button>`);
+  $('#klbBtn').onclick = () => { S.klbOn = !S.klbOn; setPref('klb', S.klbOn); $('#klbBtn').classList.toggle('on', S.klbOn); drawChart(key, S.chartTf || '5'); };
   drawChart(key, '5');
   pollQuotes();
   S.mini = {key, ul, expiry: it.opt ? it.expiry : ''};
@@ -506,6 +509,8 @@ let lwc = null;
 const IST_SHIFT = 19800;                                    // the chart shows times as UTC: shift them to IST
 async function drawChart(key, tf) {
   const box = $('#chart'); if (!box) return;
+  S.chartTf = tf;
+  if ($('#klb')) $('#klb').innerHTML = '';
   if (lwc) { try { lwc.remove(); } catch (e) { /* gone */ } lwc = null; }
   box.innerHTML = '<div class="muted small" style="padding:12px">Loading chart…</div>';
   let r;
@@ -532,6 +537,9 @@ async function drawChart(key, tf) {
   const seen = new Set(), rows = r.rows.filter(x => { const k2 = t(x); if (seen.has(k2)) return false; seen.add(k2); return true; });
   candles.setData(rows.map(x => ({time: t(x), open: x[1], high: x[2], low: x[3], close: x[4]})));
   vol.setData(rows.map(x => ({time: t(x), value: x[5] || 0, color: x[4] >= x[1] ? css('--upbg') : css('--downbg')})));
+  if (S.klbOn && window.HTFKLB) {
+    try { drawKLB(key, tf, rows, t, candles); } catch (e) { if ($('#klb')) $('#klb').innerHTML = `<div class="badbox">HTF-KLB: ${esc(e.message)}</div>`; }
+  }
   lwc.timeScale().setVisibleLogicalRange({from: Math.max(0, rows.length - (tf === 'D' ? 120 : 90)), to: rows.length + 3});
   new ResizeObserver(() => { if (lwc && $('#chart')) lwc.applyOptions({width: $('#chart').clientWidth}); }).observe(box);
   const last = rows[rows.length - 1];
@@ -542,6 +550,72 @@ async function drawChart(key, tf) {
   }
 }
 
+
+// ---- HTF Key Level Breakout (the owner's Pine Script indicator, static/htfklb.js) ----------------------------
+S.klbOn = pref('klb', true);
+const KLB_FIELDS = [['htf', 'Higher timeframe', 'sel'], ['useLong', 'Longs (break of HTF high)', 'bool'], ['useShort', 'Shorts (break of HTF low)', 'bool'],
+  ['bufATR', 'Break buffer (× ATR)'], ['dispMult', 'Breakout body (× ATR)'], ['useRetest', 'Wait for a retest', 'bool'], ['retestBars', 'Bars to wait for retest'],
+  ['stopATR', 'Stop (× ATR)'], ['minStopATR', 'Refuse stops tighter than (× ATR)'], ['tgtATRMult', 'Target = HTF ATR × this'],
+  ['rrMin', 'Only R:R ≥'], ['rrMax', '…and R:R ≤ (0 = no cap)'], ['trailR', 'Trail behind peak (R, 0 = off)'], ['maxHold', 'Max bars in trade'],
+  ['cooldown', 'Cooldown after exit (bars)'], ['feePct', 'Fee per side (% of value)']];
+function klbOpts() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem('mt-klb-opts') || '{}') || {}; } catch (e) { o = {}; }
+  return Object.assign({}, HTFKLB.DEFAULTS, o);
+}
+function drawKLB(key, tf, rows, tfn, candles) {
+  const tfMin = tf === 'D' ? 1440 : +tf, nowS = Date.now() / 1000;
+  const closed = rows.filter(x => x[0] + tfMin * 60 <= nowS);          // like the script's alerts: closed candles only
+  const bars = closed.map(x => ({t: x[0], o: x[1], h: x[2], l: x[3], c: x[4]}));
+  const o = klbOpts(), res = HTFKLB.compute(bars, tfMin, o);
+  const up = css('--up'), dn = css('--down');
+  const line = (vals, color, on) => {
+    const s = lwc.addLineSeries({color, lineWidth: 1, lineType: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
+    s.setData(closed.map((x, i) => (on && vals[i] !== null ? {time: tfn(x), value: vals[i]} : {time: tfn(x)})));
+  };
+  line(res.htfHigh, '#22c55e', o.useLong);
+  line(res.htfLow, '#ef4444', o.useShort);
+  const mk = [];
+  for (const tr of res.trades) {
+    mk.push({time: tfn(closed[tr.i]), position: tr.dir > 0 ? 'belowBar' : 'aboveBar', color: tr.dir > 0 ? up : dn,
+      shape: tr.dir > 0 ? 'arrowUp' : 'arrowDown', text: `${tr.dir > 0 ? 'LONG' : 'SHORT'} 1:${tr.rr.toFixed(1)}`});
+    if (tr.exitI !== undefined) mk.push({time: tfn(closed[tr.exitI]), position: tr.dir > 0 ? 'aboveBar' : 'belowBar', color: tr.r > 0 ? up : dn,
+      shape: 'circle', text: `${{TARGET: 'TP', STOPPED: 'SL', TRAILED: 'Trail', 'TIMED OUT': 'Time'}[tr.status]} ${tr.r > 0 ? '+' : ''}${tr.r.toFixed(1)}R`});
+  }
+  mk.sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
+  candles.setMarkers(mk);
+  const op = res.open;
+  if (op) {
+    candles.createPriceLine({price: op.entry, color: '#b2b5be', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'Entry'});
+    candles.createPriceLine({price: op.stop, color: dn, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'SL'});
+    candles.createPriceLine({price: op.tgt, color: up, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'TP'});
+  }
+  const st = res.stats, n = st.wins + st.losses, htfName = {'15': '15m', '60': '1h', '240': '4h', D: 'Day', W: 'Week'}[res.htf] || res.htf;
+  const it = S.info[key] || {};
+  const box = $('#klb'); if (!box) return;
+  box.innerHTML = `<div class="klb">
+    ${res.htfOK ? '' : `<div class="badbox">⚠ HTF must be higher than the chart's timeframe (${htfName} on a ${tf === 'D' ? 'Day' : tf + 'm'} chart).</div>`}
+    <div class="klb-tbl"><span>Position <b class="${op ? (op.dir > 0 ? 'up' : 'down') : 'muted'}">${op ? (op.dir > 0 ? 'LONG' : 'SHORT') : '—'}</b></span>
+      <span>Entry <b>${op ? px(op.entry) : '—'}</b></span><span>SL <b class="down">${op ? px(op.stop) : '—'}</b></span><span>TP <b class="up">${op ? px(op.tgt) : '—'}</b></span>
+      ${op && it.kind && it.kind !== 'INDEX' ? '<button class="ghost sm" id="klbTrade">Trade</button>' : ''}<button class="ghost sm" id="klbSet" title="Settings">⚙</button></div>
+    <div class="muted small">HTF-KLB · key levels from the previous ${htfName} candle · this chart: ${n} trade${n === 1 ? '' : 's'}${n ? ` · ${st.wins} won, ${st.losses} lost · net <b class="${cls(st.sumR)}">${st.sumR > 0 ? '+' : ''}${st.sumR.toFixed(1)}R</b> after fees` : ''}${st.skipped ? ` · ${st.skipped} skipped (R:R outside ${o.rrMin}–${o.rrMax || '∞'} or stop too tight)` : ''}${st.htfBars < 16 ? ` · <span class="warn">only ${st.htfBars} ${htfName} candles on this chart: the target needs 14+ for the ${htfName} ATR</span>` : ''}</div>
+    <div id="klbForm" class="klb-form hidden">${KLB_FIELDS.map(([k, label, kind]) => kind === 'bool'
+      ? `<label class="toggle"><input type="checkbox" data-ko="${k}" ${o[k] ? 'checked' : ''}> ${label}</label>`
+      : kind === 'sel' ? `<div class="field"><label>${label}</label><select data-ko="${k}">${[['auto', `Auto (${HTFKLB.htfFor(tfMin, 'auto') === 'D' ? 'Day' : htfName})`], ['15', '15m'], ['60', '1h'], ['240', '4h'], ['D', 'Day'], ['W', 'Week']]
+          .map(([v, l]) => `<option value="${v}" ${String(o[k]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`
+      : `<div class="field"><label>${label}</label><input data-ko="${k}" inputmode="decimal" value="${o[k]}"></div>`).join('')}
+      <div class="ord-actions"><button id="klbApply">Apply</button><button class="ghost" id="klbReset">Script defaults</button></div></div></div>`;
+  $('#klbSet').onclick = () => $('#klbForm').classList.toggle('hidden');
+  const save = v => { try { localStorage.setItem('mt-klb-opts', JSON.stringify(v)); } catch (e) { /* private mode */ } drawChart(key, tf); };
+  $('#klbApply').onclick = () => {
+    const v = {};
+    $$('#klbForm [data-ko]').forEach(el => { const k = el.dataset.ko; v[k] = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : (parseFloat(el.value) || 0); });
+    save(v);
+  };
+  $('#klbReset').onclick = () => save({});
+  if ($('#klbTrade')) $('#klbTrade').onclick = () => openTicket(key, op.dir > 0 ? 'BUY' : 'SELL', {sl: String(+op.stop.toFixed(2)), target: String(+op.tgt.toFixed(2)),
+    note: `HTF-KLB ${op.dir > 0 ? 'long' : 'short'} from ₹${px(op.entry)} · SL ₹${px(op.stop)} · TP ₹${px(op.tgt)} (R:R 1:${op.rr.toFixed(1)})`});
+}
 
 // ---- order ticket ---------------------------------------------------------------------------------------
 async function openTicket(key, side, preset = {}) {
