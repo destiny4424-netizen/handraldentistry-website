@@ -375,12 +375,60 @@ in this repository.
 **Dhan tokens:** if you generate a new access token on web.dhan.co, older tokens may stop working. If the scanner
 then shows a token error, paste the new token there too.
 
+## Zerodha copy (a second desk for a Zerodha account)
+The same desk can run a second time for a **Zerodha** account (e.g. a family member's), with its own address,
+password, settings, order log and trades. It is the same code with `MT_BROKER=zerodha`: `kite.py` talks to Zerodha's
+**Kite Connect** API and hands the rest of the app the same shapes `dhan.py` does, so the watchlist, ticket, positions,
+stop-loss buttons, Quick, Screener, Insights, alerts and the auto-trader all work the same. The app says "Zerodha"
+everywhere and shows a **Zerodha** tag next to the name.
+
+**Install on the droplet** (after the Dhan desk; it uses the same checkout and updater):
+```
+curl -fsSL https://raw.githubusercontent.com/destiny4424-netizen/handraldentistry-website/main/_trade/deploy/install-zerodha.sh | sudo bash
+```
+It prints the address (`https://zerodha.<droplet-ip>.sslip.io`, or `ZERODHA_DOMAIN=...`) and the password, and the
+Kite Connect steps:
+1. On **developers.kite.trade** (logged in as the account holder) create a **Kite Connect** app (Zerodha charges a
+   monthly fee for it). Redirect URL: `https://<the address>/kite/callback`. Static IP: the droplet's IP (SEBI's
+   rules; family members may use the same static IP).
+2. In the desk: **Account → Zerodha login**, paste the app's **API key** and **API secret**, Save.
+3. Tap **Log in with Zerodha**: Zerodha's own login page (password + TOTP go to Zerodha, never to this app), then back
+   to the desk. **Zerodha ends every login at 6 AM**, so this is once each trading morning; until then the banner
+   says "Not logged in to Zerodha". (Dhan's token renews itself; Zerodha's can't.)
+
+What differs from the Dhan desk:
+- **Super orders** (stop-loss / target / trailing from the ticket): Zerodha has none, so the desk runs them. The entry
+  goes as a normal order; once it fills, the stop-loss goes in at Zerodha as a real SL order (options: stop-limit,
+  as on Dhan). The target is watched every 2 seconds: when the price reaches it, the stop order is changed into a
+  LIMIT at the target, so only one exit order ever sits at Zerodha. Trailing moves the stop by the jump each time
+  price moves that much your way. If the position is closed some other way (e.g. in Kite), the stop is cancelled so
+  it can't open a new position. **The target needs the desk running** (it does, on the droplet); the stop-loss is
+  at Zerodha from the moment the entry fills.
+- **Option chain:** Zerodha has no chain API; the chain is built from the options' own quotes (prices, OI, bid/ask;
+  no IV or greeks).
+- **Kill switch:** not in Zerodha's API. Account shows where it is in Kite. **Exit all** works (the desk cancels open
+  orders, then closes each position at market).
+- **Insights:** Kite Connect has no trade history API, so Insights fills up from the first day the desk is used.
+- **Live prices:** Zerodha's WebSocket ticker (`kitestream.py`), with the same fallback to asking every second.
+- **Market orders** carry `market_protection=-1` (Zerodha's own protection); if Zerodha ever refuses the field, the
+  desk stops sending it.
+- **Screener:** shows the Meridian scanner's picks as on the Dhan desk; the scanner keeps using the Dhan desk's token.
+
+Its data stays in `/var/lib/handral-zerodha` (settings with the Kite keys and the day's login, order log, trades).
+- Address and password: `sudo cat /etc/handral-zerodha/login.txt`
+- If something looks wrong: `journalctl -u handral-zerodha -n 50`
+
 ## Demo and tests
 ```
 python3 trade.py --demo          # pretend Dhan account on http://127.0.0.1:3050, nothing real is touched
 python3 -m unittest discover tests
 node tests/e2e.js http://127.0.0.1:3050      # with the demo running; drives the app in headless Chromium
+
+MT_BROKER=zerodha MT_PORT=3060 MT_DATA_DIR=/tmp/kite-demo python3 trade.py --demo   # the Zerodha copy, pretend Zerodha
+node tests/e2e_kite.js http://127.0.0.1:3060
 ```
+`mockkite.py` is the pretend Zerodha: Kite Connect's paths, fields and answers in front of the same pretend market
+(`tests/test_kite.py` checks the adapter, the super orders, the instrument list, the login and the ticker against it).
 In the demo the market-hours lock on Rules settings is off, so everything can be tried at any time.
 `mockdhan.py` is the pretend Dhan:
 - prices move at random
@@ -396,7 +444,9 @@ insights maths.
 - `stream.py`: Dhan's live market feed (WebSocket): subscriptions, the binary price packets, reconnects
 - `wsclient.py`: a small WebSocket client (standard library only)
 - `dhan.py`: Dhan v2 REST client (orders, super orders, portfolio, funds, quotes, option chain, charts)
-- `instruments.py`: Dhan's scrip master, search, option-chain lookups
+- `kite.py`: Zerodha Kite Connect client in Dhan's shapes, with the desk's own super orders (Zerodha copy)
+- `kitestream.py`: Zerodha's live ticker; `mockkite.py`: the pretend Zerodha
+- `instruments.py`: Dhan's scrip master (and Zerodha's instrument list), search, option-chain lookups
 - `insights.py`: round trips, statistics, habits
 - `autotrader.py`: the auto-trader (swing on MTF), its backtest and edge check
 - `rules.py`: Rules mode: key levels, the order checks, confirmation, plan and journal
@@ -404,4 +454,5 @@ insights maths.
 - `movers.py`: the Market tab (gainers, losers, breakouts, volume, 52-week, OI, sectors)
 - `webpush.py`: Web Push (VAPID + aes128gcm); `alerts.py`: what gets notified; `static/sw.js`: the service worker
 - `static/`: the app (HTML, CSS, JavaScript)
-- `deploy/`: droplet installer, updater, web address (Caddy) and systemd units
+- `deploy/`: droplet installer, updater, web address (Caddy) and systemd units; `install-zerodha.sh` and
+  `handral-zerodha.service` for the Zerodha copy
