@@ -38,6 +38,10 @@ It places **real orders**. It needs nothing but Python 3: no packages, no build 
   - live P&L, with Exit (opens a closing ticket), Add and Convert (intraday ↔ delivery/NRML)
   - each open position has a big box with its LTP and P&L in large type, green or red, updated with every price tick, and how far price has moved for or against you (on a laptop it sits on the right of the card; on a phone, under the name)
   - **Exit all** closes every position at market and cancels open orders; you type `EXIT ALL` to confirm
+- **Stocks you trade join the watchlist by themselves**, at the top: a stock you buy or sell, or the stock under a
+  stock future / option you trade, from this app (within seconds) or Dhan's own app (read from Dhan's trade book
+  every 2 minutes in market hours). Index, commodity and currency trades aren't added. A stock you take off the
+  list isn't put back the same day. The list holds 100 stocks; past that the bottom ones drop off.
 - **Menu:** Watchlist, Quick, Positions, Orders, Screener, Account. **Insights** and the **Auto-trader** open from the
   two buttons at the top of Account ("← Account" goes back).
 - **Account:** funds, holdings with P&L, Dhan login, the static IP to set on Dhan, and the order log.

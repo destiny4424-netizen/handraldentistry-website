@@ -89,6 +89,19 @@ function check(ok, what) {
   await page.click('#tkReview');
   await page.waitForSelector('.toast.ok');
   check((await page.textContent('.toast.ok')).includes('Bought'), 'market order placed with one tap');
+  // a stock you trade joins the watchlist by itself
+  const wlBefore = await page.evaluate(() => api('/api/status').then(s => s.watchlists[0].keys));
+  const WIPRO = ['NSE_EQ:1660', 'NSE_EQ:3787', 'NSE_EQ:317', 'NSE_EQ:25', 'NSE_EQ:3351', 'NSE_EQ:3499', 'NSE_EQ:5097',
+    'NSE_EQ:10604', 'NSE_EQ:1922', 'NSE_EQ:10999'].find(k => !wlBefore.includes(k));
+  check(!!WIPRO, 'watchlist: a stock not on the list to trade');
+  if (WIPRO) {
+    const ord = await apiPost('/api/order', {key: WIPRO, side: 'BUY', qty: 1, product: 'INTRADAY', type: 'MARKET'});
+    const onList = await page.waitForFunction(k => api('/api/status').then(s => s.watchlists[0].keys[0] === k), WIPRO,
+      {timeout: 30000, polling: 1500}).then(() => true, () => false);
+    check(!!ord.ok && onList, 'watchlist: a stock you trade is added to the top by itself');
+    await apiPost('/api/order', {key: WIPRO, side: 'SELL', qty: 1, product: 'INTRADAY', type: 'MARKET'});
+  }
+
   await page.evaluate(() => setPref('review', true));      // the flows below check the review screen
   await page.waitForSelector('#tab-orders.on');
   await page.click('#tabs button[data-tab="watch"]');

@@ -36,7 +36,7 @@ import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · screener uses the same Dhan token as this app"
+VERSION = "26 Nov 2026 · stocks you trade join your watchlist by themselves"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -881,12 +881,61 @@ def sync(full=False):
         SYNC_LOCK.release()
 
 
+def traded_stock(t):
+    """The stock a trade was in: the stock itself, or the stock under a stock future / option. None for index,
+    commodity and currency trades (indices have their own cards above the watchlist)."""
+    it = INST.get(f"{t.get('exchangeSegment')}:{t.get('securityId')}")
+    if not it:
+        return None
+    if it["seg"] in ("NSE_EQ", "BSE_EQ"):
+        return stock_key(it["sym"]) or it["key"]
+    if it["seg"] in ("NSE_FNO", "BSE_FNO"):
+        return stock_key(it["ul"])
+    return None
+
+
+def watch_traded(trades=None):
+    """Every stock traded today, in this app or in Dhan's, goes to the top of the watchlist (owner's ask).
+    Each stock once a day: one taken off the list isn't put back the same day."""
+    if not D.ready or not INST.by_key:
+        return []
+    rows = D.trades_today() if trades is None else trades
+    day = now().strftime("%Y-%m-%d")
+    keys = one_list(SETTINGS.get("watchlists") or default_watch())[0]["keys"]
+    seen = {k: d for k, d in (SETTINGS.get("wl_auto") or {}).items() if d >= (now() - timedelta(days=30)).strftime("%Y-%m-%d")}
+    added = []
+    for t in sorted(rows, key=lambda t: str(t.get("exchangeTime") or t.get("updateTime") or ""), reverse=True):
+        k = traded_stock(t)
+        if not k or k in keys or k in added or seen.get(k) == day:
+            continue
+        added.append(k)
+        seen[k] = day
+    if added:
+        save_settings(watchlists=one_list([{"name": "My stocks", "keys": added + keys}]), wl_auto=seen)
+        audit("watchlist_auto_added", keys=added)
+    return added
+
+
+def watch_soon():
+    for wait in (3, 20):                               # once Dhan shows the fill
+        time.sleep(wait)
+        try:
+            if watch_traded():
+                return
+        except Exception:
+            pass
+
+
 def sync_loop():
     time.sleep(5)
     while True:
         t = now()
         market = t.weekday() < 5 and (9, 0) <= (t.hour, t.minute) <= (16, 0)
         sync()
+        try:
+            watch_traded()
+        except Exception as e:                         # never stop the trade import over this
+            print("watchlist from trades:", e)
         time.sleep(120 if market else 1800)
 
 
@@ -1457,6 +1506,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, preview(b))
         if path == "/api/order":
             code, r = place(b)
+            if code == 200 and not r.get("armed"):        # a trade from this app: on the watchlist in seconds
+                threading.Thread(target=watch_soon, daemon=True).start()
             return self.send(code, r)
         if path == "/api/order/modify":
             oid = str(b["order_id"])
