@@ -188,6 +188,7 @@ async function loadStatus() {
     }
     $('#demo').classList.toggle('hidden', !s.demo);
     $('#brokerTag').classList.toggle('hidden', s.broker !== 'zerodha');
+    $('#tabs button[data-tab="screener"]').classList.toggle('hidden', s.screener === false);
     $('#conn').className = 'dot ' + (s.connected && !s.feed_error ? 'ok' : s.connected ? 'warn' : 'bad');
     $('#conn').title = s.connected ? `Dhan ${s.client}` + (s.feed_error ? ' · ' + s.feed_error : '') : 'Dhan not connected';
     const b = $('#banner');
