@@ -91,5 +91,69 @@ class Trail(unittest.TestCase):
         self.assertEqual(st2["trigger"], 3580.0)
 
 
+    def option(self, px, q="nifty 26000 ce"):
+        it = trade.INST.search(q)[0]
+        i = mockdhan.M.inst[(it["seg"], str(it["id"]))]
+        i["px"], i["pinned"] = px, True
+        trade.QUOTES.pop(it["key"], None)
+        mockdhan.M.match()
+        return it
+
+    def opt_position(self, key):
+        pos = trade.attach_stops(trade.positions_view(trade.get_positions())[0])
+        return next(p for p in pos if p["_key"] == key and int(p.get("netQty") or 0))
+
+    def test_option_stop_is_a_stop_limit(self):
+        it = self.option(1012.0)
+        k, lot = it["key"], it["lot"]
+        self.assertEqual(trade.place({"key": k, "side": "BUY", "qty": lot, "product": "INTRADAY", "type": "MARKET"})[0], 200)
+        trade.RECENT.clear()
+        code, r = trade.move_stop({"key": k, "trigger": 1003})
+        self.assertEqual(code, 200, r)
+        st = self.opt_position(k)["_stops"][0]
+        self.assertEqual((st["type"], st["trigger"]), ("STOP_LOSS", 1003.0))
+        self.assertEqual(st["price"], 992.95)                                  # 1% under the trigger, on the tick
+        code, r = trade.move_stop({"key": k, "order_id": st["order_id"], "kind": "order", "trigger": 1005})
+        self.assertEqual(code, 200, r)
+        st = self.opt_position(k)["_stops"][0]
+        self.assertEqual((st["trigger"], st["price"]), (1005.0, 994.95))       # moved, same gap
+        trade.RECENT.clear()
+        self.assertEqual(trade.place({"key": k, "side": "SELL", "qty": lot, "product": "INTRADAY", "type": "MARKET"})[0], 200)
+
+    def test_old_option_sl_m_becomes_a_stop_limit_when_moved(self):
+        it = self.option(500.0, "nifty 25900 ce")
+        k, lot = it["key"], it["lot"]
+        self.assertEqual(trade.place({"key": k, "side": "BUY", "qty": lot, "product": "INTRADAY", "type": "MARKET"})[0], 200)
+        trade.RECENT.clear()
+        self.assertEqual(trade.place({"key": k, "side": "SELL", "qty": lot, "product": "INTRADAY", "type": "STOP_LOSS_MARKET",
+                                      "trigger": 480})[0], 200)
+        st = self.opt_position(k)["_stops"][0]
+        self.assertEqual(st["type"], "STOP_LOSS_MARKET")
+        code, r = trade.move_stop({"key": k, "order_id": st["order_id"], "kind": "order", "trigger": 485})
+        self.assertEqual(code, 200, r)
+        st = self.opt_position(k)["_stops"][0]
+        self.assertEqual((st["type"], st["trigger"], st["price"]), ("STOP_LOSS", 485.0, 480.15))
+        trade.RECENT.clear()
+        self.assertEqual(trade.place({"key": k, "side": "SELL", "qty": lot, "product": "INTRADAY", "type": "MARKET"})[0], 200)
+
+    def test_no_live_price_no_stop(self):
+        k = key_of("ITC")
+        self.pin("ITC", 415)
+        self.assertEqual(trade.place({"key": k, "side": "BUY", "qty": 10, "product": "INTRADAY", "type": "MARKET"})[0], 200)
+        trade.QUOTES.pop(k, None)
+        real = trade.D.quote
+
+        def down(*a, **kw):
+            raise trade.dhanlib.DhanError("feed down")
+        trade.D.quote = down
+        try:
+            code, r = trade.move_stop({"key": k, "trigger": 400})
+        finally:
+            trade.D.quote = real
+        self.assertEqual(code, 400)
+        self.assertIn("Couldn't get the live price", r["error"])
+        self.assertEqual(self.position("ITC")["_stops"], [])                 # nothing was sent
+
+
 if __name__ == "__main__":
     unittest.main()
