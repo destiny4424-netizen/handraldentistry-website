@@ -881,7 +881,8 @@ function trailHtml(p) {
   const status = t.sending || t.timer ? '<span class="muted">sending to Dhan…</span>' :
     t.status ? t.status : st ? '<span class="muted">each − / + tap moves it at Dhan</span>' : '';
   return `<div class="trail ${bad ? 'bad' : ''}">
-    <div class="trail-top"><span class="small muted">${st ? `Stop-loss${st.kind === 'super' ? ' (super order)' : ''}` : '<b class="down">No stop-loss</b>'}</span>
+    <div class="trail-top"><span class="small muted">${st ? `Stop-loss${st.kind === 'super' ? ' (super order)' : ''}${st.type === 'STOP_LOSS' && st.price ? ` · limit, ${net > 0 ? 'sells down to' : 'buys up to'} ₹${px(st.price)}` : st.type === 'STOP_LOSS_MARKET' ? ' · at market' : ''}` :
+      `<b class="down">No stop-loss</b>${(S.info[p._key] || {}).opt ? ' <span class="muted">· added as a stop-limit</span>' : ''}`}</span>
       <button class="step" data-tstep="${esc(p._key)}" title="Step">step ₹${t.step}</button></div>
     <div class="tv"><label class="tin-w">₹<input class="tin" data-tin="${esc(p._key)}" type="text" inputmode="decimal" enterkeyhint="done" value="${Number(t.value).toFixed(2)}" aria-label="Stop-loss price"></label> <span class="small ${loss > 0 ? 'down' : 'up'}">${bad ? 'would fill at once' :
         (loss > 0 ? `₹${Math.round(loss).toLocaleString('en-IN')} at risk` : `locks ₹${Math.round(-loss).toLocaleString('en-IN')} profit`) + (away !== null ? ` · ${away.toFixed(1)}% away` : '')}</span></div>

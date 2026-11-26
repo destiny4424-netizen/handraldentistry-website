@@ -284,7 +284,13 @@ stop-loss leg.
 - The line above shows what the stop means in rupees: "₹X at risk" or "locks ₹X profit", and how far it is from the
   price (with the contract size for MCX).
 - **No stop:** a position without one says so. − / + choose a level, then **Add stop** (one tap, since it places a new
-  order) puts an SL-M on the whole position.
+  order) puts a stop on the whole position: an SL-M for stocks and futures, a **stop-limit for options**.
+- **Options: stop-limit, not stop-market** (owner's choice, after an option stop filled at market). Once the trigger
+  trades, the order becomes a limit 1% past it (at least 2 ticks), e.g. trigger ₹1,003 → sells down to ₹992.95, so a
+  sudden spike can't fill it far away. If price jumps straight through the limit it may not fill: watch fast falls.
+  An older option SL-M becomes a stop-limit the next time it's moved. The card shows "limit, sells down to ₹X".
+- **No stop without a live price:** the stop's side is checked against the price from the live feed (under 15 s old)
+  or, failing that, a fresh quote from Dhan; with neither, the stop isn't sent.
 - **Safety:** a tap that would move the stop past the price (it would fill at once) is refused on the phone, and the
   server refuses such a stop too.
 
