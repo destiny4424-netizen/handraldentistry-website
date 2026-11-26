@@ -58,7 +58,7 @@ HERE = Path(__file__).resolve().parent
 IST = timezone(timedelta(hours=5, minutes=30))
 API = "https://api.dhan.co/v2"
 SCRIP_MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
-VERSION = "23 Nov · Cleaner scanner: 5 tabs, advanced tools behind a switch"
+VERSION = "26 Nov · uses the trading desk's Dhan token"
 
 
 def load_env():
@@ -1930,7 +1930,8 @@ def health_report():
             add("Dhan connection", "bad", f"Token expired {tk['expires']}. Paste a new one in Settings.")
         else:
             add("Dhan connection", "ok", f"Token valid until {tk['expires'] or '—'}" +
-                (f" · renewed {tk['last_renewed']}" if tk.get("last_renewed") else "") + " · renews by itself")
+                (" · the trading desk's token, renewed by the desk" if SETTINGS.get("token_shared") else
+                 (f" · renewed {tk['last_renewed']}" if tk.get("last_renewed") else "") + " · renews by itself"))
     sc, st = HEALTH["scan"], STATE.get("status")
     open_now = market_open()
     if st == "error":
@@ -2675,10 +2676,31 @@ def renew_token():
         raise DhanError(f"Can't reach Dhan: {e.reason}") from None
 
 
+def adopt_shared_token(cid, tok):
+    """The trading desk on this server hands over its Dhan token (the owner asked for one token for both).
+    The desk renews it and hands over each new one, so the scanner stops renewing it itself: renewing the same
+    token twice could cancel the other app's copy. Keys pasted in Settings are used (and renewed here) until the desk's
+    next check, within 5 minutes, hands its own token over again."""
+    global TOKEN
+    now = datetime.now(IST).strftime("%d %b %Y %H:%M")
+    if not DEMO and cid == CLIENT_ID:
+        TOKEN = tok                                    # same account: swap the token, keep today's scan as it is
+        save_settings(access_token=tok, saved_at=now, token_shared=True)
+        TOKEN_STATUS.update(note="")
+        if STATE.get("status") == "error":
+            WAKE.set()                                 # the last scan failed (likely the old token): scan again now
+    else:
+        save_keys(cid, tok)                            # first time, or another account: switch over and scan
+        save_settings(token_shared=True)
+
+
 def keep_token_once(force=False):
     """Renew the token when it is close to expiring. Returns True if a new token is in use."""
     global TOKEN
     if DEMO or not TOKEN:
+        return False
+    if SETTINGS.get("token_shared"):                   # the trading desk renews it and hands it over
+        TOKEN_STATUS["note"] = "Uses the trading desk's token; the desk renews it."
         return False
     exp = token_expiry(TOKEN)
     left = (exp - time.time()) if exp else None
@@ -3300,6 +3322,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(400, {"error": "That access token doesn't look complete. Copy the whole token."})
             else:
                 save_keys(cid, tok)
+                save_settings(token_shared=None)          # pasted here: the scanner manages this token itself
+                self.send(200, {"ok": True})
+        elif path == "/api/keys/shared":                  # the trading desk on this server, with its token
+            cid = str(body.get("client_id", "")).strip()
+            tok = str(body.get("access_token", "")).strip()
+            if not cid.isdigit() or len(tok) < 20 or any(c.isspace() for c in tok):
+                self.send(400, {"error": "Bad client ID or token."})
+            else:
+                adopt_shared_token(cid, tok)
                 self.send(200, {"ok": True})
         else:
             self.send(404, {"error": "not found"})

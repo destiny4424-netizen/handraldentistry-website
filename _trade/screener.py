@@ -118,6 +118,19 @@ class Scanner:
         finally:
             self.busy = False
 
+    def share_token(self, client_id, token):
+        """Give the scanner the desk's Dhan token if it holds a different one. Returns a short note."""
+        st = self._get("/api/settings")
+        if str(st.get("client_id") or "") == client_id and st.get("token_tail") == token[-4:]:
+            return "same"
+        try:
+            self._req("/api/keys/shared", {"client_id": client_id, "access_token": token})
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return "The scanner hasn't installed its update for sharing the token yet."
+            raise
+        return "handed over"
+
     # -- what the tab shows
     def view(self):
         stale = time.time() - self.state_at > self.STATE_EVERY

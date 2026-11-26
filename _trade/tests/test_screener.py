@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import screener                                          # noqa: E402
 
 PW = "scanner-pw"
-SEEN = {"logins": 0, "expire": False, "scans": 0}
+SEEN = {"logins": 0, "expire": False, "scans": 0, "keys": None, "shared_404": False}
 HEALTH = {"checks": [{"name": "Server", "level": "ok", "text": "Running"},
                      {"name": "Dhan connection", "level": "bad", "text": "Token expired 25 Nov 10:00. Paste a new one in Settings."},
                      {"name": "Last scan", "level": "warn", "text": "should have scanned again by now"}]}
@@ -62,6 +62,10 @@ class H(BaseHTTPRequestHandler):
             return self.reply(401, {})
         if self.path == "/api/scan":
             SEEN["scans"] += 1
+        if self.path == "/api/keys/shared":
+            if SEEN["shared_404"]:
+                return self.reply(404, {"error": "not found"})
+            SEEN["keys"] = (body["client_id"], body["access_token"])
         return self.reply(200, {"ok": True})
 
     def do_GET(self):
@@ -71,7 +75,9 @@ class H(BaseHTTPRequestHandler):
             ok = False
         if not ok:
             return self.reply(401, {"error": "Sign in first."})
+        held = SEEN["keys"] or ("", "")
         self.reply(200, {"/api/state": STATE, "/api/performance": PERF, "/api/backtest": BT,
+                         "/api/settings": {"client_id": held[0], "token_tail": held[1][-4:]},
                          "/api/health": HEALTH}.get(self.path.split("?")[0], {}))
 
 
@@ -110,6 +116,19 @@ class Screener(unittest.TestCase):
         self.assertEqual([p["name"] for p in v["problems"]], ["Dhan connection", "Last scan"])   # ok checks left out
         sc._req("/api/scan", {})
         self.assertEqual(SEEN["scans"], 1)
+
+    def test_shares_the_desks_token(self):
+        sc = screener.Scanner(URL, PW)
+        tok = "a" * 40 + "WXYZ"
+        self.assertEqual(sc.share_token("1100000009", tok), "handed over")
+        self.assertEqual(SEEN["keys"], ("1100000009", tok))
+        self.assertEqual(sc.share_token("1100000009", tok), "same")                    # nothing sent when it matches
+        self.assertEqual(sc.share_token("1100000009", "b" * 40 + "QRST"), "handed over")  # renewed by the desk
+        SEEN["shared_404"] = True                                                        # scanner not updated yet
+        try:
+            self.assertIn("hasn't installed", sc.share_token("1100000009", "c" * 44))
+        finally:
+            SEEN["shared_404"] = False
 
     def test_signs_in_again_when_the_session_ends(self):
         sc = screener.Scanner(URL, PW)

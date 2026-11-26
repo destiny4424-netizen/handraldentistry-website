@@ -36,7 +36,7 @@ import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
 from instruments import Instruments, MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · option stops are stop-limit, never sent without a live price"
+VERSION = "26 Nov 2026 · screener uses the same Dhan token as this app"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -114,6 +114,28 @@ def pick_token():
         STATUS["token_source"] = ""
 
 
+TOKEN_SHARE = {"note": "", "at": None, "wake": threading.Event()}
+
+
+def share_token_loop():
+    """The screener (Meridian scanner) uses the desk's Dhan token: hand it over whenever the scanner's differs,
+    checked every 5 minutes and straight after the desk renews or gets a new token."""
+    time.sleep(20)
+    while True:
+        try:
+            exp = dhanlib.token_expiry(D.token) if D.token else None
+            if SCANNER and D.ready and not DEMO and SCANNER.password and (exp is None or exp > time.time() + 60):
+                r = SCANNER.share_token(D.client_id, D.token)
+                if r == "handed over":
+                    TOKEN_SHARE["at"] = now().strftime("%d %b %H:%M")
+                    audit("token_shared_with_scanner")
+                TOKEN_SHARE["note"] = "" if r in ("same", "handed over") else r
+        except Exception as e:                         # the scanner may be restarting: try again later
+            TOKEN_SHARE["note"] = f"Couldn't give the screener the token: {e}"
+        TOKEN_SHARE["wake"].wait(300)
+        TOKEN_SHARE["wake"].clear()
+
+
 def keep_token():
     """Renew the token when less than 4 hours are left: a token pasted once keeps going."""
     while True:
@@ -128,6 +150,7 @@ def keep_token():
                         save_settings(access_token=new, saved_at=now().strftime("%d %b %Y %H:%M"))
                         D.token = new
                         STATUS["token_note"] = "Renewed " + now().strftime("%d %b %H:%M")
+                        TOKEN_SHARE["wake"].set()      # the screener gets the new one straight away
                 elif left is not None and left <= 0:
                     STATUS["token_note"] = "The token has expired. Paste a new one in Settings."
         except dhanlib.DhanError as e:
@@ -1161,6 +1184,7 @@ def status():
             "token_expires": datetime.fromtimestamp(exp, IST).strftime("%d %b %H:%M") if exp else None,
             "ip": PUBLIC_IP, "limits": limits(), "instruments": len(INST.by_key), "inst_error": INST.error,
             "sync": STATUS["sync"], "sync_at": STATUS["sync_at"], "feed_error": STATUS["feed_error"],
+            "token_shared_at": TOKEN_SHARE["at"], "token_share_note": TOKEN_SHARE["note"],
             "feed_mode": STREAM.mode()[0] if STREAM else "polling", "feed_note": STREAM.mode()[1] if STREAM else "",
             "fills": STORE.count()[0], "time": now().strftime("%H:%M:%S"),
             "watchlists": one_list(SETTINGS.get("watchlists") or default_watch())}
@@ -1489,6 +1513,7 @@ class Handler(BaseHTTPRequestHandler):
             except dhanlib.DhanError as e:
                 return self.send(400, {"error": f"Dhan didn't accept these: {e}"})
             save_settings(client_id=cid, access_token=tok, saved_at=now().strftime("%d %b %Y %H:%M"))
+            TOKEN_SHARE["wake"].set()
             pick_token()
             threading.Thread(target=sync, daemon=True).start()
             return self.send(200, {"ok": True})
@@ -1702,7 +1727,7 @@ def main():
     threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()
     STREAM = stream.Stream(FEED_URL, lambda: (D.client_id, D.token) if D.ready else None, on_stream, enabled=STREAM_ON)
     threading.Thread(target=STREAM.run, daemon=True).start()
-    for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop):
+    for fn in (keep_token, feed, sync_loop, instruments_loop, bot_loop, rules_loop, alerts_loop, share_token_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True
