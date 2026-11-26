@@ -197,7 +197,10 @@ async function loadStatus() {
     else if (s.inst_error) msg = s.inst_error;
     b.textContent = msg;
     b.classList.toggle('hidden', !msg);
-    if (!S.wl.length) { S.wl = s.watchlists || []; renderWlTabs(); renderWl(); }
+    const same = JSON.stringify((S.wl[0] || {}).keys || []) === JSON.stringify(((s.watchlists || [])[0] || {}).keys || []);
+    if (!S.wl.length || (!same && !S.editWl && Date.now() - (S.wlSavedAt || 0) > 8000)) {           // stocks you trade are added on the server: show them
+      S.wl = s.watchlists || []; renderWlTabs(); if (S.tab === 'watch') renderWl();
+    }
   } catch (e) { $('#conn').className = 'dot bad'; }
 }
 async function loadFunds() {
@@ -359,6 +362,7 @@ function wlClick(e) {
 $('#wlFilter').onclick = () => { S.wlGood = !S.wlGood; setPref('wlGood', S.wlGood); renderWlTabs(); renderWl(); };
 $('#wlEdit').onclick = () => { S.editWl = !S.editWl; $('#wlEdit').textContent = S.editWl ? 'Done' : 'Edit'; renderWlTabs(); renderWl(); };
 async function saveWl() {
+  S.wlSavedAt = Date.now();
   try { await api('/api/watchlists', {watchlists: S.wl}); } catch (e) { toast(e.message, 'bad'); }
 }
 function inWl(k) { return (S.wl[S.wlIdx]?.keys || []).includes(k); }
