@@ -9,6 +9,14 @@ password arrives here as OBS_PASSWORD with nothing to copy. Nothing is computed 
 import json
 import threading
 import time
+from datetime import datetime, timedelta, timezone
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def market_open(t=None):
+    t = t or datetime.now(IST)
+    return t.weekday() < 5 and (9, 15) <= (t.hour, t.minute) < (15, 30)
 import urllib.error
 import urllib.request
 from http.cookies import SimpleCookie
@@ -37,7 +45,7 @@ class Scanner:
         self.url, self.password, self.key_of = url.rstrip("/"), password, key_of
         self.cookie = ""
         self.lock = threading.Lock()
-        self.state = self.perf = self.bt = None
+        self.state = self.perf = self.bt = self.health = None
         self.state_at = self.slow_at = 0.0
         self.error = ""
         self.login_wait = 0.0                          # after a wrong password: don't try again for a while
@@ -87,6 +95,10 @@ class Scanner:
         try:
             if force or now - self.state_at > self.STATE_EVERY:
                 self.state, self.state_at = self._get("/api/state"), now
+                try:
+                    self.health = self._get("/api/health")
+                except Exception:
+                    self.health = None
             running = ((self.bt or {}).get("job") or {}).get("status") == "running"
             if force or now - self.slow_at > (self.STATE_EVERY if running else self.SLOW_EVERY):
                 self.perf = self._get("/api/performance")
@@ -123,7 +135,15 @@ class Scanner:
         swing_new = [self.row(p, p.get("plan") or {}, new=True) for p in btst.get("picks") or []]
         running = [self.row(r, r) for r in (btst.get("book") or {}).get("rows") or [] if r.get("exit_at") is None]
         perf, rep = self.perf or {}, (self.bt or {}).get("report") or {}
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        day = (trades.get("summary") or {}).get("day")
+        age = time.time() - (s.get("last_scan_ts") or 0)
+        overdue = market_open() and age > 25 * 60       # scans run every 15 minutes in market hours
+        problems = [{"name": c.get("name"), "level": c.get("level"), "text": c.get("text")}
+                    for c in ((self.health or {}).get("checks") or []) if c.get("level") in ("bad", "warn")]
         return {
+            "overdue": overdue, "scan_age_min": int(age // 60) if s.get("last_scan_ts") else None,
+            "rows_day": day, "rows_old": bool(day and day != today), "problems": problems[:6],
             "ok": True, "error": self.error, "demo": bool(s.get("demo")), "status": s.get("status"),
             "message": s.get("message") or "", "last_scan": s.get("last_scan"), "next_scan": s.get("next_scan"),
             "schedule": s.get("schedule") or "",

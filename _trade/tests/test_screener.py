@@ -12,13 +12,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import screener                                          # noqa: E402
 
 PW = "scanner-pw"
-SEEN = {"logins": 0, "expire": False}
+SEEN = {"logins": 0, "expire": False, "scans": 0}
+HEALTH = {"checks": [{"name": "Server", "level": "ok", "text": "Running"},
+                     {"name": "Dhan connection", "level": "bad", "text": "Token expired 25 Nov 10:00. Paste a new one in Settings."},
+                     {"name": "Last scan", "level": "warn", "text": "should have scanned again by now"}]}
 STATE = {"status": "live", "demo": False, "last_scan": "10:15", "next_scan": "10:30", "message": "",
          "trades": {"rows": [{"symbol": "SBIN", "side": "bull", "entry": 870.5, "sl": 864.0, "t1": 880.25, "t2": 889.0,
                               "status": "T1 hit", "result_r": None, "basis": "PDH breakout", "exit_at": None},
                              {"symbol": "TCS", "side": "bear", "entry": 3400, "sl": 3420, "t1": 3370, "t2": 3350,
                               "status": "SL hit", "result_r": -1.0}],
-                    "summary": {"count": 2, "triggered": 2, "wins": 0, "losses": 1, "total_r": -1.0}},
+                    "summary": {"day": "2026-11-25", "count": 2, "triggered": 2, "wins": 0, "losses": 1, "total_r": -1.0}},
+         "last_scan_ts": 1000.0,
          "btst": {"open": True, "from": "11:00", "caution": "", "picks": [
              {"symbol": "INFY", "side": "bull", "price": 1580, "plan": {"entry": 1585, "sl": 1550, "t1": 1655, "t2": 1700,
                                                                        "basis": "Swing · FVG", "action": "Buy above 1585"}}],
@@ -56,6 +60,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, {"ok": True}, cookie=f"tok{SEEN['logins']}")
         if "obs=" not in (self.headers.get("Cookie") or ""):
             return self.reply(401, {})
+        if self.path == "/api/scan":
+            SEEN["scans"] += 1
         return self.reply(200, {"ok": True})
 
     def do_GET(self):
@@ -65,7 +71,8 @@ class H(BaseHTTPRequestHandler):
             ok = False
         if not ok:
             return self.reply(401, {"error": "Sign in first."})
-        self.reply(200, {"/api/state": STATE, "/api/performance": PERF, "/api/backtest": BT}.get(self.path.split("?")[0], {}))
+        self.reply(200, {"/api/state": STATE, "/api/performance": PERF, "/api/backtest": BT,
+                         "/api/health": HEALTH}.get(self.path.split("?")[0], {}))
 
 
 srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
@@ -88,6 +95,21 @@ class Screener(unittest.TestCase):
         self.assertEqual(v["perf"]["intraday"]["win_rate"], 55)
         self.assertEqual(v["backtest"]["intraday"]["max_drawdown"], -6.5)
         self.assertEqual(v["backtest"]["sessions"], 60)
+
+    def test_stale_scanner_is_flagged(self):
+        sc = screener.Scanner(URL, PW)
+        real = screener.market_open
+        screener.market_open = lambda t=None: True
+        try:
+            v = sc.view()
+        finally:
+            screener.market_open = real
+        self.assertTrue(v["overdue"])                                                    # last scan long ago, market open
+        self.assertTrue(v["rows_old"])                                                   # the picks are another day's
+        self.assertEqual(v["rows_day"], "2026-11-25")
+        self.assertEqual([p["name"] for p in v["problems"]], ["Dhan connection", "Last scan"])   # ok checks left out
+        sc._req("/api/scan", {})
+        self.assertEqual(SEEN["scans"], 1)
 
     def test_signs_in_again_when_the_session_ends(self):
         sc = screener.Scanner(URL, PW)

@@ -1534,13 +1534,19 @@ function renderScreener() {
   $$('#scSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === seg));
   if (!v) return;
   if (!v.ok) { el.innerHTML = `<div class="badbox">${esc(v.error || 'The scanner is not available.')}</div>`; return; }
-  const head = `<div class="muted small sc-head">${v.last_scan ? `Scanned ${esc(v.last_scan)}` : esc(v.message || 'Waiting for the first scan')}${v.next_scan ? ` · next ${esc(v.next_scan)}` : ''}${v.demo ? ' · <b>demo data</b>' : ''}${v.error ? ` · <span class="down">${esc(v.error)}</span>` : ''}</div>`;
+  const st = v.status || '', bad = st === 'error' || v.overdue || st === 'scanning' || st === 'starting';
+  const warn = !bad ? '' : `<div class="${st === 'error' || v.overdue ? 'badbox' : 'okbox sc-note'} sc-warn">
+      <b>${st === 'error' ? 'The scanner\'s last scan failed' : v.overdue ? `The scanner hasn't scanned for ${v.scan_age_min} min` : 'The scanner is scanning now…'}</b>
+      ${v.message ? `<div>${esc(v.message)}</div>` : ''}
+      ${(v.problems || []).filter(p => p.level === 'bad' || /scan|Dhan|Stocks/i.test(p.name)).map(p => `<div class="small">• <b>${esc(p.name)}:</b> ${esc(p.text)}</div>`).join('')}
+      <button class="ghost sm" id="scScanNow" style="margin-top:6px">↻ Scan now</button></div>`;
+  const head = warn + `<div class="muted small sc-head">${v.last_scan ? `Scanned ${esc(v.last_scan)}` : esc(v.message || 'Waiting for the first scan')}${v.next_scan ? ` · next ${esc(v.next_scan)}` : ''}${v.demo ? ' · <b>demo data</b>' : ''}${v.error ? ` · <span class="down">${esc(v.error)}</span>` : ''}</div>`;
   let list;
   if (seg === 'intraday') {
     S.scList = v.intraday.rows;
     const d = v.intraday.today || {};
-    list = scRows(S.scList, 'No intraday picks yet today. Scans run every 15 minutes from 9:30.') +
-      (d.count ? `<div class="muted small sc-day">Today: ${d.count} picks · ${d.triggered || 0} triggered · ${d.wins || 0} won · ${d.losses || 0} lost · <b class="${cls(d.total_r)}">${d.total_r > 0 ? '+' : ''}${d.total_r || 0}R</b></div>` : '');
+    list = (v.rows_old && S.scList.length ? `<div class="section-title">Picks from ${esc(new Date(v.rows_day + 'T00:00').toLocaleDateString('en-IN', {weekday: 'short', day: 'numeric', month: 'short'}))} (not today)</div>` : '') + scRows(S.scList, 'No intraday picks yet today. Scans run every 15 minutes from 9:30.') +
+      (d.count ? `<div class="muted small sc-day">${v.rows_old ? 'That day' : 'Today'}: ${d.count} picks · ${d.triggered || 0} triggered · ${d.wins || 0} won · ${d.losses || 0} lost · <b class="${cls(d.total_r)}">${d.total_r > 0 ? '+' : ''}${d.total_r || 0}R</b></div>` : '');
   } else {
     S.scList = [...v.swing.rows, ...v.swing.running];
     list = `<div class="section-title">Today's setups</div>${scRows(v.swing.rows, `Swing setups come from ${esc(v.swing.from || '11:00')}; the final list is at 3 PM.`)}
@@ -1612,6 +1618,11 @@ $('#scOut').onclick = e => {
 };
 $('#scSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.scSeg = b.dataset.v; setPref('scSwing', S.scSeg === 'swing'); renderScreener(); };
 $('#scBody').onclick = async e => {
+  if (e.target.closest('#scScanNow')) {
+    try { await api('/api/screener/scan', {}); toast('Scan started. It takes about a minute.', 'ok', 5000); setTimeout(loadScreener, 20000); setTimeout(loadScreener, 70000); }
+    catch (er) { toast(er.message, 'bad'); }
+    return;
+  }
   if (e.target.closest('#scRunBt')) {
     try { await api('/api/screener/backtest', {}); toast('Backtest started on the scanner. It takes a few minutes.', 'ok', 6000); } catch (er) { toast(er.message, 'bad'); }
     return;
