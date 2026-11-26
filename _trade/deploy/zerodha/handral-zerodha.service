@@ -1,0 +1,33 @@
+[Unit]
+Description=Handral Trading Desk on Zerodha (stand-alone: its own code, user, data and updater)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=zerodha
+Group=zerodha
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=MT_CLOUD=1
+Environment=MT_HOST=127.0.0.1
+Environment=MT_BROKER=zerodha
+# 3051, so it can share a droplet with the other apps (Dhan desk 3050, clinic 3030, Books 3020, scanner 3040).
+Environment=MT_PORT=3051
+Environment=MT_DATA_DIR=/var/lib/handral-zerodha
+# MT_PASSWORD, MT_PUBLIC_URL and MT_PUBLIC_IP (and optionally MT_KITE_API_KEY / MT_KITE_API_SECRET), written by install-zerodha.sh. Nothing of the Dhan desk or the scanner is loaded.
+EnvironmentFile=-/etc/default/handral-zerodha
+ExecStart=/usr/bin/python3 /opt/handral-zerodha/repo/_trade/trade.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/handral-zerodha
+
+[Install]
+WantedBy=multi-user.target

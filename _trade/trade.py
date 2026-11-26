@@ -38,7 +38,7 @@ import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
 from instruments import Instruments, KiteInstruments, MASTER_URL, KITE_MASTER_URL, public  # noqa: E402
 
-VERSION = "26 Nov 2026 · the desk can also run on a Zerodha account"
+VERSION = "26 Nov 2026 · the Zerodha desk stands on its own"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -60,6 +60,9 @@ BROKER_NAME = "Zerodha" if KITE else "Dhan"
 KITE_API = os.environ.get("MT_KITE_API", "https://api.kite.trade")
 KITE_FEED = os.environ.get("MT_KITE_FEED", "wss://ws.kite.trade")
 PUBLIC_URL = os.environ.get("MT_PUBLIC_URL", "").rstrip("/")
+# The Zerodha desk stands on its own: no link to the Meridian scanner (or anything of the Dhan desk) unless
+# MT_SCANNER_URL is set on purpose. Its Screener tab is then hidden.
+SCANNER_ON = not KITE or bool(os.environ.get("MT_SCANNER_URL"))
 
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
@@ -1295,7 +1298,7 @@ def status():
         kite = {"kite_keys": bool(key and secret), "kite_key": mask(key), "kite_user_name": SETTINGS.get("kite_user_name"),
                 "kite_redirect": (PUBLIC_URL or "https://<this address>") + "/kite/callback",
                 "kite_keys_from_env": bool(os.environ.get("MT_KITE_API_KEY")), "super_note": D.sup_note}
-    return {**kite, "broker": BROKER, "broker_name": BROKER_NAME, "version": VERSION, "demo": DEMO, "connected": D.ready, "client": mask(D.client_id),
+    return {**kite, "screener": SCANNER_ON, "broker": BROKER, "broker_name": BROKER_NAME, "version": VERSION, "demo": DEMO, "connected": D.ready, "client": mask(D.client_id),
             "token_source": STATUS["token_source"], "token_note": STATUS["token_note"],
             "token_expires": datetime.fromtimestamp(exp, IST).strftime("%d %b %H:%M") if exp else None,
             "ip": PUBLIC_IP, "limits": limits(), "instruments": len(INST.by_key), "inst_error": INST.error,
@@ -1759,6 +1762,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(400, {"error": err})
             return self.send(200, {"ok": True, "cfg": RULES.cfg()})
         if path == "/api/screener/scan":
+            if not SCANNER:
+                return self.send(404, {"error": "This desk has no screener."})
             try:
                 SCANNER._get("/api/state")                 # signs in if needed
                 SCANNER._req("/api/scan", {})
@@ -1767,6 +1772,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send(502, {"error": f"The scanner didn't take the request: {e}"})
         if path == "/api/screener/backtest":
+            if not SCANNER:
+                return self.send(404, {"error": "This desk has no screener."})
             try:
                 SCANNER._get("/api/state")                 # signs in if needed
                 SCANNER._req("/api/backtest", {})
@@ -1877,9 +1884,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global API_BASE, MASTER, FEED_URL, STREAM, SCANNER
     scan_url, scan_pw = SCANNER_URL, os.environ.get("OBS_PASSWORD") or os.environ.get("MT_SCANNER_PASSWORD", "")
-    if DEMO and not os.environ.get("MT_SCANNER_URL"):
+    if DEMO and SCANNER_ON and not os.environ.get("MT_SCANNER_URL"):
         scan_url, scan_pw = start_demo_scanner()
-    SCANNER = screener.Scanner(scan_url, scan_pw, key_of=stock_key)
+    SCANNER = screener.Scanner(scan_url, scan_pw, key_of=stock_key) if SCANNER_ON else None
     if DEMO and KITE:
         import mockkite
         mockkite.serve(3095)

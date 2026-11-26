@@ -105,7 +105,11 @@ function check(ok, what) {
     {timeout: 15000, polling: 1000}).then(() => true, () => false);
   check(flat, 'exit all: nothing left open');
 
-  for (const tab of ['watch', 'quick', 'screener']) {
+  check(await page.$eval('#tabs button[data-tab="screener"]', b => b.classList.contains('hidden')),
+    'stand-alone: no Screener tab (no link to the Meridian scanner)');
+  const scr = await page.evaluate(() => api('/api/screener'));
+  check(scr.ok === false, 'stand-alone: the server has no screener connection');
+  for (const tab of ['watch', 'quick']) {
     await page.click(`#tabs button[data-tab="${tab}"]`);
     await page.waitForTimeout(1200);
     await noDhan(`#tab-${tab}`, tab);

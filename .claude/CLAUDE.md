@@ -22,7 +22,8 @@ The Clinic Photos app (`photos/`) keeps photos only on the phone; Ortho Assess (
 - `_trade/` — Handral Trading Desk (installed on the droplet as `meridian-trade`), trading app that places real orders on the owner's Dhan account; runs on the droplet
   (not published). Test with `python3 -m unittest discover tests` and, with `python3 trade.py --demo` running,
   `node tests/e2e.js` (pretend Dhan, headless Chromium). Never commit the Dhan token, trades or the order log.
-  The same code also runs as a second desk on a Zerodha account (`MT_BROKER=zerodha`, service `handral-zerodha`,
-  port 3051; `kite.py`, `kitestream.py`, `mockkite.py`). Test it too: `tests/test_kite.py` runs with the unit tests,
+  The same code also runs as a stand-alone desk on a Zerodha account (`MT_BROKER=zerodha`, service `handral-zerodha`,
+  port 3051, own checkout/user/updater in `deploy/zerodha/`, no link to the Dhan desk or the scanner; `kite.py`,
+  `kitestream.py`, `mockkite.py`). Test it too: `tests/test_kite.py` runs with the unit tests,
   and with `MT_BROKER=zerodha MT_PORT=3060 python3 trade.py --demo` running, `node tests/e2e_kite.js`.
   Never commit the Kite API key/secret or access token.
