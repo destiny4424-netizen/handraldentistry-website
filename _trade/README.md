@@ -114,6 +114,15 @@ options shown under its chart). It needs the Dhan Data API subscription.
   Tap one to open that stock on the 15m chart. A new signal on the candle that just closed sends a phone alert
   (Account → Notifications → "HTF-KLB signals"). ⚙ on any chart saves the inputs on the server, so the chart and
   the scan always use the same ones; changing them re-checks the same candles at once.
+  - **Good volume only:** a stock is listed only if, from its own 15-minute candles (the earlier sessions in the
+    12 days), it trades ₹200 crore and 5 lakh shares a day on average and today is at 0.8× its usual pace for the
+    time of day or more (the Market's "good volume" rule; the header says how many were left out).
+  - **Once a stock a day** (owner: a stock given at 9:30 isn't given again): its first signal of the day, or before
+    one, its first crossing. One alert a stock a day.
+  - **Intraday checks** on every row (✓ / ✗): breakout candle volume 1.5× the usual for that time of day; close on
+    the right side of the day's VWAP; with NIFTY's direction (NIFTY then vs its open; one extra request a scan);
+    before 2 PM; and for signals, price not already 1R past the entry. A signal passing all of them is
+    **★ Strong**; strong ones sort first and the alert marks them. The indicator's own rules are unchanged.
 - **The chart on every instrument** uses TradingView's open-source **Lightweight Charts** v4.2.3 (Apache 2.0; an
   unmodified copy in `static/vendor/` with its licence and NOTICE, the same file the scanner uses). Candles from Dhan
   (1, 5, 15 or 60 minutes, or daily) with volume. Pinch or scroll to zoom, drag to go back in time, crosshair for

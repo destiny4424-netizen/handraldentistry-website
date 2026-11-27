@@ -39,7 +39,7 @@ import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
 from instruments import Instruments, KiteInstruments, MASTER_URL, KITE_MASTER_URL, public  # noqa: E402
 
-VERSION = "27 Nov 2026 · HTF-KLB crossings on every F&O stock (15m), with alerts"
+VERSION = "27 Nov 2026 · HTF-KLB list: good volume only, once a stock a day, intraday checks"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -973,8 +973,10 @@ def klb_alert(rows):
     """New HTF-KLB signals on the 15-minute candle that just closed: one phone alert."""
     if not ALERTS:
         return
-    lines = [f"{r['sym']} {'▲ LONG' if r['side'] == 'BUY' else '▼ SHORT'} {r['entry']:,.2f} · SL {r['sl']:,.2f} · TP {r['tgt']:,.2f} "
-             f"(1:{r['rr']:.1f})" for r in rows[:6]]
+    lines = [f"{'★ ' if r.get('strong') else ''}{r['sym']} {'▲ LONG' if r['side'] == 'BUY' else '▼ SHORT'} {r['entry']:,.2f} · "
+             f"SL {r['sl']:,.2f} · TP {r['tgt']:,.2f} (1:{r['rr']:.1f}) · "
+             + " ".join(("✓" if x["ok"] else "✗") + x["name"] for x in r.get("checks") or [] if x["ok"] is not None)
+             for r in rows[:6]]
     title = f"HTF-KLB: {rows[0]['sym']}" + (f" +{len(rows) - 1} more" if len(rows) > 1 else "")
     ALERTS.notify("klb", title, "\n".join(lines), url="/#klb")
 

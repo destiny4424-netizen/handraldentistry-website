@@ -1670,18 +1670,21 @@ function renderKlbScan(el) {
   const day = v.day ? new Date(v.day + 'T00:00').toLocaleDateString('en-IN', {weekday: 'short', day: 'numeric', month: 'short'}) : '';
   const res = r => r.status === 'OPEN' ? '<span class="sc-st up">open</span>'
     : `<span class="sc-st ${cls(r.r)}">${{TARGET: 'TP', STOPPED: 'SL', TRAILED: 'Trail', 'TIMED OUT': 'Time'}[r.status] || r.status} ${r.r > 0 ? '+' : ''}${r.r}R</span>`;
-  el.innerHTML = `<div class="muted small sc-head">${v.stocks ? `${v.stocks} F&amp;O stocks · ` : ''}15m chart, 4h key levels · ${day}${v.at ? ` · checked ${esc(v.at)}, every 15 min` : ''}${v.job ? ` · ${esc(v.job)}` : ''}</div>
+  const chk = r => (r.checks || []).length ? `<div class="klb-chk">${r.checks.map(x => `<span class="${x.ok === null ? 'muted' : x.ok ? 'up' : 'down'}">${x.ok === null ? '·' : x.ok ? '✓' : '✗'} ${esc(x.name)}</span>`).join('')}</div>` : '';
+  el.innerHTML = `<div class="muted small sc-head">${v.stocks ? `${v.stocks} F&amp;O stocks${v.thin ? `, ${v.thin} left out for low volume` : ''} · ` : ''}15m chart, 4h key levels · ${day}${v.at ? ` · checked ${esc(v.at)}, every 15 min` : ''}${v.job ? ` · ${esc(v.job)}` : ''}</div>
     <div class="klb-sum"><span><b>${all.length}</b> crossing${all.length === 1 ? '' : 's'}</span><span><b class="${sig.length ? 'up' : ''}">${sig.length}</b> signal${sig.length === 1 ? '' : 's'}</span>
       <button class="chip-toggle ${only ? 'on' : ''}" id="klbOnly">Signals only</button></div>
     ${rows.length ? `<div class="list sc-list">${rows.map((r, i) => `<div class="item sc-row" data-kli="${i}">
-      <div class="sc-top"><b>${esc(r.sym)}</b> <span class="pill ${r.side === 'BUY' ? 'buy' : 'sell'}">${r.side}</span><span class="muted small">${esc(r.at)}</span>
+      <div class="sc-top"><b>${esc(r.sym)}</b> <span class="pill ${r.side === 'BUY' ? 'buy' : 'sell'}">${r.side}</span>${r.strong ? '<span class="pill klb-strong">★ Strong</span>' : ''}<span class="muted small">${esc(r.at)}${r.rvol ? ` · ${r.rvol}× vol today` : ''}</span>
         ${r.signal ? res(r) : '<span class="sc-st">crossed</span>'}</div>
       ${r.signal ? `<div class="sc-lv"><span>Entry <b>${px(r.entry)}</b></span><span>SL <b class="down">${px(r.sl)}</b></span><span>TP <b class="up">${px(r.tgt)}</b></span><span>1:${r.rr}</span></div>`
         : `<div class="sc-lv"><span>Closed <b>${px(r.close)}</b> ${r.side === 'BUY' ? 'above the green' : 'below the red'} line <b class="${r.side === 'BUY' ? 'up' : 'down'}">${px(r.level)}</b></span></div>
-           <div class="muted small">Not a signal: ${esc(r.why || '')}</div>`}</div>`).join('')}</div>`
+           <div class="muted small">Not a signal: ${esc(r.why || '')}</div>`}${chk(r)}</div>`).join('')}</div>`
       : `<div class="muted small sc-empty">${only ? 'No HTF-KLB signals today yet.' : 'No stock has crossed its green or red line today yet.'}</div>`}
-    <div class="muted small sc-day">A crossing = a 15-minute candle closing beyond the previous 4-hour candle's high (green) or low (red).
-      A signal = your HTF-KLB rules all pass (body ≥ ${o.dispMult} × ATR, past the ${o.bufATR} × ATR buffer, stop ≥ ${o.minStopATR} × ATR, R:R ${o.rrMin}–${o.rrMax || '∞'}); new signals ring your phone. Change the inputs with ⚙ on any chart.</div>`;
+    <div class="muted small sc-day">Good-volume stocks only (₹${(v.liq || {}).min_turnover_cr || 200} cr and ${(v.liq || {}).min_avg_lakh || 5} lakh shares a day on average, today at ${(v.liq || {}).min_rvol || 0.8}× the usual pace or more), each stock once a day.
+      A crossing = a 15-minute candle closing beyond the previous 4-hour candle's high (green) or low (red).
+      A signal = your HTF-KLB rules all pass (body ≥ ${o.dispMult} × ATR, past the ${o.bufATR} × ATR buffer, stop ≥ ${o.minStopATR} × ATR, R:R ${o.rrMin}–${o.rrMax || '∞'}); new signals ring your phone.
+      ★ Strong = a signal that also passes the intraday checks: breakout candle volume 1.5× the usual for that time, on the right side of VWAP, with NIFTY's direction, before 2 PM, and not already 1R past the entry. Change the inputs with ⚙ on any chart.</div>`;
   $('#klbOnly').onclick = () => { setPref('klbSigOnly', !only); renderScreener(); };
 }
 function renderScreener() {

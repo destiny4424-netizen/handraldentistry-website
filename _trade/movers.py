@@ -17,6 +17,7 @@ Prices come in one request per kind (Dhan quotes, up to 1,000 instruments). The 
 every 15 minutes, 20 seconds after each candle closes (about a minute for all stocks); yesterday's futures OI
 once a day.
 """
+import math
 import threading
 import time
 import traceback
@@ -97,6 +98,62 @@ def opening_range_breaks(candles, pdh=None, pdl=None):
     return out
 
 
+def c15_liquidity(closed, day, cfg):
+    """"Good volume" from the 15-minute candles alone (the earlier sessions in them, up to 12 days): average shares
+    and rupees traded a day, and today's volume against the usual pace for this time of day. The same rule as
+    LIQ_DEFAULTS (₹200 crore, 5 lakh shares, 0.8× today)."""
+    by = {}
+    for c in closed:
+        by.setdefault(_date(c["t"]), []).append(c)
+    prev = [v for d, v in by.items() if d < day and len(v) >= 10]           # whole sessions only
+    today = by.get(day) or []
+    if len(prev) < 3 or not today:
+        return {"good": False, "rvol": None, "turnover_cr": None, "avg_lakh": None}
+    avg_v = sum(sum(c["v"] for c in v) for v in prev) / len(prev)
+    turnover = sum(sum(c["v"] * c["c"] for c in v) for v in prev) / len(prev) / 1e7
+    # the same slots in earlier sessions: how much is usually traded by now
+    slots = {_slot(c) for c in today}
+    usual = sum(sum(c["v"] for c in v if _slot(c) in slots) for v in prev) / len(prev)
+    rvol = sum(c["v"] for c in today) / usual if usual else None
+    good = turnover >= cfg["min_turnover_cr"] and avg_v >= cfg["min_avg_lakh"] * 1e5 and (rvol or 0) >= cfg["min_rvol"]
+    return {"good": good, "rvol": round(rvol, 2) if rvol else None, "turnover_cr": round(turnover), "avg_lakh": round(avg_v / 1e5, 1)}
+
+
+def _slot(c):
+    return ((c["t"] + 19800) % 86400 - 33300) // 900          # 15-minute slot of the session (0 = 9:15)
+
+
+def intraday_checks(closed, cross, trade, nifty15):
+    """What else a 15-minute breakout trade should have (shown as ✓ / ✗ on each row; None = can't tell):
+      volume     the breakout candle traded 1.5× the usual for that time of day (earlier sessions)
+      VWAP       buys close above the day's VWAP, sells below
+      NIFTY      NIFTY is moving the same way today (its price then vs its open)
+      time       before 2 PM: late breakouts have little day left to reach the target
+      not chased price now is within 1R of the entry (signals only)"""
+    i, side = cross["i"], cross["dir"]
+    b = closed[i]
+    d = _date(b["t"])
+    earlier = [c for c in closed if _date(c["t"]) < d and _slot(c) == _slot(b)]
+    usual = sum(c["v"] for c in earlier) / len(earlier) if earlier else 0
+    vol_x = b["v"] / usual if usual else None
+    upto = [c for c in closed[:i + 1] if _date(c["t"]) == d]
+    pv = sum(c["v"] for c in upto)
+    vwap = sum((c["h"] + c["l"] + c["c"]) / 3 * c["v"] for c in upto) / pv if pv else None
+    n_day = [c for c in nifty15 or [] if _date(c["t"]) == d and c["t"] <= b["t"]]
+    n_move = (n_day[-1]["c"] - n_day[0]["o"]) if n_day else None
+    end = datetime.fromtimestamp(b["t"] + 900, IST).strftime("%H:%M")
+    out = [
+        {"name": f"Volume {math.floor(vol_x * 10) / 10:.1f}×" if vol_x else "Volume", "ok": (vol_x >= 1.5) if vol_x else None},
+        {"name": "VWAP", "ok": ((b["c"] - vwap) * side >= 0) if vwap else None},
+        {"name": "With NIFTY", "ok": (n_move * side >= 0) if n_move is not None else None},
+        {"name": "Before 2 PM", "ok": end <= "14:00"},
+    ]
+    if trade:
+        last = closed[-1]["c"]
+        out.append({"name": "Not chased", "ok": (last - trade["entry"]) * side <= trade["risk"]})
+    return out
+
+
 class Movers:
     def __init__(self, dhan, instruments, now_fn, daily_fn, liq_fn=lambda: {}, quotes=None,
                  klb_opts_fn=lambda: {}, on_klb=lambda rows: None):
@@ -112,7 +169,8 @@ class Movers:
         self.klb_opts_fn, self.on_klb = klb_opts_fn, on_klb
         self.c15 = {}                                   # symbol -> (key, closed 15-minute candles) from the last scan
         self.klb = {"rows": [], "at": None, "day": "", "stocks": 0}
-        self.klb_seen = set()                           # signals already alerted (symbol, side, candle time)
+        self.klb_seen = set()                           # stocks already alerted today (symbol, day)
+        self.nifty15 = []                               # NIFTY's 15-minute candles, for the "with NIFTY" check
 
     def universe(self):
         out = {}
@@ -299,6 +357,14 @@ class Movers:
         daily = self.daily_fn() or {}
         found = []
         uni = self.universe()
+        nk = self.INST.under.get("NIFTY") if self.INST else None
+        if nk:                                          # one more request: NIFTY's direction for the checks
+            try:
+                self.nifty15 = [c for c in _rows(self.D.intraday(nk.split(":")[1], "IDX_I", "INDEX", "15",
+                                                                 (t - timedelta(days=3)).strftime("%Y-%m-%d 09:15:00"),
+                                                                 t.strftime("%Y-%m-%d %H:%M:%S"))) if c["t"] + 900 <= t.timestamp() - 15]
+            except Exception:
+                self.nifty15 = []
         for i, (sym, (k, _)) in enumerate(uni.items()):
             self.job = f"15-minute candles {i + 1}/{len(uni)}"
             try:
@@ -329,38 +395,48 @@ class Movers:
 
     # -- the owner's HTF Key Level Breakout on every F&O stock (15-minute chart, 4-hour key levels) -------------
     def run_klb(self, alert=False):
-        """Today's crossings of the green (4h high) and red (4h low) lines on every stock's 15-minute candles,
-        with what the indicator made of each: a signal (entry, SL, TP, result so far) or why not."""
+        """Today's HTF-KLB list, one row per stock (owner: a stock given at 9:30 isn't given again), good-volume
+        stocks only. A stock's row is its first signal of the day or, before one, its first crossing of the green
+        (4h high) or red (4h low) line. Each row carries the intraday checks for a 15-minute trade."""
         opts = klb.clean_opts(self.klb_opts_fn() or {})
         opts["htf"] = "240" if opts.get("htf", "auto") == "auto" else opts["htf"]
-        rows, day = [], ""
+        cfg = self.liq_cfg()
+        rows, day, thin = [], "", []
         for sym, (k, closed) in list(self.c15.items()):
-            res = klb.compute(closed, 15, opts)
             d = _date(closed[-1]["t"])
-            day = max(day, d)
+            liq = c15_liquidity(closed, d, cfg)
+            if not liq["good"]:
+                thin.append(sym)
+                continue
+            res = klb.compute(closed, 15, opts)
+            today = [c for c in res["crosses"] if _date(c["t"]) == d]
+            if not today:
+                continue
             by_i = {tr["i"]: tr for tr in res["trades"]}
-            for c in res["crosses"]:
-                if _date(c["t"]) != d:
-                    continue
-                tr = by_i.get(c["i"]) if c["why"] == "signal" else None
-                row = {"sym": sym, "key": k, "side": "BUY" if c["dir"] == 1 else "SELL", "t": c["t"],
-                       "at": datetime.fromtimestamp(c["t"] + 900, IST).strftime("%H:%M"), "level": round(c["level"], 2),
-                       "close": round(c["close"], 2), "why": c["why"], "sector": sector_of(sym), "day": d}
-                if tr:
-                    row.update(signal=True, entry=round(tr["entry"], 2), sl=round(tr["stop"], 2), tgt=round(tr["tgt"], 2),
-                               rr=round(tr["rr"], 2), status=tr.get("status") or "OPEN",
-                               r=round(tr["r"], 2) if tr.get("r") is not None else None)
-                rows.append(row)
+            c = next((x for x in today if x["why"] == "signal"), today[0])          # one row per stock a day
+            tr = by_i.get(c["i"]) if c["why"] == "signal" else None
+            row = {"sym": sym, "key": k, "side": "BUY" if c["dir"] == 1 else "SELL", "t": c["t"],
+                   "at": datetime.fromtimestamp(c["t"] + 900, IST).strftime("%H:%M"), "level": round(c["level"], 2),
+                   "close": round(c["close"], 2), "why": c["why"], "sector": sector_of(sym), "day": d,
+                   "rvol": liq["rvol"], "turnover_cr": liq["turnover_cr"]}
+            if tr:
+                row.update(signal=True, entry=round(tr["entry"], 2), sl=round(tr["stop"], 2), tgt=round(tr["tgt"], 2),
+                           rr=round(tr["rr"], 2), status=tr.get("status") or "OPEN",
+                           r=round(tr["r"], 2) if tr.get("r") is not None else None)
+            row["checks"] = intraday_checks(closed, c, tr, self.nifty15)
+            row["strong"] = bool(tr) and all(x["ok"] for x in row["checks"] if x["ok"] is not None)
+            rows.append(row)
+            day = max(day, d)
         rows = [r for r in rows if r["day"] == day]
-        rows.sort(key=lambda r: (r["t"], r.get("signal", False)), reverse=True)
+        rows.sort(key=lambda r: (r.get("strong", False), r.get("signal", False), r["t"]), reverse=True)
         self.klb = {"rows": rows, "at": self.now().strftime("%H:%M"), "day": day, "stocks": len(self.c15),
-                    "opts": dict(klb.DEFAULTS, **opts)}
+                    "thin": len(thin), "opts": dict(klb.DEFAULTS, **opts), "liq": cfg}
         if alert:
             fresh = self.now().timestamp() - 20 * 60     # only the candle that just closed: no backlog after a restart
-            new = [r for r in rows if r.get("signal") and r["t"] + 900 >= fresh and (r["sym"], r["side"], r["t"]) not in self.klb_seen]
+            new = [r for r in rows if r.get("signal") and r["t"] + 900 >= fresh and (r["sym"], r["day"]) not in self.klb_seen]
             for r in rows:
                 if r.get("signal"):
-                    self.klb_seen.add((r["sym"], r["side"], r["t"]))
+                    self.klb_seen.add((r["sym"], r["day"]))   # once a stock a day
             if new:
                 self.on_klb(new)
         return self.klb
