@@ -15,7 +15,7 @@ import traceback
 
 KINDS = {"orders": "Orders filled or rejected", "pnl": "Loss steps and the daily loss limit",
          "bot": "Auto-trader trades and problems", "rules": "Orders waiting for confirmation",
-         "routine": "9 AM plan and 3:45 PM journal reminders"}
+         "routine": "9 AM plan and 3:45 PM journal reminders", "klb": "HTF-KLB signals (15m, all F&O stocks)"}
 DEFAULTS = {"kinds": list(KINDS), "loss_step": 5000}
 
 
