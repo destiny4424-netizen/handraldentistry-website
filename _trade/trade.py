@@ -1837,7 +1837,10 @@ class Handler(BaseHTTPRequestHandler):
     def kite_callback(self, q):
         """Kite's login page sends the browser here with a one-time request_token. The state (made when the
         Log in button was tapped, 10 minutes) proves it is our own login. The token is swapped for the day's
-        access token with the app's secret, which never leaves this server."""
+        access token with the app's secret, which never leaves this server.
+        The state is only a check, not a lock: Zerodha may not send it back, and it is lost when the desk restarts
+        (e.g. an update while she was on Zerodha's page). A Kite Connect app only lets its owner's own Zerodha
+        account log in, so a token that our secret accepts can only be hers."""
         def page(title, text, ok):
             back = '<meta http-equiv="refresh" content="2;url=/">' if ok else ""
             html = (f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,'
@@ -1846,21 +1849,31 @@ class Handler(BaseHTTPRequestHandler):
                     f'<p>{text}</p><p><a href="/">Open the trading desk</a></p></body></html>')
             return self.send(200 if ok else 400, html.encode(), "text/html; charset=utf-8")
         state = q.get("state", "")
-        if not state or KITE_STATES.pop(state, 0) < time.time():
-            return page("Login not accepted", "This login link is old or wasn't started from the desk. Open the desk "
-                        "and tap Log in with Zerodha again.", False)
+        known = bool(state) and KITE_STATES.pop(state, 0) >= time.time()
+        print(f"Zerodha login came back: status={q.get('status')!r} token={'yes' if q.get('request_token') else 'no'} "
+              f"state={'ours' if known else 'missing' if not state else 'unknown'}", flush=True)
         if q.get("status") != "success" or not q.get("request_token"):
+            STATUS["token_note"] = "The Zerodha login was cancelled or didn't finish. Tap Log in with Zerodha again."
+            audit("kite_login_failed", error="no request_token", status=q.get("status"))
             return page("Zerodha login cancelled", "Nothing changed.", False)
+        if not (D.api_key and D.api_secret):
+            STATUS["token_note"] = "Save the Kite Connect API key and secret first (Account → Zerodha login)."
+            return page("Zerodha login failed", STATUS["token_note"], False)
         try:
             sess = D.exchange(q["request_token"])
         except dhanlib.DhanError as e:
-            audit("kite_login_failed", error=str(e))
-            return page("Zerodha login failed", str(e).replace("<", "&lt;"), False)
+            audit("kite_login_failed", error=str(e), state=known)
+            print(f"Zerodha login failed: {e}", flush=True)
+            STATUS["token_note"] = f"Zerodha login failed: {e}"
+            return page("Zerodha login failed", str(e).replace("<", "&lt;") +
+                        "<br><br>If it mentions the checksum or api_key, save the API key and secret again "
+                        "(Account → Zerodha login) and log in again.", False)
         save_settings(kite_token=sess["access_token"], kite_user=sess.get("user_id") or "",
                       kite_user_name=sess.get("user_name") or sess.get("user_shortname") or "", kite_at=time.time())
         STATUS["token_note"] = ""
         pick_token()
-        audit("kite_login", user=sess.get("user_id"))
+        audit("kite_login", user=sess.get("user_id"), state=known)
+        print(f"Zerodha login OK for {sess.get('user_id')}", flush=True)
         threading.Thread(target=sync, daemon=True).start()
         return page("Zerodha connected ✓", "Going back to the desk…", True)
 

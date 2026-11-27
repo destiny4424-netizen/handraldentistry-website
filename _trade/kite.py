@@ -173,7 +173,7 @@ class Kite:
             code = ERRORS.get(et, "DH-901" if e.code in (401, 403) else "DH-904" if e.code == 429 else "DH-910")
             base = {"DH-901": "Zerodha rejected the login (it ends at 6 AM each day): log in with Zerodha again.",
                     "DH-904": "Zerodha is rate-limiting requests. Wait a moment and try again."}.get(code, f"Zerodha error {e.code}.")
-            if code == "DH-901":
+            if code == "DH-901" and auth:               # our access token was refused (not a failed login attempt)
                 self.token = ""                        # the app shows "not connected" until the next login
             raise DhanError(f"{base} {('Zerodha says: ' + msg) if msg else text[:200]}".strip(),
                             code=code, status=e.code, raw=text[:1000]) from None
