@@ -94,8 +94,13 @@ function check(ok, what) {
   await page.waitForSelector('#wl .item');
   const back = await page.evaluate(() => api('/api/status').then(s => s.connected && s.kite_user_name));
   check(back === 'Demo Zerodha', 'logged in again through the Kite login page');
-  const stale = await (await ctx.request.get(BASE + '/kite/callback?request_token=demo-request&status=success&state=made-up')).text();
-  check(stale.includes('Login not accepted'), 'a login that wasn\'t started from the desk is refused');
+  await apiPost('/api/kite/logout', {});
+  const nostate = await (await ctx.request.get(BASE + '/kite/callback?request_token=demo-request&status=success&action=login')).text();
+  check(nostate.includes('Zerodha connected'), 'a login that comes back without the state (or after a restart) still connects');
+  const bad = await (await ctx.request.get(BASE + '/kite/callback?request_token=forged&status=success')).text();
+  check(bad.includes('Zerodha login failed'), 'a request token Zerodha doesn\'t accept is refused');
+  const note = await page.evaluate(() => api('/api/status').then(s => s.token_note || ''));
+  check(/login failed/i.test(note), 'the reason shows in the banner');
 
   // exit all
   await page.click('#tabs button[data-tab="positions"]');

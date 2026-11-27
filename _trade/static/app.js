@@ -193,7 +193,7 @@ async function loadStatus() {
     $('#conn').title = s.connected ? `Dhan ${s.client}` + (s.feed_error ? ' · ' + s.feed_error : '') : 'Dhan not connected';
     const b = $('#banner');
     let msg = '';
-    if (!s.connected) msg = s.broker === 'zerodha' ? 'Not logged in to Zerodha. Open Account → Zerodha login and tap Log in with Zerodha (once each morning).'
+    if (!s.connected) msg = s.broker === 'zerodha' ? (s.token_note || 'Not logged in to Zerodha. Open Account → Zerodha login and tap Log in with Zerodha (once each morning).')
       : 'Dhan isn\'t connected yet. Open Account → Dhan login and paste your Client ID and access token.';
     else if (s.token_note && /expired|failed|ended/i.test(s.token_note)) msg = s.token_note;
     else if (s.feed_error) msg = s.feed_error;
