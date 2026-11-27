@@ -32,13 +32,14 @@ import mcx                                              # noqa: E402
 from webpush import Push                                # noqa: E402
 from alerts import Alerts, KINDS as ALERT_KINDS          # noqa: E402
 from movers import Movers                               # noqa: E402
+import klb                                              # noqa: E402
 import quick                                            # noqa: E402
 import stream                                           # noqa: E402
 import screener                                         # noqa: E402
 import lookup                                           # noqa: E402
 from instruments import Instruments, KiteInstruments, MASTER_URL, KITE_MASTER_URL, public  # noqa: E402
 
-VERSION = "27 Nov 2026 · your HTF Key Level Breakout indicator on the chart"
+VERSION = "27 Nov 2026 · HTF-KLB crossings on every F&O stock (15m), with alerts"
 IST = timezone(timedelta(hours=5, minutes=30))
 DEMO = "--demo" in sys.argv or os.environ.get("MT_DEMO") == "1"
 CLOUD = os.environ.get("MT_CLOUD") == "1"
@@ -968,6 +969,16 @@ def watch_traded(trades=None):
     return added
 
 
+def klb_alert(rows):
+    """New HTF-KLB signals on the 15-minute candle that just closed: one phone alert."""
+    if not ALERTS:
+        return
+    lines = [f"{r['sym']} {'▲ LONG' if r['side'] == 'BUY' else '▼ SHORT'} {r['entry']:,.2f} · SL {r['sl']:,.2f} · TP {r['tgt']:,.2f} "
+             f"(1:{r['rr']:.1f})" for r in rows[:6]]
+    title = f"HTF-KLB: {rows[0]['sym']}" + (f" +{len(rows) - 1} more" if len(rows) > 1 else "")
+    ALERTS.notify("klb", title, "\n".join(lines), url="/#klb")
+
+
 def watch_soon():
     for wait in (3, 20):                               # once Dhan shows the fill
         time.sleep(wait)
@@ -1521,6 +1532,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, BOT.view())
         if path == "/api/pin":
             return self.send(200, {"set": pin_set(), "hours": PIN_HOURS})
+        if path == "/api/klb":
+            v = dict(MOVERS.klb) if MOVERS else {"rows": []}
+            v.update(job=MOVERS.job if MOVERS else "", opts=dict(klb.DEFAULTS, **klb.clean_opts(SETTINGS.get("klb") or {})))
+            return self.send(200, v)
         if path == "/api/market":
             return self.send(200, MOVERS.snapshot())
         if path == "/api/push":
@@ -1593,6 +1608,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(code, r)
         if path == "/api/order/preview":
             return self.send(200, preview(b))
+        if path == "/api/klb/settings":
+            save_settings(klb=klb.clean_opts(b))
+            if MOVERS and MOVERS.c15:
+                MOVERS.run_klb()                           # the same candles, the new inputs: no Dhan calls
+            return self.send(200, {"ok": True, "opts": dict(klb.DEFAULTS, **klb.clean_opts(b))})
         if path == "/api/order":
             code, r = place(b)
             if code == 200 and not r.get("armed"):        # a trade from this app: on the watchlist in seconds
@@ -1924,7 +1944,8 @@ def main():
                           notify=lambda t, body: PUSH.send(t, body, tag="quick") if PUSH else None)
     threading.Thread(target=quick_loop, daemon=True).start()
     global MOVERS
-    MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"), QUOTES)
+    MOVERS = Movers(D, INST, now, lambda: BOT.hist if BOT else {}, lambda: SETTINGS.get("liquidity"), QUOTES,
+                    klb_opts_fn=lambda: SETTINGS.get("klb") or {}, on_klb=klb_alert)
     threading.Thread(target=MOVERS.loop, args=(lambda: D.ready and bool(INST.by_key),), daemon=True).start()
     if KITE:
         STREAM = kitestream.KiteStream("ws://127.0.0.1:3094/" if DEMO else KITE_FEED,

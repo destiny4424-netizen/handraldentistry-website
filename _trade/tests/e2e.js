@@ -544,6 +544,23 @@ function check(ok, what) {
   check(scanAsked, 'screener: Scan now reaches the scanner');
   await page.evaluate(() => loadScreener());
 
+  // HTF-KLB on every F&O stock: today's crossings of the green / red lines on 15 minutes
+  await page.click('#scSeg button[data-v="klb"]');
+  const klbOk = await page.waitForFunction(() => /15m chart, 4h key levels/.test((document.querySelector('#scBody') || {}).textContent || ''),
+    null, {timeout: 60000, polling: 1000}).then(() => true, () => false);
+  check(klbOk && !!(await page.$('#klbOnly')), 'screener: HTF-KLB 15m list over the F&O stocks');
+  await page.waitForFunction(() => document.querySelector('#scBody .klb-sum') && (S.klbScan.rows || []).length, null, {timeout: 60000, polling: 2000}).catch(() => {});
+  const nKlb = await page.evaluate(() => (S.klbScan.rows || []).length);
+  if (nKlb) {
+    check(/Closed [\d,.]+ (above|below) the (green|red) line|Entry [\d,.]+/.test(await page.textContent('#scBody .sc-row')), `screener: HTF-KLB crossings listed (${nKlb})`);
+    await shot('32-screener-klb');
+    await page.click('#scBody [data-kli="0"]');
+    await page.waitForSelector('.klb', {timeout: 15000});
+    check(await page.$eval('#tf button.on', b => b.dataset.tf) === '15', 'screener: an HTF-KLB row opens that stock on the 15m chart');
+    await page.click('.sh-close');
+  }
+  await page.click('#scSeg button[data-v="intraday"]');
+
   // Check a stock: the scanner's rules on any stock, right away
   await page.fill('#scSym', 'sbin');
   await page.click('#scGo');

@@ -23,6 +23,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 
 from picks import sector_of                               # the scanner's sector list
+import klb                                                 # the owner's HTF Key Level Breakout indicator
 
 IST = timezone(timedelta(hours=5, minutes=30))
 INDICES = ["NIFTY", "BANKNIFTY", "SENSEX"]        # the cards above the watchlist (owner: no FIN NIFTY, MIDCAP, VIX)
@@ -97,7 +98,8 @@ def opening_range_breaks(candles, pdh=None, pdl=None):
 
 
 class Movers:
-    def __init__(self, dhan, instruments, now_fn, daily_fn, liq_fn=lambda: {}, quotes=None):
+    def __init__(self, dhan, instruments, now_fn, daily_fn, liq_fn=lambda: {}, quotes=None,
+                 klb_opts_fn=lambda: {}, on_klb=lambda rows: None):
         """daily_fn(): {symbol: daily candles (oldest first, completed days)} - the auto-trader's cache.
         liq_fn(): saved changes to LIQ_DEFAULTS."""
         self.D, self.INST, self.now, self.daily_fn, self.liq_fn = dhan, instruments, now_fn, daily_fn, liq_fn
@@ -107,6 +109,10 @@ class Movers:
         self.prev_oi, self.prev_oi_day = {}, ""
         self.lock = threading.Lock()
         self.job = ""
+        self.klb_opts_fn, self.on_klb = klb_opts_fn, on_klb
+        self.c15 = {}                                   # symbol -> (key, closed 15-minute candles) from the last scan
+        self.klb = {"rows": [], "at": None, "day": "", "stocks": 0}
+        self.klb_seen = set()                           # signals already alerted (symbol, side, candle time)
 
     def universe(self):
         out = {}
@@ -296,14 +302,15 @@ class Movers:
         for i, (sym, (k, _)) in enumerate(uni.items()):
             self.job = f"15-minute candles {i + 1}/{len(uni)}"
             try:
-                rows = _rows(self.D.intraday(k.split(":")[1], "NSE_EQ", "EQUITY", "15",
-                                             (t - timedelta(days=5)).strftime("%Y-%m-%d 09:15:00"),
+                rows = _rows(self.D.intraday(k.split(":")[1], "NSE_EQ", "EQUITY", "15",     # 12 days: 4h ATR for HTF-KLB
+                                             (t - timedelta(days=12)).strftime("%Y-%m-%d 09:15:00"),
                                              t.strftime("%Y-%m-%d %H:%M:%S")))
             except Exception:
                 continue
             closed = [c for c in rows if c["t"] + 900 <= t.timestamp() - 15]
             if not closed:
                 continue
+            self.c15[sym] = (k, closed)
             last_day = _date(closed[-1]["t"])                    # today, or the last session before it
             day = [c for c in closed if _date(c["t"]) == last_day]
             d = [c for c in daily.get(sym) or [] if _date(c["t"]) < last_day]
@@ -313,8 +320,50 @@ class Movers:
         found.sort(key=lambda b: (b["at"], -abs(b["beyond_pct"])), reverse=True)
         self.breaks, self.breaks_at = found, t.strftime("%H:%M")
         self.breaks_day = t.strftime("%Y-%m-%d")
+        try:
+            self.run_klb(alert=True)
+        except Exception:
+            traceback.print_exc()
         self.job = ""
         self.snap_at = 0
+
+    # -- the owner's HTF Key Level Breakout on every F&O stock (15-minute chart, 4-hour key levels) -------------
+    def run_klb(self, alert=False):
+        """Today's crossings of the green (4h high) and red (4h low) lines on every stock's 15-minute candles,
+        with what the indicator made of each: a signal (entry, SL, TP, result so far) or why not."""
+        opts = klb.clean_opts(self.klb_opts_fn() or {})
+        opts["htf"] = "240" if opts.get("htf", "auto") == "auto" else opts["htf"]
+        rows, day = [], ""
+        for sym, (k, closed) in list(self.c15.items()):
+            res = klb.compute(closed, 15, opts)
+            d = _date(closed[-1]["t"])
+            day = max(day, d)
+            by_i = {tr["i"]: tr for tr in res["trades"]}
+            for c in res["crosses"]:
+                if _date(c["t"]) != d:
+                    continue
+                tr = by_i.get(c["i"]) if c["why"] == "signal" else None
+                row = {"sym": sym, "key": k, "side": "BUY" if c["dir"] == 1 else "SELL", "t": c["t"],
+                       "at": datetime.fromtimestamp(c["t"] + 900, IST).strftime("%H:%M"), "level": round(c["level"], 2),
+                       "close": round(c["close"], 2), "why": c["why"], "sector": sector_of(sym), "day": d}
+                if tr:
+                    row.update(signal=True, entry=round(tr["entry"], 2), sl=round(tr["stop"], 2), tgt=round(tr["tgt"], 2),
+                               rr=round(tr["rr"], 2), status=tr.get("status") or "OPEN",
+                               r=round(tr["r"], 2) if tr.get("r") is not None else None)
+                rows.append(row)
+        rows = [r for r in rows if r["day"] == day]
+        rows.sort(key=lambda r: (r["t"], r.get("signal", False)), reverse=True)
+        self.klb = {"rows": rows, "at": self.now().strftime("%H:%M"), "day": day, "stocks": len(self.c15),
+                    "opts": dict(klb.DEFAULTS, **opts)}
+        if alert:
+            fresh = self.now().timestamp() - 20 * 60     # only the candle that just closed: no backlog after a restart
+            new = [r for r in rows if r.get("signal") and r["t"] + 900 >= fresh and (r["sym"], r["side"], r["t"]) not in self.klb_seen]
+            for r in rows:
+                if r.get("signal"):
+                    self.klb_seen.add((r["sym"], r["side"], r["t"]))
+            if new:
+                self.on_klb(new)
+        return self.klb
 
     def loop(self, ready):
         """Background thread: OI once a day, breakouts every 15 minutes in market hours (and once at start)."""

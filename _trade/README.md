@@ -105,6 +105,15 @@ options shown under its chart). It needs the Dhan Data API subscription.
   - closed candles only, like the script's alerts. ATR is Wilder's (TradingView's `ta.atr`). The target needs 14+
     higher-timeframe candles on the chart: the panel says so when there are fewer.
   - tested on made-up candles in `tests/klb.test.js` (run by `tests/test_klb.py`).
+- **HTF-KLB on every F&O stock (Screener → HTF-KLB 15m):** the 15-minute candles the Market lists already read
+  every 15 minutes (now 12 days of them, enough for the 4-hour ATR) also go through the indicator's server copy
+  (`klb.py`, checked trade for trade against the chart's `static/htfklb.js` in `tests/test_klb.py`). No extra Dhan
+  requests. The list shows today's **crossings**: a 15-minute close beyond the previous 4-hour candle's high (green)
+  or low (red). Each is either a **signal** (all the rules pass: entry, SL, TP, R:R and how it's doing) or says why
+  not (body too small, R:R outside the band, stop too tight, level already fired…). "Signals only" filters it.
+  Tap one to open that stock on the 15m chart. A new signal on the candle that just closed sends a phone alert
+  (Account → Notifications → "HTF-KLB signals"). ⚙ on any chart saves the inputs on the server, so the chart and
+  the scan always use the same ones; changing them re-checks the same candles at once.
 - **The chart on every instrument** uses TradingView's open-source **Lightweight Charts** v4.2.3 (Apache 2.0; an
   unmodified copy in `static/vendor/` with its licence and NOTICE, the same file the scanner uses). Candles from Dhan
   (1, 5, 15 or 60 minutes, or daily) with volume. Pinch or scroll to zoom, drag to go back in time, crosshair for

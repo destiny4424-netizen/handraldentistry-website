@@ -427,7 +427,7 @@ async function ensureInfo(key) {
   return S.info[key];
 }
 
-async function openInstrument(key) {
+async function openInstrument(key, tf0 = '5') {
   const it = await ensureInfo(key);
   if (!it) return toast('Unknown instrument', 'bad');
   S.ticket = null; S.sheetKey = key;
@@ -436,7 +436,7 @@ async function openInstrument(key) {
   openSheet(`<div class="sh-head"><div><h2>${esc(shortName(it))} ${kindTag(it)}</h2><div class="muted small">${esc(it.name)}${it.lot > 1 ? ' · lot size ' + it.lot : ''}</div></div>
     <button class="sh-close" aria-label="Close">✕</button></div>
     <div><span class="bigprice" id="shLtp">–</span> <span id="shChg" class="chg"></span></div>
-    <div class="chips tf" id="tf">${['1', '5', '15', '60', 'D'].map(t => `<button data-tf="${t}" class="${t === '5' ? 'on' : ''}">${t === 'D' ? 'Day' : t + 'm'}</button>`).join('')}</div>
+    <div class="chips tf" id="tf">${['1', '5', '15', '60', 'D'].map(t => `<button data-tf="${t}" class="${t === tf0 ? 'on' : ''}">${t === 'D' ? 'Day' : t + 'm'}</button>`).join('')}</div>
     <div class="chart" id="chart"></div>
     <div id="klb"></div>
     <div id="miniChain"></div>
@@ -448,7 +448,7 @@ async function openInstrument(key) {
   $('#tf').onclick = e => { const b = e.target.closest('button[data-tf]'); if (!b) return; $$('#tf button[data-tf]').forEach(x => x.classList.toggle('on', x === b)); drawChart(key, b.dataset.tf); };
   $('#tf').insertAdjacentHTML('beforeend', `<button id="klbBtn" class="klb-btn ${S.klbOn ? 'on' : ''}" title="HTF Key Level Breakout">HTF-KLB</button>`);
   $('#klbBtn').onclick = () => { S.klbOn = !S.klbOn; setPref('klb', S.klbOn); $('#klbBtn').classList.toggle('on', S.klbOn); drawChart(key, S.chartTf || '5'); };
-  drawChart(key, '5');
+  drawChart(key, tf0);
   pollQuotes();
   S.mini = {key, ul, expiry: it.opt ? it.expiry : ''};
   loadMiniChain(key);
@@ -606,7 +606,11 @@ function drawKLB(key, tf, rows, tfn, candles) {
       : `<div class="field"><label>${label}</label><input data-ko="${k}" inputmode="decimal" value="${o[k]}"></div>`).join('')}
       <div class="ord-actions"><button id="klbApply">Apply</button><button class="ghost" id="klbReset">Script defaults</button></div></div></div>`;
   $('#klbSet').onclick = () => $('#klbForm').classList.toggle('hidden');
-  const save = v => { try { localStorage.setItem('mt-klb-opts', JSON.stringify(v)); } catch (e) { /* private mode */ } drawChart(key, tf); };
+  const save = v => {
+    try { localStorage.setItem('mt-klb-opts', JSON.stringify(v)); } catch (e) { /* private mode */ }
+    api('/api/klb/settings', v).then(() => { S.klbScan = null; }).catch(e => toast(e.message, 'bad'));
+    drawChart(key, tf);
+  };
   $('#klbApply').onclick = () => {
     const v = {};
     $$('#klbForm [data-ko]').forEach(el => { const k = el.dataset.ko; v[k] = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : (parseFloat(el.value) || 0); });
@@ -1612,7 +1616,7 @@ function renderAuto(a) {
 S.qk = null;
 let qkUlsLoaded = false;
 // ---- screener: the Meridian scanner's intraday and swing picks --------------------------------------------
-S.scSeg = pref('scSwing', false) ? 'swing' : 'intraday';
+S.scSeg = (() => { try { return localStorage.getItem('mt-scSeg') || (pref('scSwing', false) ? 'swing' : 'intraday'); } catch (e) { return 'intraday'; } })();
 let scUlsLoaded = false;
 async function loadScreener() {
   if (!scUlsLoaded) {
@@ -1650,9 +1654,40 @@ function scStats(live, bt) {
 function scMonth(m) {
   return m ? new Date(m + '-01T00:00').toLocaleDateString('en-IN', {month: 'short', year: 'numeric'}) : 'this month';
 }
+// HTF-KLB on every F&O stock: today's crossings of the green / red line on the 15-minute chart
+async function loadKlbScan() {
+  try { S.klbScan = await api('/api/klb'); } catch (e) { S.klbScan = {rows: [], error: e.message}; }
+  try { localStorage.setItem('mt-klb-opts', JSON.stringify(S.klbScan.opts || {})); } catch (e) { /* private mode */ }
+  if (S.tab === 'screener' && S.scSeg === 'klb') renderScreener();
+}
+function renderKlbScan(el) {
+  const v = S.klbScan;
+  if (!v) { el.innerHTML = '<div class="muted small">Loading…</div>'; return; }
+  if (v.error) { el.innerHTML = `<div class="badbox">${esc(v.error)}</div>`; return; }
+  const all = v.rows || [], sig = all.filter(r => r.signal), only = pref('klbSigOnly', false);
+  const rows = only ? sig : all, o = v.opts || {};
+  S.klbList = rows;
+  const day = v.day ? new Date(v.day + 'T00:00').toLocaleDateString('en-IN', {weekday: 'short', day: 'numeric', month: 'short'}) : '';
+  const res = r => r.status === 'OPEN' ? '<span class="sc-st up">open</span>'
+    : `<span class="sc-st ${cls(r.r)}">${{TARGET: 'TP', STOPPED: 'SL', TRAILED: 'Trail', 'TIMED OUT': 'Time'}[r.status] || r.status} ${r.r > 0 ? '+' : ''}${r.r}R</span>`;
+  el.innerHTML = `<div class="muted small sc-head">${v.stocks ? `${v.stocks} F&amp;O stocks · ` : ''}15m chart, 4h key levels · ${day}${v.at ? ` · checked ${esc(v.at)}, every 15 min` : ''}${v.job ? ` · ${esc(v.job)}` : ''}</div>
+    <div class="klb-sum"><span><b>${all.length}</b> crossing${all.length === 1 ? '' : 's'}</span><span><b class="${sig.length ? 'up' : ''}">${sig.length}</b> signal${sig.length === 1 ? '' : 's'}</span>
+      <button class="chip-toggle ${only ? 'on' : ''}" id="klbOnly">Signals only</button></div>
+    ${rows.length ? `<div class="list sc-list">${rows.map((r, i) => `<div class="item sc-row" data-kli="${i}">
+      <div class="sc-top"><b>${esc(r.sym)}</b> <span class="pill ${r.side === 'BUY' ? 'buy' : 'sell'}">${r.side}</span><span class="muted small">${esc(r.at)}</span>
+        ${r.signal ? res(r) : '<span class="sc-st">crossed</span>'}</div>
+      ${r.signal ? `<div class="sc-lv"><span>Entry <b>${px(r.entry)}</b></span><span>SL <b class="down">${px(r.sl)}</b></span><span>TP <b class="up">${px(r.tgt)}</b></span><span>1:${r.rr}</span></div>`
+        : `<div class="sc-lv"><span>Closed <b>${px(r.close)}</b> ${r.side === 'BUY' ? 'above the green' : 'below the red'} line <b class="${r.side === 'BUY' ? 'up' : 'down'}">${px(r.level)}</b></span></div>
+           <div class="muted small">Not a signal: ${esc(r.why || '')}</div>`}</div>`).join('')}</div>`
+      : `<div class="muted small sc-empty">${only ? 'No HTF-KLB signals today yet.' : 'No stock has crossed its green or red line today yet.'}</div>`}
+    <div class="muted small sc-day">A crossing = a 15-minute candle closing beyond the previous 4-hour candle's high (green) or low (red).
+      A signal = your HTF-KLB rules all pass (body ≥ ${o.dispMult} × ATR, past the ${o.bufATR} × ATR buffer, stop ≥ ${o.minStopATR} × ATR, R:R ${o.rrMin}–${o.rrMax || '∞'}); new signals ring your phone. Change the inputs with ⚙ on any chart.</div>`;
+  $('#klbOnly').onclick = () => { setPref('klbSigOnly', !only); renderScreener(); };
+}
 function renderScreener() {
   const v = S.sc, seg = S.scSeg, el = $('#scBody');
   $$('#scSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === seg));
+  if (seg === 'klb') { if (!S.klbScan) loadKlbScan(); return renderKlbScan(el); }
   if (!v) return;
   if (!v.ok) { el.innerHTML = `<div class="badbox">${esc(v.error || 'The scanner is not available.')}</div>`; return; }
   const st = v.status || '', bad = st === 'error' || v.overdue || st === 'scanning' || st === 'starting';
@@ -1737,7 +1772,11 @@ $('#scOut').onclick = e => {
   openTicket(S.lk.key, x.side, {sl: String(x.sl), target: String(x.t1),
     note: `${S.lk.sym}: ${x.side === 'BUY' ? 'buy above' : 'sell below'} ₹${px(x.entry)} · SL ₹${px(x.sl)} · exit ${t}. Stop-loss and target 1 are filled in.`});
 };
-$('#scSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.scSeg = b.dataset.v; setPref('scSwing', S.scSeg === 'swing'); renderScreener(); };
+$('#scSeg').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.scSeg = b.dataset.v; try { localStorage.setItem('mt-scSeg', S.scSeg); } catch (er) { /* private mode */ }
+  renderScreener(); if (S.scSeg === 'klb') loadKlbScan();
+};
 $('#scBody').onclick = async e => {
   if (e.target.closest('#scScanNow')) {
     try { await api('/api/screener/scan', {}); toast('Scan started. It takes about a minute.', 'ok', 5000); setTimeout(loadScreener, 20000); setTimeout(loadScreener, 70000); }
@@ -1748,6 +1787,8 @@ $('#scBody').onclick = async e => {
     try { await api('/api/screener/backtest', {}); toast('Backtest started on the scanner. It takes a few minutes.', 'ok', 6000); } catch (er) { toast(er.message, 'bad'); }
     return;
   }
+  const kr = e.target.closest('[data-kli]');
+  if (kr) { const x = (S.klbList || [])[+kr.dataset.kli]; if (x) openInstrument(x.key, '15'); return; }
   const r = e.target.closest('.sc-row'); if (!r) return;
   const x = (S.scList || [])[+r.dataset.sci]; if (!x) return;
   if (!x.key) return toast(`${x.sym} isn't in Dhan's list`, 'bad');
@@ -1755,7 +1796,7 @@ $('#scBody').onclick = async e => {
   openTicket(x.key, x.side, {sl: String(x.sl), target: String(x.t1),
     note: `Screener: ${x.side === 'BUY' ? 'buy above' : 'sell below'} ₹${px(x.entry)} · SL ₹${px(x.sl)} · exit ${t}. Stop-loss and target 1 are filled in.`});
 };
-setInterval(() => { if (!document.hidden && S.tab === 'screener') loadScreener(); }, 20000);
+setInterval(() => { if (!document.hidden && S.tab === 'screener') { loadScreener(); if (S.scSeg === 'klb') loadKlbScan(); } }, 20000);
 
 async function loadQuick() {
   if (!qkUlsLoaded) {
@@ -1873,6 +1914,8 @@ try { const th = localStorage.getItem('mt-theme'); if (th) document.documentElem
   if (['watch', 'quick', 'screener', 'orders', 'positions', 'auto', 'insights', 'account'].includes(h)) setTimeout(() => showTab(h), 0);
   if (h === 'market' || h === 'chain') setTimeout(() => showTab('watch'), 0);
   if (h === 'journal') setTimeout(() => openJournal(), 800);
+  if (h === 'klb') { S.scSeg = 'klb'; setTimeout(() => showTab('screener'), 0); }       // from an HTF-KLB alert
+  loadKlbScan();                                            // the chart's HTF-KLB inputs come from the server
   await loadStatus();
   renderWlTabs(); renderWl();
   loadFunds(); loadOrders(); loadPlan(); loadMarket();
