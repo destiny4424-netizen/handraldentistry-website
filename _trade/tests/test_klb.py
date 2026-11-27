@@ -21,7 +21,7 @@ class SameAsTheChart(unittest.TestCase):
     """klb.py (the server's scan) and static/htfklb.js (the chart) give the same trades on the same candles."""
 
     @staticmethod
-    def candles(seed, days=30, tf=15):
+    def candles(seed, days=30, tf=15, vol=100000):
         import random
         rng, out, px = random.Random(seed), [], 1000.0
         day0 = 1795292100 - 33300                      # an IST midnight
@@ -33,7 +33,8 @@ class SameAsTheChart(unittest.TestCase):
                     jump = rng.choice([0, 0, 0, 0, 0, 0, 0, 1]) * rng.uniform(4, 12) * rng.choice([1, -1])
                     c = max(1.0, px + rng.gauss(0, 3) + jump)
                     out.append({"t": day0 + d * 86400 + 33300 + k * tf * 60, "o": round(o, 2), "h": round(max(o, c) + abs(rng.gauss(0, 1.5)), 2),
-                                "l": round(min(o, c) - abs(rng.gauss(0, 1.5)), 2), "c": round(c, 2)})
+                                "l": round(min(o, c) - abs(rng.gauss(0, 1.5)), 2), "c": round(c, 2),
+                                "v": round(vol * rng.uniform(0.5, 1.5) * (3 if jump else 1))})
                     px = c
             d += 1
         return out
@@ -72,15 +73,17 @@ class SameAsTheChart(unittest.TestCase):
 
 
 class Scan(unittest.TestCase):
-    """The 15-minute scan over every F&O stock (movers.Movers.run_klb)."""
+    """The 15-minute scan over every F&O stock (movers.Movers.run_klb): good volume only, once a stock a day,
+    the intraday checks, alerts."""
 
-    def test_crossings_signals_and_alerts(self):
+    def test_volume_once_a_day_checks_and_alerts(self):
         import sys
         from datetime import datetime, timedelta, timezone
         sys.path.insert(0, os.path.dirname(HERE))
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "_scanner"))
         import movers
-        bars = SameAsTheChart.candles(1, tf=15)
+        bars = SameAsTheChart.candles(1, tf=15)                 # ~₹250 crore a day: good volume
+        thin = SameAsTheChart.candles(2, tf=15, vol=200)        # a few lakh rupees a day: left out
         last = bars[-1]["t"] + 900
         clock = {"t": last + 30}
         ist = timezone(timedelta(hours=5, minutes=30))
@@ -88,27 +91,60 @@ class Scan(unittest.TestCase):
         settings = {"rrMin": 0, "rrMax": 0}
         m = movers.Movers(None, None, lambda: datetime.fromtimestamp(clock["t"], ist), lambda: {},
                           klb_opts_fn=lambda: settings, on_klb=lambda rows: got.append(rows))
-        m.c15 = {"TESTSTOCK": ("NSE_EQ:1", bars)}
+        m.c15 = {"LIQUID": ("NSE_EQ:1", bars), "THIN": ("NSE_EQ:2", thin)}
         v = m.run_klb(alert=True)
         last_day = datetime.fromtimestamp(bars[-1]["t"], ist).strftime("%Y-%m-%d")
-        self.assertTrue(v["rows"])
-        self.assertTrue(all(r["day"] == last_day for r in v["rows"]))                # today's (the last session's) only
+        self.assertEqual([r["sym"] for r in v["rows"]], ["LIQUID"])                   # one row a stock; THIN left out
+        self.assertEqual(v["thin"], 1)
+        r = v["rows"][0]
+        self.assertEqual(r["day"], last_day)
         self.assertEqual(v["opts"]["htf"], "240")                                     # 15m chart -> 4h levels
-        sig = [r for r in v["rows"] if r.get("signal")]
-        for r in sig:
+        self.assertGreaterEqual(r["rvol"], 0.8)
+        names = [x["name"].split(" ")[0] for x in r["checks"]]
+        self.assertEqual(names[:4], ["Volume", "VWAP", "With", "Before"])
+        res = movers.klb.compute(bars, 15, dict(settings, htf="240"))
+        today = [c for c in res["crosses"] if datetime.fromtimestamp(c["t"], ist).strftime("%Y-%m-%d") == last_day]
+        first_sig = next((c for c in today if c["why"] == "signal"), None)
+        self.assertEqual(r["t"], (first_sig or today[0])["t"])                         # its first signal, else first crossing
+        if r.get("signal"):
             self.assertTrue(r["sl"] < r["entry"] < r["tgt"] if r["side"] == "BUY" else r["sl"] > r["entry"] > r["tgt"])
-        for r in v["rows"]:
-            if not r.get("signal"):
-                self.assertTrue(r["why"] and r["why"] != "signal")
-        fresh = [r for r in sig if r["t"] + 900 >= clock["t"] - 1200]
-        self.assertEqual(sum(len(x) for x in got), len(fresh))                        # only the candle that just closed
+            self.assertEqual(r["strong"], all(x["ok"] for x in r["checks"] if x["ok"] is not None))
+        fresh = r.get("signal") and r["t"] + 900 >= clock["t"] - 1200
+        self.assertEqual(sum(len(x) for x in got), 1 if fresh else 0)                 # only the candle that just closed
         m.run_klb(alert=True)
-        self.assertEqual(sum(len(x) for x in got), len(fresh))                        # never twice
+        self.assertEqual(sum(len(x) for x in got), 1 if fresh else 0)                 # never twice for a stock
         settings.update(rrMin=50, rrMax=0)                                             # new inputs, same candles
         v2 = m.run_klb()
-        self.assertFalse([r for r in v2["rows"] if r.get("signal")])
-        self.assertEqual(len(v2["rows"]), len(v["rows"]))                              # the crossings stay, as crossings
-        self.assertTrue(any("R:R" in (r["why"] or "") for r in v2["rows"]))
+        self.assertEqual(len(v2["rows"]), 1)
+        self.assertFalse(v2["rows"][0].get("signal"))
+        self.assertTrue(v2["rows"][0]["why"] and v2["rows"][0]["why"] != "signal")      # says why it isn't one
+
+    def test_alert_for_a_fresh_signal_once_a_day(self):
+        import sys
+        from datetime import datetime, timedelta, timezone
+        sys.path.insert(0, os.path.dirname(HERE))
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "_scanner"))
+        import movers
+        ist = timezone(timedelta(hours=5, minutes=30))
+        for seed in range(1, 40):                              # find candles whose last signal is on the last candle
+            bars = SameAsTheChart.candles(seed, tf=15)
+            res = movers.klb.compute(bars, 15, {"rrMin": 0, "rrMax": 0, "htf": "240"})
+            if res["trades"] and res["trades"][-1]["i"] == len(bars) - 1:
+                break
+        else:
+            self.skipTest("no seed with a signal on the last candle")
+        day = datetime.fromtimestamp(bars[-1]["t"], ist).strftime("%Y-%m-%d")
+        today = [c for c in res["crosses"] if datetime.fromtimestamp(c["t"], ist).strftime("%Y-%m-%d") == day]
+        if next(c for c in today if c["why"] == "signal")["i"] != len(bars) - 1:
+            self.skipTest("the stock already had an earlier signal that day")
+        got = []
+        m = movers.Movers(None, None, lambda: datetime.fromtimestamp(bars[-1]["t"] + 930, ist), lambda: {},
+                          klb_opts_fn=lambda: {"rrMin": 0, "rrMax": 0}, on_klb=lambda rows: got.append(rows))
+        m.c15 = {"LIQUID": ("NSE_EQ:1", bars)}
+        m.run_klb(alert=True)
+        m.run_klb(alert=True)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][0]["sym"], "LIQUID")
 
 
 if __name__ == "__main__":
