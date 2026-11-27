@@ -1408,7 +1408,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/sw.js":                             # the service worker must come from the site's root
             return self.static("sw.js")
         if path == "/kite/callback" and KITE:            # Kite's login sends the browser back here
-            return self.kite_callback(q)
+            return self.kite_callback(q, u.query)
         if not path.startswith("/api/"):
             return self.send(404, "Not found", "text/plain")
         if not self.signed_in():
@@ -1526,7 +1526,7 @@ class Handler(BaseHTTPRequestHandler):
             for k in [k for k, t in KITE_STATES.items() if t < time.time()]:
                 KITE_STATES.pop(k, None)
             url = (f"/kite/callback?request_token=demo-request&status=success&state={state}" if DEMO
-                   else D.login_url(state))
+                   else D.login_url())          # Kite's plain login link: nothing extra for Zerodha to drop or refuse
             return self.send(200, {"url": url})
         if path == "/api/auto":
             return self.send(200, BOT.view())
@@ -1834,7 +1834,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         self.mutate("PUT")
 
-    def kite_callback(self, q):
+    def kite_callback(self, q, raw=""):
         """Kite's login page sends the browser here with a one-time request_token. The state (made when the
         Log in button was tapped, 10 minutes) proves it is our own login. The token is swapped for the day's
         access token with the app's secret, which never leaves this server.
@@ -1851,8 +1851,9 @@ class Handler(BaseHTTPRequestHandler):
         state = q.get("state", "")
         known = bool(state) and KITE_STATES.pop(state, 0) >= time.time()
         sent = {k: ("…" if k == "request_token" else str(v)[:120]) for k, v in q.items() if k != "state"}
-        print(f"Zerodha login came back: {sent} state={'ours' if known else 'missing' if not state else 'unknown'}",
-              flush=True)
+        print(f"Zerodha login came back: {sent} state={'ours' if known else 'missing' if not state else 'unknown'} "
+              f"query={len(raw)} chars, from={(self.headers.get('Referer') or 'no referer')[:60]!r}, "
+              f"browser={(self.headers.get('User-Agent') or '')[:80]!r}", flush=True)
         if not q.get("request_token"):                 # no token = nothing to try (the status word alone decides nothing)
             said = ", ".join(f"{k}={v}" for k, v in sent.items()) or "nothing"
             STATUS["token_note"] = f"Zerodha sent no login token back ({said}). Tap Log in with Zerodha again."
