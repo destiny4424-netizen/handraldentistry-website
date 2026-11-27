@@ -101,6 +101,10 @@ function check(ok, what) {
   check(bad.includes('Zerodha login failed'), 'a request token Zerodha doesn\'t accept is refused');
   const note = await page.evaluate(() => api('/api/status').then(s => s.token_note || ''));
   check(/login failed/i.test(note), 'the reason shows in the banner');
+  const odd = await (await ctx.request.get(BASE + '/kite/callback?request_token=demo-request&status=SUCCESS&type=login')).text();
+  check(odd.includes('Zerodha connected'), 'a token is tried whatever the status word says');
+  const none = await (await ctx.request.get(BASE + '/kite/callback?status=error&message=Invalid+api_key')).text();
+  check(none.includes('Invalid api_key'), 'with no token, the page shows what Zerodha sent');
 
   // exit all
   await page.click('#tabs button[data-tab="positions"]');

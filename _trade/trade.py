@@ -1850,12 +1850,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200 if ok else 400, html.encode(), "text/html; charset=utf-8")
         state = q.get("state", "")
         known = bool(state) and KITE_STATES.pop(state, 0) >= time.time()
-        print(f"Zerodha login came back: status={q.get('status')!r} token={'yes' if q.get('request_token') else 'no'} "
-              f"state={'ours' if known else 'missing' if not state else 'unknown'}", flush=True)
-        if q.get("status") != "success" or not q.get("request_token"):
-            STATUS["token_note"] = "The Zerodha login was cancelled or didn't finish. Tap Log in with Zerodha again."
-            audit("kite_login_failed", error="no request_token", status=q.get("status"))
-            return page("Zerodha login cancelled", "Nothing changed.", False)
+        sent = {k: ("…" if k == "request_token" else str(v)[:120]) for k, v in q.items() if k != "state"}
+        print(f"Zerodha login came back: {sent} state={'ours' if known else 'missing' if not state else 'unknown'}",
+              flush=True)
+        if not q.get("request_token"):                 # no token = nothing to try (the status word alone decides nothing)
+            said = ", ".join(f"{k}={v}" for k, v in sent.items()) or "nothing"
+            STATUS["token_note"] = f"Zerodha sent no login token back ({said}). Tap Log in with Zerodha again."
+            audit("kite_login_failed", error="no request_token", sent=sent)
+            return page("Zerodha login didn't finish",
+                        "Zerodha sent back: <code>" + said.replace("<", "&lt;") + "</code>", False)
         if not (D.api_key and D.api_secret):
             STATUS["token_note"] = "Save the Kite Connect API key and secret first (Account → Zerodha login)."
             return page("Zerodha login failed", STATUS["token_note"], False)
