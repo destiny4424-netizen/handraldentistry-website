@@ -7,6 +7,7 @@ Run:  python3 trade.py            (Python 3.9+, nothing else to install)
 """
 import hashlib
 import hmac
+import re
 import json
 import os
 import secrets
@@ -1279,6 +1280,35 @@ FAILED = {}
 KITE_STATES = {}                                       # Zerodha login: state -> expiry
 
 
+def kite_finish(request_token, how):
+    """Swap Zerodha's one-time request_token for the day's access token and save it. Returns "" or the problem."""
+    try:
+        sess = D.exchange(request_token)
+    except dhanlib.DhanError as e:
+        audit("kite_login_failed", error=str(e), how=how)
+        print(f"Zerodha login failed ({how}): {e}", flush=True)
+        STATUS["token_note"] = f"Zerodha login failed: {e}"
+        return str(e)
+    save_settings(kite_token=sess["access_token"], kite_user=sess.get("user_id") or "",
+                  kite_user_name=sess.get("user_name") or sess.get("user_shortname") or "", kite_at=time.time())
+    STATUS["token_note"] = ""
+    pick_token()
+    audit("kite_login", user=sess.get("user_id"), how=how)
+    print(f"Zerodha login OK for {sess.get('user_id')} ({how})", flush=True)
+    threading.Thread(target=sync, daemon=True).start()
+    return ""
+
+
+def request_token_in(text):
+    """The request_token in whatever was pasted: the whole address from the browser after Zerodha's login
+    ("...?action=login&type=login&status=success&request_token=AbC123..."), or just the token itself."""
+    text = str(text or "").strip()
+    m = re.search(r"request_token=([A-Za-z0-9]+)", text)
+    if m:
+        return m.group(1)
+    return text if re.fullmatch(r"[A-Za-z0-9]{8,64}", text) else ""
+
+
 def brand(x):
     """The Zerodha copy says Zerodha where the desk says Dhan (messages, pages, the app's own text)."""
     if isinstance(x, str):
@@ -1527,7 +1557,7 @@ class Handler(BaseHTTPRequestHandler):
             KITE_STATES[state] = time.time() + 600
             for k in [k for k, t in KITE_STATES.items() if t < time.time()]:
                 KITE_STATES.pop(k, None)
-            url = (f"/kite/callback?request_token=demo-request&status=success&state={state}" if DEMO
+            url = (f"/kite/callback?request_token=demorequest123&status=success&state={state}" if DEMO
                    else D.login_url())          # Kite's plain login link: nothing extra for Zerodha to drop or refuse
             return self.send(200, {"url": url})
         if path == "/api/auto":
@@ -1690,6 +1720,21 @@ class Handler(BaseHTTPRequestHandler):
             save_settings(kite_api_key=key, kite_api_secret=secret, kite_token=None)
             pick_token()
             audit("kite_keys_saved")
+            return self.send(200, {"ok": True})
+        if path == "/api/kite/token":                  # the address (or token) pasted after Zerodha's login
+            if not KITE:
+                return self.send(404, {"error": "This desk trades on Dhan."})
+            if not (D.api_key and D.api_secret):
+                return self.send(400, {"error": "Save the Kite Connect API key and secret first."})
+            tok = request_token_in(b.get("text"))
+            if not tok:
+                return self.send(400, {"error": "No request_token in what was pasted. After logging in on Zerodha's page, "
+                                                "copy the whole address from the browser's address bar (it has "
+                                                "request_token=… in it) and paste it here."})
+            err = kite_finish(tok, "pasted")
+            if err:
+                return self.send(400, {"error": f"Zerodha didn't accept it: {err} (each login link works once, "
+                                                "within a few minutes: log in on Zerodha again and paste the new one)."})
             return self.send(200, {"ok": True})
         if path == "/api/kite/logout":
             save_settings(kite_token=None)
@@ -1865,22 +1910,11 @@ class Handler(BaseHTTPRequestHandler):
         if not (D.api_key and D.api_secret):
             STATUS["token_note"] = "Save the Kite Connect API key and secret first (Account → Zerodha login)."
             return page("Zerodha login failed", STATUS["token_note"], False)
-        try:
-            sess = D.exchange(q["request_token"])
-        except dhanlib.DhanError as e:
-            audit("kite_login_failed", error=str(e), state=known)
-            print(f"Zerodha login failed: {e}", flush=True)
-            STATUS["token_note"] = f"Zerodha login failed: {e}"
-            return page("Zerodha login failed", str(e).replace("<", "&lt;") +
+        err = kite_finish(q["request_token"], "redirect")
+        if err:
+            return page("Zerodha login failed", err.replace("<", "&lt;") +
                         "<br><br>If it mentions the checksum or api_key, save the API key and secret again "
                         "(Account → Zerodha login) and log in again.", False)
-        save_settings(kite_token=sess["access_token"], kite_user=sess.get("user_id") or "",
-                      kite_user_name=sess.get("user_name") or sess.get("user_shortname") or "", kite_at=time.time())
-        STATUS["token_note"] = ""
-        pick_token()
-        audit("kite_login", user=sess.get("user_id"), state=known)
-        print(f"Zerodha login OK for {sess.get('user_id')}", flush=True)
-        threading.Thread(target=sync, daemon=True).start()
         return page("Zerodha connected ✓", "Going back to the desk…", True)
 
     def pin_unlock(self, b):
