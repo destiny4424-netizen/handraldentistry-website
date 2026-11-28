@@ -26,7 +26,7 @@ API_KEY = "demoapikey"
 API_SECRET = "demoapisecret123"
 TOKEN = "demo-kite-access-token"
 USER = "ZD1234"
-REQUEST = "demo-request"
+REQUEST = "demorequest123"
 
 SEG_EXCH = {"NSE_EQ": "NSE", "BSE_EQ": "BSE", "NSE_FNO": "NFO", "BSE_FNO": "BFO", "MCX_COMM": "MCX"}
 SEG_CODE = {"NSE_EQ": 1, "NSE_FNO": 2, "BSE_EQ": 4, "BSE_FNO": 5, "MCX_COMM": 7, "IDX_I": 9}

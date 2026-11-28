@@ -1288,6 +1288,13 @@ function kiteBox(s) {
       ${s.kite_keys ? `<div class="ord-actions" style="margin-top:10px"><button id="kiteLogin" class="${s.connected ? 'ghost' : ''}">${s.connected ? 'Log in again' : 'Log in with Zerodha'}</button>
         ${s.connected ? '<button id="kiteOut" class="ghost danger">Log out</button>' : ''}</div>
         <div class="muted small" style="margin-top:6px">Opens Zerodha's own login page (your Zerodha password and TOTP go to Zerodha, not to this app). Zerodha ends every login at 6 AM, so log in once each trading morning.</div>` : ''}
+      ${s.kite_keys ? `<details style="margin-top:10px" ${s.connected ? '' : 'open'}><summary class="small">Log in another way (paste the address)</summary>
+        <ol class="small" style="margin:8px 0 0 18px;padding:0">
+          <li><a href="#" id="kiteOpen">Open Zerodha's login</a> (a new tab) and log in.</li>
+          <li>After the login, click the browser's <b>address bar</b> and copy the whole address. It has <code>request_token=</code> in it, even if the page itself shows an error.</li>
+          <li>Paste it here and tap Connect (within a few minutes: each login works once).</li></ol>
+        <div class="field" style="margin-top:8px"><input id="kiPaste" autocomplete="off" placeholder="https://…request_token=…"></div>
+        <button id="kiPasteGo" style="margin-top:8px">Connect</button></details>` : ''}
       <details style="margin-top:10px" ${s.kite_keys ? '' : 'open'}><summary class="small">Kite Connect app ${s.kite_keys ? `· key ${esc(s.kite_key)}` : '(needed once)'}</summary>
         <div class="formrow" style="margin-top:8px"><div class="field"><label>API key</label><input id="kiKey" autocomplete="off"></div>
         <div class="field"><label>API secret</label><input id="kiSecret" type="password" autocomplete="off"></div></div>
@@ -1304,6 +1311,16 @@ function wireKite(s) {
   if ($('#kiteOut')) $('#kiteOut').onclick = async () => {
     if (!confirm('Log this desk out of Zerodha?')) return;
     try { await api('/api/kite/logout', {}); await loadStatus(); loadAccount(); } catch (e) { toast(e.message, 'bad'); }
+  };
+  if ($('#kiteOpen')) $('#kiteOpen').onclick = async e => {
+    e.preventDefault();
+    const w = window.open('', '_blank');
+    try { const r = await api('/api/kite/login'); if (w) w.location = r.url; else location.href = r.url; }
+    catch (er) { if (w) w.close(); toast(er.message, 'bad', 8000); }
+  };
+  if ($('#kiPasteGo')) $('#kiPasteGo').onclick = async () => {
+    try { await api('/api/kite/token', {text: $('#kiPaste').value}); toast('Zerodha connected', 'ok'); await loadStatus(); loadAccount(); }
+    catch (e) { toast(e.message, 'bad', 10000); }
   };
   $('#kiSave').onclick = async () => {
     try { await api('/api/settings/kite', {api_key: $('#kiKey').value, api_secret: $('#kiSecret').value}); toast('Saved. Now log in with Zerodha.', 'ok'); await loadStatus(); loadAccount(); }

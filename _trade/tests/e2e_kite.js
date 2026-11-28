@@ -95,16 +95,30 @@ function check(ok, what) {
   const back = await page.evaluate(() => api('/api/status').then(s => s.connected && s.kite_user_name));
   check(back === 'Demo Zerodha', 'logged in again through the Kite login page');
   await apiPost('/api/kite/logout', {});
-  const nostate = await (await ctx.request.get(BASE + '/kite/callback?request_token=demo-request&status=success&action=login')).text();
+  const nostate = await (await ctx.request.get(BASE + '/kite/callback?request_token=demorequest123&status=success&action=login')).text();
   check(nostate.includes('Zerodha connected'), 'a login that comes back without the state (or after a restart) still connects');
   const bad = await (await ctx.request.get(BASE + '/kite/callback?request_token=forged&status=success')).text();
   check(bad.includes('Zerodha login failed'), 'a request token Zerodha doesn\'t accept is refused');
   const note = await page.evaluate(() => api('/api/status').then(s => s.token_note || ''));
   check(/login failed/i.test(note), 'the reason shows in the banner');
-  const odd = await (await ctx.request.get(BASE + '/kite/callback?request_token=demo-request&status=SUCCESS&type=login')).text();
+  const odd = await (await ctx.request.get(BASE + '/kite/callback?request_token=demorequest123&status=SUCCESS&type=login')).text();
   check(odd.includes('Zerodha connected'), 'a token is tried whatever the status word says');
   const none = await (await ctx.request.get(BASE + '/kite/callback?status=error&message=Invalid+api_key')).text();
   check(none.includes('Invalid api_key'), 'with no token, the page shows what Zerodha sent');
+  await apiPost('/api/kite/logout', {});
+  const bad2 = await apiPost('/api/kite/token', {text: 'https://example.com/whatever'});
+  check(/No request_token/.test(bad2.error || ''), 'paste: an address without a token is explained');
+  await page.click('#tabs button[data-tab="watch"]');
+  await page.click('#tabs button[data-tab="account"]');
+  await page.waitForSelector('#kiPaste', {state: 'attached'});
+  await page.$eval('#kiPaste', e => { e.closest('details').open = true; });
+  const pasteBad = await apiPost('/api/kite/token', {text: 'https://x/?request_token=wrongtoken123'});
+  check(/didn't accept/.test(pasteBad.error || ''), 'paste: a token Zerodha refuses is explained');
+  await page.fill('#kiPaste', 'http://127.0.0.1/?action=login&type=login&status=success&request_token=demorequest123');
+  await page.click('#kiPasteGo');
+  const pasted = await page.waitForFunction(() => api('/api/status').then(s => s.connected), null, {timeout: 10000, polling: 500})
+    .then(() => true, () => false);
+  check(pasted, 'paste: the address copied after Zerodha\'s login connects the desk');
 
   // exit all
   await page.click('#tabs button[data-tab="positions"]');
